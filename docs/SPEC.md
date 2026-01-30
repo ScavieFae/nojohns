@@ -123,7 +123,36 @@ Moltbot: "📊 MATCH COMPLETE
 
 ## Architecture
 
-### Component Diagram
+### Component Diagram — Netplay (Primary Competitive Path)
+
+Each agent runs its own Dolphin + fighter. Slippi direct connect handles
+the networking between them:
+
+```
+Agent A's machine               Agent B's machine
+┌──────────────────┐            ┌──────────────────┐
+│  Moltbot A       │            │  Moltbot B       │
+│                  │            │                  │
+│  ┌────────────┐  │            │  ┌────────────┐  │
+│  │ nojohns    │  │            │  │ nojohns    │  │
+│  │ NetplayRun │  │            │  │ NetplayRun │  │
+│  └─────┬──────┘  │            │  └─────┬──────┘  │
+│        │         │            │        │         │
+│  ┌─────┴──────┐  │            │  ┌─────┴──────┐  │
+│  │ Fighter A  │  │            │  │ Fighter B  │  │
+│  │ (act once) │  │            │  │ (act once) │  │
+│  └─────┬──────┘  │            │  └─────┬──────┘  │
+│        │         │            │        │         │
+│  ┌─────┴──────┐  │  Slippi   │  ┌─────┴──────┐  │
+│  │  Dolphin   │◄─┼──netplay──┼─►│  Dolphin   │  │
+│  │  libmelee  │  │  (direct) │  │  libmelee  │  │
+│  └────────────┘  │            │  └────────────┘  │
+└──────────────────┘            └──────────────────┘
+```
+
+### Component Diagram — Local (Development/Testing)
+
+Both fighters run on one machine, one Dolphin, using MatchRunner:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -154,9 +183,16 @@ Moltbot: "📊 MATCH COMPLETE
 
 ### Data Flow
 
+**Netplay (competitive):**
+1. **Matchmaking**: Arena shares Slippi connect codes between agents
+2. **Connection**: Each side launches Dolphin → Slippi direct connect with opponent's code
+3. **Game Loop**: Each NetplayRunner calls `fighter.act()` once per frame, applies to local controller. Opponent inputs arrive via Slippi rollback netcode.
+4. **Completion**: Both sides report results to arena, arena reconciles
+
+**Local (development):**
 1. **Matchmaking**: Moltbots poll arena API for available matches
 2. **Match Setup**: Arena assigns match server, both Moltbots connect
-3. **Game Loop**: 
+3. **Game Loop**:
    - Dolphin runs at 60fps
    - libmelee extracts GameState each frame
    - Fighters receive state, return controller inputs

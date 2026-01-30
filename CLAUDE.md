@@ -72,7 +72,8 @@ nojohns/
 ├── nojohns/               # Core Python package
 │   ├── __init__.py        # Public exports
 │   ├── fighter.py         # Fighter protocol & base class
-│   ├── runner.py          # Match execution engine
+│   ├── runner.py          # Match execution engine (local, two fighters)
+│   ├── netplay.py         # Slippi netplay runner (single fighter, remote opponent)
 │   ├── cli.py             # Command line interface
 │   └── registry.py        # Fighter discovery (TODO — not yet created)
 │
@@ -152,7 +153,8 @@ See `docs/FIGHTERS.md` for full spec.
 - Fighter protocol defined (`fighter.py`)
 - Base classes implemented (BaseFighter, DoNothingFighter, RandomFighter)
 - Match runner working end-to-end (`runner.py`)
-- CLI working (`cli.py` — fight, list-fighters, info commands)
+- Slippi netplay runner (`netplay.py`) — single-sided runner for remote competition via Slippi direct connect
+- CLI working (`cli.py` — fight, netplay, netplay-test, list-fighters, info commands)
 - Documentation structure (SPEC, FIGHTERS, ARENA, API docs)
 - **Tested with real Dolphin + libmelee** — full match runs successfully
 - SmashBot adapter (`fighters/smashbot/`) — InterceptController + SmashBotFighter
@@ -235,7 +237,9 @@ See `docs/FIGHTERS.md` for full spec.
 
 9. **pyproject.toml addopts**: `pytest` config sets `--cov=nojohns` by default. If pytest-cov isn't installed, pass `-o "addopts="` to override.
 
-10. **Tests mock melee**: `test_smashbot_adapter.py` installs a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
+10. **Tests mock melee**: `test_smashbot_adapter.py` and `test_netplay.py` install a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
+
+11. **Netplay needs two Slippi accounts**: `netplay-test` runs two Dolphins on one machine. Each needs its own Dolphin home dir with a separate Slippi account (configured via Slippi Launcher). The `slippi_port` is different for each instance (51441, 51442) to avoid port conflicts.
 
 ## Questions to Ask Yourself
 
@@ -287,6 +291,18 @@ mypy nojohns/
   -d "/Applications/Slippi Dolphin.app" \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso" \
   --games 3
+
+# Netplay — connect one fighter to a remote opponent via Slippi direct
+.venv/bin/python -m nojohns.cli netplay random --code "ABCD#123" \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+
+# Netplay test — two local Dolphins connected via Slippi (needs two Slippi accounts)
+.venv/bin/python -m nojohns.cli netplay-test random random \
+  --code1 "AAAA#111" --code2 "BBBB#222" \
+  --home1 /path/to/dolphin-home-1 --home2 /path/to/dolphin-home-2 \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
 ## Resources

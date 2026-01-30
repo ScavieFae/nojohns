@@ -30,13 +30,20 @@ from .runner import (
     quick_fight,
 )
 
+from .netplay import (
+    NetplayConfig,
+    NetplayRunner,
+    NetplayDisconnectedError,
+    netplay_test,
+)
+
 __all__ = [
     # Version
     "__version__",
     # Fighter interface
     "FighterMetadata",
     "MatchConfig",
-    "FighterConfig", 
+    "FighterConfig",
     "ControllerState",
     "MatchResult",
     "Fighter",
@@ -49,4 +56,9 @@ __all__ = [
     "GameResult",
     "MatchRunner",
     "quick_fight",
+    # Netplay
+    "NetplayConfig",
+    "NetplayRunner",
+    "NetplayDisconnectedError",
+    "netplay_test",
 ]
