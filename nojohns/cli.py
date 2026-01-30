@@ -136,21 +136,31 @@ def cmd_info(args):
 def load_fighter(name: str):
     """Load a fighter by name."""
     from nojohns import DoNothingFighter, RandomFighter
-    
+
     # Built-in fighters
     builtins = {
         "do-nothing": DoNothingFighter,
         "random": RandomFighter,
     }
-    
+
     if name in builtins:
         return builtins[name]()
-    
-    # Try to load from fighters/ directory
-    # TODO: Implement fighter registry
-    
+
+    # SmashBot — look for the clone next to the adapter
+    if name == "smashbot":
+        from fighters.smashbot import SmashBotFighter
+
+        default_path = Path(__file__).resolve().parent.parent / "fighters" / "smashbot" / "SmashBot"
+        if not default_path.is_dir():
+            logger.error(f"SmashBot not found at {default_path}")
+            logger.error("Clone it: git clone https://github.com/altf4/SmashBot fighters/smashbot/SmashBot")
+            return None
+        return SmashBotFighter(str(default_path))
+
+    # TODO: Implement fighter registry for arbitrary fighters
+
     logger.error(f"Unknown fighter: {name}")
-    logger.error(f"Available: {', '.join(builtins.keys())}")
+    logger.error(f"Available: {', '.join(list(builtins.keys()) + ['smashbot'])}")
     return None
 
 

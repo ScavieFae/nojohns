@@ -55,6 +55,19 @@ def _setup_melee_mock():
         POSTGAME_SCORES = auto()
         CHARACTER_SELECT = auto()
 
+    class MockControllerState:
+        """Mimics melee.controller.ControllerState — dict buttons, tuple sticks."""
+        def __init__(self):
+            self.button = {b: False for b in Button}
+            self.main_stick = (0.5, 0.5)
+            self.c_stick = (0.5, 0.5)
+            self.l_shoulder = 0
+            self.r_shoulder = 0
+
+    # melee.controller submodule
+    controller_mod = types.ModuleType("melee.controller")
+    controller_mod.ControllerState = MockControllerState
+
     melee_mod.Button = Button
     melee_mod.Character = Character
     melee_mod.Stage = Stage
@@ -64,8 +77,10 @@ def _setup_melee_mock():
     melee_mod.GameState = MagicMock
     melee_mod.PlayerState = MagicMock
     melee_mod.MenuHelper = MagicMock()
+    melee_mod.controller = controller_mod
 
     sys.modules["melee"] = melee_mod
+    sys.modules["melee.controller"] = controller_mod
 
 
 _setup_melee_mock()
@@ -249,3 +264,35 @@ class TestInterceptController:
         """connect() should always return True."""
         ic = InterceptController()
         assert ic.connect() is True
+
+    def test_empty_input_resets_state(self):
+        """empty_input() should work like release_all()."""
+        ic = InterceptController()
+        ic.press_button(Button.BUTTON_A)
+        ic.tilt_analog(Button.BUTTON_MAIN, 0.0, 1.0)
+
+        ic.empty_input()
+        state = ic.to_controller_state()
+
+        assert not state.a
+        assert state.main_x == 0.5
+
+    def test_prev_tracks_last_frame(self):
+        """After to_controller_state(), prev should reflect that frame's inputs."""
+        ic = InterceptController()
+        ic.press_button(Button.BUTTON_Y)
+        ic.tilt_analog(Button.BUTTON_C, 0.5, 0.0)
+        ic.press_shoulder(Button.BUTTON_L, 1.0)
+        ic.to_controller_state()
+
+        # prev should have Y pressed, c-stick down, L full
+        assert ic.prev.button[Button.BUTTON_Y] is True
+        assert ic.prev.button[Button.BUTTON_A] is False
+        assert ic.prev.c_stick == (0.5, 0.0)
+        assert ic.prev.l_shoulder == 1.0
+
+    def test_prev_starts_neutral(self):
+        """Before any frame, prev should be neutral."""
+        ic = InterceptController()
+        assert ic.prev.button[Button.BUTTON_A] is False
+        assert ic.prev.main_stick == (0.5, 0.5)

@@ -41,6 +41,10 @@ class InterceptController:
 
     After to_controller_state() is called, internal state resets to neutral
     so the next frame starts clean.
+
+    Also tracks `prev` — a libmelee-style ControllerState from the previous
+    frame. SmashBot chains read this for frame-perfect sequencing (e.g.
+    "was Y pressed last frame?").
     """
 
     def __init__(self):
@@ -51,6 +55,8 @@ class InterceptController:
         self._c_y: float = 0.5
         self._l_shoulder: float = 0.0
         self._r_shoulder: float = 0.0
+        # SmashBot chains check controller.prev.button[X], controller.prev.c_stick, etc.
+        self.prev = melee.controller.ControllerState()
 
     # -- Button methods --
 
@@ -92,6 +98,10 @@ class InterceptController:
         elif button == Button.BUTTON_R:
             self._r_shoulder = amount
 
+    def empty_input(self) -> None:
+        """Alias for release_all(). SmashBot chains call this constantly."""
+        self.release_all()
+
     # -- No-ops for methods SmashBot might call --
 
     def flush(self) -> None:
@@ -111,7 +121,8 @@ class InterceptController:
         """
         Snapshot the current state as a ControllerState, then reset to neutral.
 
-        Called once per frame after SmashBot's act().
+        Called once per frame after SmashBot's act(). Also updates self.prev
+        so SmashBot chains can read last frame's inputs next frame.
         """
         state = ControllerState(
             main_x=self._main_x,
@@ -131,8 +142,36 @@ class InterceptController:
             d_left=Button.BUTTON_D_LEFT in self._buttons,
             d_right=Button.BUTTON_D_RIGHT in self._buttons,
         )
+
+        # Update prev for SmashBot chains that check last frame's inputs.
+        # prev must be a libmelee ControllerState (dict buttons, tuple sticks).
+        prev = melee.controller.ControllerState()
+        for btn in self._buttons:
+            if btn in prev.button:
+                prev.button[btn] = True
+        prev.main_stick = (self._main_x, self._main_y)
+        prev.c_stick = (self._c_x, self._c_y)
+        prev.l_shoulder = self._l_shoulder
+        prev.r_shoulder = self._r_shoulder
+        self.prev = prev
+
         self.release_all()
         return state
+
+
+# ============================================================================
+# Dolphin stub
+# ============================================================================
+
+class _DolphinStub:
+    """Minimal stand-in for melee.Console that ESAgent expects.
+
+    ESAgent accesses dolphin.logger, and the Bait strategy guards with
+    `if self.logger:` before logging. Setting logger=None satisfies both.
+    """
+
+    def __init__(self):
+        self.logger = None
 
 
 # ============================================================================
@@ -198,10 +237,13 @@ class SmashBotFighter(BaseFighter):
         aggression = self._config.aggression if self._config else 0.5
         difficulty = int(aggression * 3) + 1  # 1 at 0.0, 4 at 1.0
 
-        # ESAgent(dolphin, smashbot_port, opponent_port, controller, difficulty)
-        # dolphin (Console) is barely used — pass None, stub if needed
+        # ESAgent expects a dolphin (Console) object for dolphin.logger.
+        # SmashBot's Bait strategy checks `if self.logger:` before using it,
+        # so a stub with logger=None works. If deeper code needs more, extend this.
+        dolphin_stub = _DolphinStub()
+
         self._agent = ESAgent(
-            dolphin=None,
+            dolphin=dolphin_stub,
             smashbot_port=match.port,
             opponent_port=match.opponent_port,
             controller=self._intercept,

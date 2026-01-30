@@ -18,4 +18,8 @@ env/
 .coverage
 htmlcov/
 *.iso
+*.ciso
 .DS_Store
+
+# External fighter repos (cloned at runtime, not vendored)
+fighters/smashbot/SmashBot/
