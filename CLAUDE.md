@@ -24,6 +24,9 @@ Paths on this machine:
 - **Dolphin**: `/Applications/Slippi Dolphin.app`
 - **Melee ISO**: `~/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`
 
+**Setting up a new machine?** See [docs/SETUP.md](docs/SETUP.md) — covers
+fresh Mac → running netplay, step by step. Written for Claude Code to follow.
+
 Quick smoke test (verified working 2026-01-30):
 
 ```bash
@@ -67,7 +70,8 @@ nojohns/
 │   ├── SPEC.md            # Full system specification
 │   ├── FIGHTERS.md        # Fighter interface spec
 │   ├── ARENA.md           # Match server (TODO)
-│   └── API.md             # REST API (TODO)
+│   ├── API.md             # REST API (TODO)
+│   └── SETUP.md           # Fresh Mac setup guide (for Claude Code or humans)
 │
 ├── nojohns/               # Core Python package
 │   ├── __init__.py        # Public exports

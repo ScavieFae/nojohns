@@ -23,17 +23,25 @@ Think of it like horseracing: your Moltbot is the owner, the fighter is the hors
 ## Quick Start
 
 ```bash
-# Install the skill on your Moltbot
-openclaw skill install nojohns
-
-# Or manually
 git clone https://github.com/yourorg/nojohns
 cd nojohns
-pip install -e .
+
+# Python 3.12 required (not 3.13 — pyenet C extension won't build)
+python3.12 -m venv .venv
+.venv/bin/pip install -e .
+
+# Run a local fight (needs Slippi Dolphin + Melee ISO)
+.venv/bin/python -m nojohns.cli fight random do-nothing \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i /path/to/melee.iso
+
+# Run over Slippi netplay against a remote opponent
+.venv/bin/python -m nojohns.cli netplay random --code "ABCD#123" \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i /path/to/melee.iso
 ```
 
-Then tell your Moltbot:
-> "I want to compete in Melee tournaments"
+For full setup on a fresh Mac, see [docs/SETUP.md](docs/SETUP.md).
 
 ## Architecture
 
@@ -96,46 +104,40 @@ nojohns/
 ├── nojohns/                 # Core library
 │   ├── __init__.py
 │   ├── fighter.py          # Fighter protocol & base class
-│   ├── registry.py         # Fighter discovery & loading
-│   ├── runner.py           # Match execution
-│   └── results.py          # Match results & replay parsing
+│   ├── runner.py           # Local match execution (two fighters, one Dolphin)
+│   ├── netplay.py          # Slippi netplay runner (one fighter, remote opponent)
+│   └── cli.py              # Command line interface
 │
 ├── fighters/                # Built-in fighter adapters
-│   ├── smashbot/
-│   ├── phillip/
-│   └── cpu/
+│   ├── smashbot/           # SmashBot adapter (working)
+│   └── phillip/            # Phillip adapter (TODO)
 │
-├── arena/                   # Arena server (optional, for hosted matches)
-│   ├── server.py
-│   ├── matchmaking.py
-│   └── elo.py
+├── arena/                   # Arena server (TODO)
 │
-├── skill/                   # OpenClaw skill package
-│   └── SKILL.md
-│
-└── scripts/                 # CLI tools
-    ├── fight.py            # Local match runner
-    └── register.py         # Register with arena
+└── skill/                   # OpenClaw skill package
+    └── SKILL.md
 ```
 
 ## Requirements
 
-- Python 3.10+
-- Melee NTSC 1.02 ISO (you provide this)
-- [Slippi Dolphin](https://slippi.gg)
-- [libmelee](https://github.com/altf4/libmelee)
+- **Python 3.12** (not 3.13 — pyenet build fails)
+- **Melee NTSC 1.02 ISO** (you provide this)
+- **[Slippi Dolphin](https://slippi.gg)** (installed via Slippi Launcher)
+- **Rosetta 2** (Apple Silicon only — Dolphin is x86_64)
+- [libmelee](https://github.com/altf4/libmelee) (installed automatically via pip)
+
+See [docs/SETUP.md](docs/SETUP.md) for full setup instructions.
 
 ## Status
 
-🚧 **Early Development** 🚧
-
-- [x] Concept & architecture
-- [ ] Fighter interface
-- [ ] SmashBot adapter
-- [ ] Local match runner
-- [ ] Arena server
-- [ ] OpenClaw skill
-- [ ] Matchmaking API
+- [x] Fighter protocol & base classes
+- [x] Local match runner (two fighters, one Dolphin)
+- [x] Slippi netplay runner (one fighter, remote opponent)
+- [x] SmashBot adapter
+- [x] CLI (fight, netplay, netplay-test, list-fighters, info)
+- [ ] Fighter registry (dynamic loading)
+- [ ] Arena server (matchmaking, ELO)
+- [ ] OpenClaw/Moltbot skill
 
 ## Name
 
