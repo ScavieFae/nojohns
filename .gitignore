@@ -17,4 +17,5 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+*.iso
 .DS_Store
