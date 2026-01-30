@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nojohns"
+version = "0.1.0"
+description = "Melee AI tournaments for Moltbots"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "No Johns Contributors"}
+]
+keywords = ["melee", "smash", "ai", "moltbot", "openclaw", "slippi"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment :: Arcade",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "melee>=0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy",
+]
+smashbot = [
+    # SmashBot dependencies when available
+]
+phillip = [
+    "torch>=2.0",
+    "numpy",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourorg/nojohns"
+Documentation = "https://github.com/yourorg/nojohns/tree/main/docs"
+Repository = "https://github.com/yourorg/nojohns"
+Issues = "https://github.com/yourorg/nojohns/issues"
+
+[project.scripts]
+nojohns = "nojohns.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nojohns*", "fighters*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]  # Line too long (handled by black)
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=nojohns"
