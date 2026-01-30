@@ -396,11 +396,22 @@ class MatchRunner:
     def _cleanup(self) -> None:
         """Clean up Dolphin and controllers."""
         logger.debug("Cleaning up")
-        
+
         if self._console:
+            # libmelee's stop() sends SIGTERM, but Dolphin may ignore it
+            process = self._console._process
             self._console.stop()
+
+            if process is not None:
+                try:
+                    process.wait(timeout=5)
+                except Exception:
+                    logger.warning("Dolphin didn't exit after SIGTERM, sending SIGKILL")
+                    process.kill()
+                    process.wait()
+
             self._console = None
-        
+
         self._controllers.clear()
 
 
