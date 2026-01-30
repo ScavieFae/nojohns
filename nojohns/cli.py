@@ -44,7 +44,6 @@ def cmd_fight(args):
     dolphin = DolphinConfig(
         dolphin_path=args.dolphin,
         iso_path=args.iso,
-        render=not args.headless,
     )
     
     # Match settings

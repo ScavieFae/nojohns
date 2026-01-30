@@ -8,6 +8,44 @@ No Johns enables Moltbot-to-Moltbot competition in Super Smash Bros. Melee using
 
 **Key insight**: Moltbots are the *owners* (social layer, matchmaking, commentary), Fighters are the *players* (actual game AI). This separation is intentional - LLMs are too slow to play frame-by-frame, but perfect for the meta-game.
 
+## Local Dev Setup
+
+**Use the project venv.** System Python (3.13) does NOT have libmelee. The venv does:
+
+```bash
+# Always use the venv python:
+.venv/bin/python -m nojohns.cli fight ...
+
+# Or activate first:
+source .venv/bin/activate   # Python 3.12, libmelee + nojohns installed
+```
+
+Paths on this machine:
+- **Dolphin**: `/Applications/Slippi Dolphin.app`
+- **Melee ISO**: `~/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`
+
+Quick smoke test (verified working 2026-01-30):
+
+```bash
+.venv/bin/python -m nojohns.cli fight random do-nothing \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+```
+
+### Why not system Python?
+
+libmelee depends on pyenet, which has C extensions that fail to build on the system Python 3.13. The venv was set up with Python 3.12 where it builds cleanly. Don't try to `pip install melee` globally — use the venv.
+
+### Running tests
+
+```bash
+# With venv (real libmelee — tests also work without it via mock):
+.venv/bin/python -m pytest tests/ -v -o "addopts="
+
+# The -o "addopts=" override is needed because pyproject.toml sets
+# --cov=nojohns by default, and pytest-cov may not be installed.
+```
+
 ## Quick Context
 
 - **Melee**: A 2001 fighting game with a hardcore competitive scene
@@ -36,11 +74,11 @@ nojohns/
 │   ├── fighter.py         # Fighter protocol & base class
 │   ├── runner.py          # Match execution engine
 │   ├── cli.py             # Command line interface
-│   └── registry.py        # Fighter discovery (TODO)
+│   └── registry.py        # Fighter discovery (TODO — not yet created)
 │
 ├── fighters/              # Fighter implementations
-│   ├── smashbot/          # SmashBot adapter (TODO)
-│   └── phillip/           # Phillip adapter (TODO)
+│   ├── smashbot/          # SmashBot adapter (InterceptController + SmashBotFighter)
+│   └── phillip/           # Phillip adapter (TODO — not yet created)
 │
 ├── arena/                 # Arena server (TODO)
 │
@@ -88,17 +126,15 @@ class MyFighter(BaseFighter):
 
 ### Running Tests
 ```bash
-pip install -e ".[dev]"
-pytest
+# Use the venv — see "Local Dev Setup" above
+.venv/bin/python -m pytest tests/ -v -o "addopts="
 ```
 
 ### Running a Local Fight
 ```bash
-# With test fighters
-nojohns fight random random -d /path/to/dolphin -i /path/to/melee.iso
-
-# Headless (faster)
-nojohns fight random random -d /path/to/dolphin -i /path/to/melee.iso --headless
+.venv/bin/python -m nojohns.cli fight random do-nothing \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
 ### Adding a Fighter
@@ -113,17 +149,20 @@ See `docs/FIGHTERS.md` for full spec.
 ## Current State & Next Steps
 
 ### Done ✅
-- Fighter protocol defined
-- Base classes implemented  
-- Match runner skeleton
-- CLI skeleton
-- Documentation structure
+- Fighter protocol defined (`fighter.py`)
+- Base classes implemented (BaseFighter, DoNothingFighter, RandomFighter)
+- Match runner working end-to-end (`runner.py`)
+- CLI working (`cli.py` — fight, list-fighters, info commands)
+- Documentation structure (SPEC, FIGHTERS, ARENA, API docs)
+- **Tested with real Dolphin + libmelee** — full match runs successfully
+- SmashBot adapter (`fighters/smashbot/`) — InterceptController + SmashBotFighter
+- SmashBot adapter unit tests (13 passing)
 
 ### Phase 1 TODO (Local CLI)
-- [ ] Test with actual libmelee (need Dolphin + ISO)
-- [ ] Fix menu navigation in runner
-- [ ] SmashBot adapter (wrap existing SmashBot)
+- [ ] SmashBot integration test (adapter exists, needs real SmashBot clone to verify)
+- [ ] Fighter registry (`registry.py` — CLI currently hardcodes built-in fighters)
 - [ ] Replay saving
+- [ ] `--headless` flag (CLI accepts it but runner doesn't act on it yet)
 
 ### Phase 2 TODO (Moltbot Integration)
 - [ ] OpenClaw skill implementation
@@ -178,15 +217,25 @@ See `docs/FIGHTERS.md` for full spec.
 
 ## Gotchas
 
-1. **Melee ISO**: We can't distribute it. User must provide NTSC 1.02.
+1. **Use the venv.** System Python 3.13 cannot install libmelee (pyenet C build fails). The `.venv` has Python 3.12 with everything working. See "Local Dev Setup."
 
-2. **libmelee setup**: Needs custom Gecko codes installed in Dolphin. See libmelee docs.
+2. **Melee ISO**: We can't distribute it. User must provide NTSC 1.02.
 
-3. **Frame timing**: `act()` must be fast (<16ms). Don't do heavy computation there.
+3. **libmelee setup**: Needs custom Gecko codes installed in Dolphin. See libmelee docs.
 
-4. **Controller state**: libmelee uses 0-1 for analog (0.5 = neutral), not -1 to 1.
+4. **Frame timing**: `act()` must be fast (<16ms). Don't do heavy computation there.
 
-5. **Slippi ranked**: Do NOT enable play on Slippi's online ranked. Against ToS.
+5. **Controller state**: libmelee uses 0-1 for analog (0.5 = neutral), not -1 to 1.
+
+6. **Slippi ranked**: Do NOT enable play on Slippi's online ranked. Against ToS.
+
+7. **MoltenVK errors on macOS**: Dolphin spams `VK_NOT_READY` errors via MoltenVK. These are cosmetic — the game runs fine. Don't chase them.
+
+8. **BrokenPipeError on cleanup**: libmelee's Controller `__del__` fires after Dolphin is killed, causing `BrokenPipeError`. Harmless noise from the SIGKILL cleanup path.
+
+9. **pyproject.toml addopts**: `pytest` config sets `--cov=nojohns` by default. If pytest-cov isn't installed, pass `-o "addopts="` to override.
+
+10. **Tests mock melee**: `test_smashbot_adapter.py` installs a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
 
 ## Questions to Ask Yourself
 
@@ -211,11 +260,10 @@ When modifying this codebase:
 ## Useful Commands
 
 ```bash
-# Install in dev mode
-pip install -e ".[dev]"
+# All commands assume venv is activated or prefixed with .venv/bin/python
 
-# Run tests
-pytest
+# Run tests (override addopts to skip missing pytest-cov)
+.venv/bin/python -m pytest tests/ -v -o "addopts="
 
 # Format code
 black nojohns/
@@ -224,13 +272,21 @@ black nojohns/
 mypy nojohns/
 
 # List fighters
-nojohns list-fighters
+.venv/bin/python -m nojohns.cli list-fighters
 
 # Fighter info
-nojohns info smashbot
+.venv/bin/python -m nojohns.cli info random
 
-# Run a fight
-nojohns fight random random -d $DOLPHIN -i $ISO --games 3
+# Run a fight (Dolphin window will open)
+.venv/bin/python -m nojohns.cli fight random do-nothing \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+
+# Bo3 match
+.venv/bin/python -m nojohns.cli fight random random \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso" \
+  --games 3
 ```
 
 ## Resources
