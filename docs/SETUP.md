@@ -3,6 +3,20 @@
 Setting up No Johns on a fresh Mac (Apple Silicon). This guide is written
 for Claude Code to follow step-by-step, but works for humans too.
 
+## For Claude Code
+
+Follow this guide sequentially. Some steps require GUI interaction that
+you cannot perform — these are marked with **WAIT FOR USER** blocks.
+When you hit one:
+
+1. Tell the user exactly what they need to do (the block spells it out)
+2. Wait for them to confirm they're done
+3. Run the verification command that follows the block
+4. Only proceed to the next step after verification passes
+
+Do NOT skip user steps or assume they're done. Do NOT proceed past a
+WAIT FOR USER block without confirmation.
+
 ## Prerequisites (User Must Provide)
 
 - **Melee ISO**: NTSC 1.02 (`.iso` or `.ciso`). Not distributed here.
@@ -22,7 +36,24 @@ arch -x86_64 /usr/bin/true 2>/dev/null && echo "Rosetta OK" || echo "Need Rosett
 softwareupdate --install-rosetta --agree-to-license
 ```
 
-## Step 2: Homebrew
+## Step 2: Xcode Command Line Tools
+
+Needed for `git` and C compilation (pyenet, a libmelee dependency).
+
+```bash
+# Check if installed
+xcode-select -p 2>/dev/null && echo "Xcode CLT OK" || echo "Need Xcode CLT"
+```
+
+If not installed, run `xcode-select --install`. This triggers a macOS popup.
+
+> **WAIT FOR USER**: `xcode-select --install` opens a system dialog.
+> Ask the user to click "Install" and wait for it to finish. Verify with:
+> ```bash
+> xcode-select -p && echo "Xcode CLT OK"
+> ```
+
+## Step 3: Homebrew
 
 ```bash
 # Check
@@ -35,7 +66,7 @@ command -v brew && echo "Homebrew OK"
 eval "$(/opt/homebrew/bin/brew shellenv)"
 ```
 
-## Step 3: Python 3.12
+## Step 4: Python 3.12
 
 Python 3.12 specifically — **not 3.13**. libmelee depends on pyenet,
 which has C extensions that fail to build on 3.13.
@@ -47,7 +78,7 @@ brew install python@3.12
 python3.12 --version  # Should show 3.12.x
 ```
 
-## Step 4: Slippi Launcher + Dolphin
+## Step 5: Slippi Launcher + Dolphin
 
 Slippi Launcher manages the Dolphin install. Download from GitHub:
 
@@ -69,31 +100,27 @@ cp -R "/Volumes/Slippi Launcher/Slippi Launcher.app" /Applications/
 hdiutil detach "/Volumes/Slippi Launcher"
 ```
 
-**Then the user must:**
+> **WAIT FOR USER**: The Slippi Launcher is a GUI app. Ask the user to:
+> 1. Open Slippi Launcher from `/Applications`
+> 2. Let it download Dolphin (installs to `/Applications/Slippi Dolphin.app`)
+> 3. Log in or create a Slippi account
+> 4. Note their connect code (shown on the home screen, e.g. `ABCD#123`)
+> 5. If macOS blocks the app, right-click > Open to bypass Gatekeeper
+>
+> When they confirm, verify with:
+> ```bash
+> ls "/Applications/Slippi Dolphin.app" && echo "Dolphin OK"
+> ```
+> If Dolphin isn't there, check:
+> ```bash
+> ls ~/Library/Application\ Support/Slippi\ Launcher/netplay/
+> ```
 
-1. Open Slippi Launcher from `/Applications`
-2. Let it download Dolphin (installs to `/Applications/Slippi Dolphin.app`)
-3. Log in or create a Slippi account
-4. Note their connect code (shown on the home screen)
-
-**Verify Dolphin is installed:**
-
-```bash
-ls "/Applications/Slippi Dolphin.app" && echo "Dolphin OK"
-```
-
-If Dolphin isn't at `/Applications/Slippi Dolphin.app`, the Launcher may
-have placed it elsewhere. Check:
-
-```bash
-ls ~/Library/Application\ Support/Slippi\ Launcher/netplay/
-```
-
-## Step 5: Clone and Install No Johns
+## Step 6: Clone and Install No Johns
 
 ```bash
-# Clone the repo (update URL when public)
-git clone <repo-url> nojohns
+# Clone the repo
+git clone https://github.com/ScavieFae/nojohns.git nojohns
 cd nojohns
 
 # Create venv with Python 3.12
@@ -117,19 +144,31 @@ python3.12 -m venv .venv
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 ```
 
-## Step 6: Place the Melee ISO
+## Step 7: Place the Melee ISO
 
-The user places their ISO somewhere on the machine. Common location:
+> **WAIT FOR USER**: Ask the user to place their Melee ISO on the machine
+> and tell you the path. Suggest `~/games/melee/` as a location:
+> ```bash
+> mkdir -p ~/games/melee
+> ```
+> The ISO is typically named something like `Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`.
+> Once they provide the path, verify:
+> ```bash
+> ls -la "<path-they-gave-you>" && echo "ISO OK"
+> ```
 
-```bash
-mkdir -p ~/games/melee
-# Then copy/move the ISO there
-```
-
-## Step 7: Smoke Test (Local Fight)
+## Step 8: Smoke Test (Local Fight)
 
 This opens a Dolphin window and runs two bots against each other locally.
 Confirms Dolphin, libmelee, and nojohns all work together.
+
+First, clear Gatekeeper on Dolphin so it can launch without a security popup:
+
+```bash
+xattr -cr "/Applications/Slippi Dolphin.app"
+```
+
+Then run the smoke test (use the ISO path from Step 7):
 
 ```bash
 .venv/bin/python -m nojohns.cli fight random do-nothing \
@@ -140,11 +179,16 @@ Confirms Dolphin, libmelee, and nojohns all work together.
 Adjust the ISO path to wherever the user placed it. The game should
 launch, run briefly (DoNothing will lose quickly), and exit.
 
+> **WAIT FOR USER**: The smoke test opens a Dolphin window on screen.
+> Ask the user to confirm they see the game running. If macOS blocks
+> Dolphin with a security popup instead, ask them to approve it (System
+> Settings > Privacy & Security > Open Anyway), then re-run the command.
+
 **Expected noise to ignore:**
 - MoltenVK `VK_NOT_READY` errors — cosmetic, Dolphin runs fine
 - BrokenPipeError on cleanup — harmless, from SIGKILL cleanup path
 
-## Step 8: Netplay
+## Step 9: Netplay
 
 With both machines set up, each side runs:
 

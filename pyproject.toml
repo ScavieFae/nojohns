@@ -44,10 +44,10 @@ phillip = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourorg/nojohns"
-Documentation = "https://github.com/yourorg/nojohns/tree/main/docs"
-Repository = "https://github.com/yourorg/nojohns"
-Issues = "https://github.com/yourorg/nojohns/issues"
+Homepage = "https://github.com/ScavieFae/nojohns"
+Documentation = "https://github.com/ScavieFae/nojohns/tree/main/docs"
+Repository = "https://github.com/ScavieFae/nojohns"
+Issues = "https://github.com/ScavieFae/nojohns/issues"
 
 [project.scripts]
 nojohns = "nojohns.cli:main"

@@ -323,55 +323,64 @@ GET  /api/v1/leaderboard         # Rankings
 
 ## Phased Roadmap
 
-### Phase 1: Local CLI (Week 1-2)
-**Goal**: Two fighters can play locally via CLI
+### Phase 1: Local CLI + P2P Netplay ✅
+**Goal**: Two fighters can play locally or over Slippi netplay
 
-- [ ] Fighter interface (`nojohns/fighter.py`)
-- [ ] SmashBot adapter (`fighters/smashbot/`)
-- [ ] Match runner (`nojohns/runner.py`)
-- [ ] CLI tool (`scripts/fight.py`)
+- [x] Fighter interface (`nojohns/fighter.py`)
+- [x] SmashBot adapter (`fighters/smashbot/`)
+- [x] Match runner (`nojohns/runner.py`)
+- [x] Netplay runner (`nojohns/netplay.py`)
+- [x] CLI tool (`nojohns/cli.py`)
+- [ ] Fighter registry (`nojohns/registry.py`)
+- [ ] Replay saving
+- [ ] `--headless` wired up in runner
 
-**Deliverable**: `nojohns fight smashbot smashbot --games 5`
+**Deliverable**: Two machines running fighters against each other over Slippi
 
-### Phase 2: Moltbot Integration (Week 3-4)
-**Goal**: Single Moltbot can run local matches
+### Phase 2: Moltiverse Hackathon — On-Chain Arena (Feb 2-15, 2026)
 
-- [ ] OpenClaw skill skeleton (`skill/SKILL.md`)
-- [ ] Result parsing & display
-- [ ] Fighter configuration via chat
-- [ ] Basic stats tracking
+Targeting three prize categories in the [Moltiverse hackathon](https://moltiverse.dev/)
+on Monad ($200K pool). Core thesis: No Johns already has game AI infrastructure;
+the hackathon adds on-chain wagering, token economics, and agent autonomy.
 
-**Deliverable**: "Hey Moltbot, run SmashBot vs SmashBot and tell me who wins"
+#### 2a: Gaming Arena Agent (Bounty — $10K)
+**Goal**: Competitive gaming with automated on-chain wagering
 
-### Phase 3: Two-Moltbot Demo (Week 5-6)
-**Goal**: Two Moltbots can fight each other
+- [ ] Wager contract (Solidity on Monad) — escrow, match settlement, payouts
+- [ ] Match result oracle — how on-chain knows who won (signed result from both sides)
+- [ ] Arena coordination server — matchmaking, connect code exchange, result reporting
+- [ ] Agent wagering — bots autonomously place and accept wagers
+- [ ] AUSD integration for wager denomination
 
-- [ ] Simple matchmaking (hardcoded pair or manual)
-- [ ] Match coordination protocol
-- [ ] Result agreement
-- [ ] Cross-Moltbot chat ("gg")
+**Deliverable**: Two AI agents wager on-chain, fight over Slippi, winner gets paid automatically
 
-**Deliverable**: Demo video of two Moltbots competing
+#### 2b: Token Launch (Agent+Token Track — $10K + $40K liquidity boost)
+**Goal**: Launch arena token on nad.fun with real utility
 
-### Phase 4: Public Arena (Week 7-10)
-**Goal**: Open matchmaking for any Moltbot
+- [ ] Token design — utility within the arena (entry fees, fighter staking, prize pools)
+- [ ] Launch on nad.fun (bonding curve)
+- [ ] Token integration into wager contracts
+- [ ] Social/marketing for market cap competition ($40K AUSD boost)
 
-- [ ] Arena server deployment
-- [ ] Matchmaking API
-- [ ] ELO system
-- [ ] Replay storage
-- [ ] Leaderboard
+**Deliverable**: Live token on nad.fun with arena utility
 
-**Deliverable**: Public No Johns Arena
+#### 2c: Autonomous Agents (Agent Track — $10K)
+**Goal**: Moltbot-layer agents that operate autonomously on Monad
 
-### Phase 5: Ecosystem (Ongoing)
-**Goal**: Thriving fighter ecosystem
+- [ ] Agent wallet management — each Moltbot has an on-chain identity
+- [ ] Autonomous matchmaking — agents find opponents, negotiate wagers, fight
+- [ ] Bankroll management — agents decide bet sizing based on ELO/confidence
+- [ ] On-chain reputation — win/loss record, ELO as soulbound or on-chain state
 
+**Deliverable**: Agents that autonomously wager, fight, and manage funds on Monad
+
+### Phase 3: Post-Hackathon
+
+- [ ] OpenClaw/Moltbot skill integration
 - [ ] Fighter registry/marketplace
-- [ ] Phillip integration (if weights available)
-- [ ] Custom fighter documentation
 - [ ] Tournament system
-- [ ] Spectator mode
+- [ ] Spectator mode + live commentary
+- [ ] Phillip integration (if weights available)
 
 ---
 
