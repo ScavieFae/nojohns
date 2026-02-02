@@ -25,6 +25,7 @@ from .fighter import (
     ControllerState,
     MatchResult as FighterMatchResult,
 )
+from .menu_navigation import SlippiMenuNavigator
 from .runner import GameResult, MatchResult
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class NetplayRunner:
         self.config = config
         self._console: melee.Console | None = None
         self._controller: melee.Controller | None = None
+        self._menu_navigator = SlippiMenuNavigator()
 
     def run_netplay(
         self,
@@ -316,9 +318,8 @@ class NetplayRunner:
     def _handle_menu(self, state: melee.GameState) -> None:
         """Navigate menus via Slippi direct connect.
 
-        The key difference from MatchRunner: we pass the opponent's connect
-        code to menu_helper_simple, which navigates MAIN_MENU -> ONLINE_PLAY
-        -> DIRECT -> enter code -> SLIPPI_ONLINE_CSS instead of local VS.
+        Uses libmelee's menu_helper_simple. Now that accessibility permissions
+        are enabled, this should work properly.
         """
         melee.MenuHelper.menu_helper_simple(
             gamestate=state,
