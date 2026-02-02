@@ -66,13 +66,15 @@ command -v brew && echo "Homebrew OK"
 eval "$(/opt/homebrew/bin/brew shellenv)"
 ```
 
-## Step 4: Python 3.12
+## Step 4: Python 3.12 and enet
 
 Python 3.12 specifically — **not 3.13**. libmelee depends on pyenet,
 which has C extensions that fail to build on 3.13.
 
+We also need `enet` for pyenet to link against (see Step 6).
+
 ```bash
-brew install python@3.12
+brew install python@3.12 enet
 
 # Verify
 python3.12 --version  # Should show 3.12.x
@@ -125,9 +127,14 @@ cd nojohns
 
 # Create venv with Python 3.12
 python3.12 -m venv .venv
-
-# Install nojohns + dependencies (including libmelee)
 .venv/bin/pip install --upgrade pip
+
+# IMPORTANT: On macOS, pyenet needs explicit linking to enet library
+# Install pyenet first with proper flags:
+LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
+  .venv/bin/pip install --no-cache-dir --no-binary :all: pyenet
+
+# Now install nojohns + remaining dependencies
 .venv/bin/pip install -e .
 ```
 
@@ -207,6 +214,8 @@ networking.
 
 ### pyenet build fails
 
+**Scenario 1: Wrong Python version**
+
 You're probably on Python 3.13. Use 3.12:
 
 ```bash
@@ -218,6 +227,27 @@ If you used the system Python to create the venv, recreate it:
 ```bash
 rm -rf .venv
 python3.12 -m venv .venv
+.venv/bin/pip install -e .
+```
+
+**Scenario 2: macOS linking errors**
+
+If you see errors like:
+- `enet/types.h file not found` during build
+- `symbol not found in flat namespace '_enet_address_get_host'` at runtime
+
+This means pyenet can't find or link against the enet library. Solution:
+
+```bash
+# Install enet if not already installed
+brew install enet
+
+# Rebuild pyenet with explicit linking
+.venv/bin/pip uninstall -y pyenet
+LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
+  .venv/bin/pip install --no-cache-dir --no-binary :all: pyenet
+
+# Reinstall nojohns
 .venv/bin/pip install -e .
 ```
 

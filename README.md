@@ -121,6 +121,7 @@ nojohns/
 ## Requirements
 
 - **Python 3.12** (not 3.13 — pyenet build fails)
+- **enet** (macOS: `brew install enet` — required for pyenet linking)
 - **Melee NTSC 1.02 ISO** (you provide this)
 - **[Slippi Dolphin](https://slippi.gg)** (installed via Slippi Launcher)
 - **Rosetta 2** (Apple Silicon only — Dolphin is x86_64)
