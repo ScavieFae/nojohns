@@ -236,6 +236,7 @@ class NetplayRunner:
         start_frame = None
         game_started = False
         consecutive_nones = 0
+        game_result = None  # Store result when game ends, return after postgame
 
         # Main game loop
         while True:
@@ -267,10 +268,16 @@ class NetplayRunner:
                         last_percent[port] = player.percent
 
                 # Get action from our fighter only
-                try:
-                    action = fighter.act(state)
-                except Exception as e:
-                    logger.error(f"Fighter error: {e}")
+                # But don't send inputs if we're dead/dying (might help netplay sync)
+                p1 = state.players.get(1)
+                if p1 and p1.stock > 0:
+                    try:
+                        action = fighter.act(state)
+                    except Exception as e:
+                        logger.error(f"Fighter error: {e}")
+                        action = ControllerState()
+                else:
+                    # Player is dead/respawning, send neutral inputs
                     action = ControllerState()
 
                 # Apply to our controller (port 1 only)
@@ -280,32 +287,47 @@ class NetplayRunner:
                 if on_frame:
                     on_frame(state)
 
-                # Check for game end
-                p1 = state.players.get(1)
-                p2 = state.players.get(2)
+                # Check for game end - but don't return yet, let explosion finish
+                # Also skip checking during action states that might be mid-explosion
+                if game_result is None:  # Only check once
+                    p1 = state.players.get(1)
+                    p2 = state.players.get(2)
 
-                if p1 and p2 and (p1.stock == 0 or p2.stock == 0):
-                    winner = 1 if p2.stock == 0 else 2
+                    # Only check for game end when both players are in stable states
+                    # Skip if either player is None (can happen during respawn)
+                    if p1 and p2 and (p1.stock == 0 or p2.stock == 0):
+                        # Make sure we're not in the middle of a death animation
+                        # Wait for players to be in stable states
+                        p1_stable = p1.action.value < 0xA  # Not in special states
+                        p2_stable = p2.action.value < 0xA
 
-                    game_result = GameResult(
-                        winner_port=winner,
-                        p1_stocks=p1.stock,
-                        p2_stocks=p2.stock,
-                        p1_damage_dealt=damage_dealt[1],
-                        p2_damage_dealt=damage_dealt[2],
-                        duration_frames=state.frame - (start_frame or 0),
-                        stage=self.config.stage,
-                    )
+                        if p1_stable and p2_stable:
+                            winner = 1 if p2.stock == 0 else 2
 
-                    # Notify fighter
-                    fighter.on_game_end(self._to_fighter_result(game_result))
+                            game_result = GameResult(
+                                winner_port=winner,
+                                p1_stocks=p1.stock,
+                                p2_stocks=p2.stock,
+                                p1_damage_dealt=damage_dealt[1],
+                                p2_damage_dealt=damage_dealt[2],
+                                duration_frames=state.frame - (start_frame or 0),
+                                stage=self.config.stage,
+                            )
 
-                    return game_result
+                            # Notify fighter
+                            fighter.on_game_end(self._to_fighter_result(game_result))
+                            logger.debug("Game end detected, waiting for postgame transition")
 
                 continue
 
-            # Postgame scores — skip through
+            # Postgame scores — skip through and return
             if state.menu_state == melee.Menu.POSTGAME_SCORES:
+                if game_result is not None:
+                    # Game ended, we've reached postgame, now we can return
+                    logger.debug("Reached postgame, returning result")
+                    return game_result
+
+                # Still in postgame from a previous game, skip it
                 melee.MenuHelper.skip_postgame(
                     controller=self._controller,
                     gamestate=state,
