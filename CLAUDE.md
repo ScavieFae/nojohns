@@ -361,6 +361,17 @@ validation that requires "netplay" in the path.
 
 25. **Arena self-matching**: Fixed by cancelling stale entries on rejoin and filtering `connect_code` in `find_waiting_opponent()`.
 
+## Demo Flow
+
+Phillip is the flagship fighter -- neural net trained on human replays. For a two-machine demo:
+
+1. Start arena on host machine: `nojohns arena`
+2. Both sides: `nojohns matchmake phillip`
+
+Config handles paths, codes, server URL, delay, throttle. No flags needed.
+
+For a quick local test (one machine, no netplay): `nojohns fight phillip do-nothing`
+
 ## Useful Commands
 
 ```bash
@@ -376,18 +387,18 @@ nojohns setup melee phillip      # Install Phillip (TF, slippi-ai, model)
 
 # List fighters
 nojohns list-fighters
-nojohns info random
+nojohns info phillip
 
 # Local fight (paths from config)
-nojohns fight random do-nothing
-nojohns fight random random --games 3
+nojohns fight phillip do-nothing
+nojohns fight phillip random --games 3
 
 # Netplay (--code is opponent's code, always required)
-nojohns netplay random --code "ABCD#123"
+nojohns netplay phillip --code "ABCD#123"
 
 # Arena matchmaking (code/server/paths from config)
 nojohns arena --port 8000
-nojohns matchmake random
+nojohns matchmake phillip
 
 # Format / type check
 black nojohns/ games/
