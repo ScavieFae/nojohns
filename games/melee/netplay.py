@@ -289,6 +289,19 @@ class NetplayRunner:
                         f"Game frozen (no frame advancement for {freeze_timeout} seconds)"
                     )
 
+                # Periodic debug logging (every 5s)
+                if game_started and state.frame and start_frame:
+                    elapsed_frames = state.frame - start_frame
+                    if elapsed_frames > 0 and elapsed_frames % 300 == 0:
+                        p1 = state.players.get(1)
+                        p2 = state.players.get(2)
+                        p1_info = f"stock={p1.stock} pct={p1.percent:.0f} action={p1.action}" if p1 else "None"
+                        p2_info = f"stock={p2.stock} pct={p2.percent:.0f} action={p2.action}" if p2 else "None"
+                        logger.info(
+                            f"[debug] frame={state.frame} menu={state.menu_state} "
+                            f"P1=[{p1_info}] P2=[{p2_info}] game_result={'SET' if game_result else 'None'}"
+                        )
+
                 # In game — the hot path
                 if state.menu_state in [melee.Menu.IN_GAME, melee.Menu.SUDDEN_DEATH]:
                     if not game_started:
@@ -325,10 +338,26 @@ class NetplayRunner:
                     if on_frame:
                         on_frame(state)
 
-                    # Check for game end - detect when stocks hit 0
+                    # Check for game end - detect when stocks hit 0 or timeout
                     if game_result is None:  # Only check once
                         p1 = state.players.get(1)
                         p2 = state.players.get(2)
+
+                        # Timeout: 60s in-game = success, move on
+                        elapsed_frames = state.frame - (start_frame or 0)
+                        if elapsed_frames >= 3600:  # 60s * 60fps
+                            logger.info(f"Match timeout (60s) — counting as completed")
+                            game_result = GameResult(
+                                winner_port=1,  # Arbitrary — both survived
+                                p1_stocks=p1.stock if p1 else 0,
+                                p2_stocks=p2.stock if p2 else 0,
+                                p1_damage_dealt=damage_dealt[1],
+                                p2_damage_dealt=damage_dealt[2],
+                                duration_frames=elapsed_frames,
+                                stage=self.config.stage,
+                            )
+                            fighter.on_game_end(self._to_fighter_result(game_result))
+                            return game_result
 
                         # Check if someone ran out of stocks
                         # Don't check action states - in netplay, the stable window is too brief
