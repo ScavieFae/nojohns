@@ -325,36 +325,29 @@ class NetplayRunner:
                     if on_frame:
                         on_frame(state)
 
-                    # Check for game end - but don't return yet, let explosion finish
-                    # Also skip checking during action states that might be mid-explosion
+                    # Check for game end - detect when stocks hit 0
                     if game_result is None:  # Only check once
                         p1 = state.players.get(1)
                         p2 = state.players.get(2)
 
-                        # Only check for game end when both players are in stable states
-                        # Skip if either player is None (can happen during respawn)
+                        # Check if someone ran out of stocks
+                        # Don't check action states - in netplay, the stable window is too brief
                         if p1 and p2 and (p1.stock == 0 or p2.stock == 0):
-                            # Make sure we're not in the middle of a death animation
-                            # Wait for players to be in stable states
-                            p1_stable = p1.action.value < 0xA  # Not in special states
-                            p2_stable = p2.action.value < 0xA
+                            winner = 1 if p2.stock == 0 else 2
 
-                            if p1_stable and p2_stable:
-                                winner = 1 if p2.stock == 0 else 2
+                            game_result = GameResult(
+                                winner_port=winner,
+                                p1_stocks=p1.stock,
+                                p2_stocks=p2.stock,
+                                p1_damage_dealt=damage_dealt[1],
+                                p2_damage_dealt=damage_dealt[2],
+                                duration_frames=state.frame - (start_frame or 0),
+                                stage=self.config.stage,
+                            )
 
-                                game_result = GameResult(
-                                    winner_port=winner,
-                                    p1_stocks=p1.stock,
-                                    p2_stocks=p2.stock,
-                                    p1_damage_dealt=damage_dealt[1],
-                                    p2_damage_dealt=damage_dealt[2],
-                                    duration_frames=state.frame - (start_frame or 0),
-                                    stage=self.config.stage,
-                                )
-
-                                # Notify fighter
-                                fighter.on_game_end(self._to_fighter_result(game_result))
-                                logger.debug("Game end detected, waiting for postgame transition")
+                            # Notify fighter
+                            fighter.on_game_end(self._to_fighter_result(game_result))
+                            logger.info(f"Game end detected: P{winner} wins ({game_result.p1_stocks}-{game_result.p2_stocks})")
 
                     # If game ended but stocks reset (new match starting), return immediately
                     elif game_result is not None:
@@ -363,8 +356,6 @@ class NetplayRunner:
                         if p1 and p2 and p1.stock > 0 and p2.stock > 0:
                             logger.info("Stocks reset after game end - returning result without postgame")
                             return game_result
-
-                    continue
 
                     continue
 
