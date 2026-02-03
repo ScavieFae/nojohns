@@ -31,6 +31,7 @@ def main():
     parser.add_argument("-d", "--dolphin", required=True, help="Path to Slippi Dolphin")
     parser.add_argument("-i", "--iso", required=True, help="Path to Melee ISO")
     parser.add_argument("--delay", type=int, default=6, help="Online delay (frames)")
+    parser.add_argument("--throttle", type=int, default=3, help="AI input throttle (get new input every N frames)")
     parser.add_argument("--match-num", type=int, default=1, help="Match number for logging")
 
     args = parser.parse_args()
@@ -57,6 +58,7 @@ def main():
         opponent_code=args.opponent,
         character=char,
         online_delay=args.delay,
+        input_throttle=args.throttle,
         fullscreen=False,
     )
 

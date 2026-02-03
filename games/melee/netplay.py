@@ -61,6 +61,7 @@ class NetplayConfig:
 
     # Netplay tuning
     online_delay: int = 2  # Frames of input delay for rollback
+    input_throttle: int = 1  # Only get new AI input every N frames (1=every frame, 3=every 3rd frame)
 
     # Paths
     dolphin_home_path: str | None = None
@@ -238,6 +239,10 @@ class NetplayRunner:
         consecutive_nones = 0
         game_result = None  # Store result when game ends, return after postgame
 
+        # Input throttling - cache last action
+        last_action = ControllerState()
+        frames_since_input = 0
+
         # Freeze detection - track when frames stop advancing
         last_frame_number = None
         last_frame_time = time.time()
@@ -319,20 +324,25 @@ class NetplayRunner:
                             last_percent[port] = player.percent
 
                     # Get action from our fighter only
-                    # But don't send inputs if we're dead/dying (might help netplay sync)
-                    p1 = state.players.get(1)
-                    if p1 and p1.stock > 0:
-                        try:
-                            action = fighter.act(state)
-                        except Exception as e:
-                            logger.error(f"Fighter error: {e}")
-                            action = ControllerState()
-                    else:
-                        # Player is dead/respawning, send neutral inputs
-                        action = ControllerState()
+                    # Throttle AI inputs to reduce netplay load
+                    frames_since_input += 1
+                    if frames_since_input >= self.config.input_throttle:
+                        frames_since_input = 0
+                        # Get fresh input from AI
+                        p1 = state.players.get(1)
+                        if p1 and p1.stock > 0:
+                            try:
+                                last_action = fighter.act(state)
+                            except Exception as e:
+                                logger.error(f"Fighter error: {e}")
+                                last_action = ControllerState()
+                        else:
+                            # Player is dead/respawning, send neutral inputs
+                            last_action = ControllerState()
+                    # else: reuse last_action (throttled)
 
                     # Apply to our controller (port 1 only)
-                    action.to_libmelee(self._controller)
+                    last_action.to_libmelee(self._controller)
 
                     # Frame callback
                     if on_frame:

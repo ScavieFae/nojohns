@@ -55,6 +55,7 @@ CHARACTERS = [
 ]
 
 DELAY = 6
+INPUT_THROTTLE = 3  # Get new AI input every N frames (3 = 20 inputs/sec instead of 60)
 MATCHES_TO_RUN = 10
 SUCCESS_THRESHOLD_SECONDS = 60  # Match is "successful" if it lasts 60+ seconds
 
@@ -151,6 +152,7 @@ def main():
                     "-d", args.dolphin,
                     "-i", args.iso,
                     "--delay", str(DELAY),
+                    "--throttle", str(INPUT_THROTTLE),
                     "--match-num", str(match_num),
                 ],
                 capture_output=True,
