@@ -227,12 +227,13 @@ class TestNetplayRunner:
         runner._controller = MagicMock()
 
         mock_state = MagicMock()
-        melee.MenuHelper.menu_helper_simple.reset_mock()
+        mock_helper = runner._menu_helper
+        mock_helper.menu_helper_simple.reset_mock()
 
         runner._handle_menu(mock_state)
 
-        melee.MenuHelper.menu_helper_simple.assert_called_once()
-        call_kwargs = melee.MenuHelper.menu_helper_simple.call_args[1]
+        mock_helper.menu_helper_simple.assert_called_once()
+        call_kwargs = mock_helper.menu_helper_simple.call_args[1]
         assert call_kwargs["connect_code"] == "ABCD#123"
         assert call_kwargs["controller"] == runner._controller
         assert call_kwargs["gamestate"] == mock_state
@@ -245,11 +246,12 @@ class TestNetplayRunner:
         runner._controller = MagicMock()
 
         mock_state = MagicMock()
-        melee.MenuHelper.menu_helper_simple.reset_mock()
+        mock_helper = runner._menu_helper
+        mock_helper.menu_helper_simple.reset_mock()
 
         runner._handle_menu(mock_state)
 
-        call_kwargs = melee.MenuHelper.menu_helper_simple.call_args[1]
+        call_kwargs = mock_helper.menu_helper_simple.call_args[1]
         assert call_kwargs["character_selected"] == Character.FALCO
 
     def test_fighter_setup_gets_port_1(self):

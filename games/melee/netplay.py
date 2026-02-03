@@ -316,6 +316,10 @@ class NetplayRunner:
                         start_frame = state.frame
                         logger.info("Game started")
 
+                        # Notify fighter that the game has started
+                        if hasattr(fighter, 'on_game_start'):
+                            fighter.on_game_start(1, state)
+
                     # Track damage dealt
                     for port in [1, 2]:
                         player = state.players.get(port)

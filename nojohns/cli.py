@@ -223,12 +223,14 @@ def cmd_matchmake(args):
 
     except KeyboardInterrupt:
         logger.info("\nCancelled.")
-        if queue_id:
+        return 130
+    finally:
+        # Always clean up our queue entry so stale entries don't pile up
+        if queue_id and match_id is None:
             try:
                 _delete(f"/queue/{queue_id}")
             except Exception:
                 pass
-        return 130
 
 
 def cmd_arena(args):

@@ -55,7 +55,18 @@ class ArenaDB:
     # ------------------------------------------------------------------
 
     def add_to_queue(self, connect_code: str, fighter_name: str | None = None) -> str:
-        """Add a player to the queue. Returns queue_id."""
+        """Add a player to the queue. Returns queue_id.
+
+        If the same connect_code already has a waiting entry, it is cancelled
+        first to prevent self-matching from stale entries.
+        """
+        # Cancel any stale waiting entries for this connect code
+        self._conn.execute(
+            "UPDATE queue SET status = 'cancelled', updated_at = ? "
+            "WHERE connect_code = ? AND status = 'waiting'",
+            (_now(), connect_code),
+        )
+
         queue_id = str(uuid.uuid4())
         now = _now()
         self._conn.execute(
@@ -79,10 +90,16 @@ class ArenaDB:
         return dict(row)
 
     def find_waiting_opponent(self, exclude_id: str) -> dict[str, Any] | None:
-        """Find the oldest waiting queue entry that isn't us."""
+        """Find the oldest waiting queue entry that isn't us (by ID or connect code)."""
+        entry = self._conn.execute(
+            "SELECT connect_code FROM queue WHERE id = ?", (exclude_id,)
+        ).fetchone()
+        if entry is None:
+            return None
         row = self._conn.execute(
-            "SELECT * FROM queue WHERE status = 'waiting' AND id != ? ORDER BY created_at ASC LIMIT 1",
-            (exclude_id,),
+            "SELECT * FROM queue WHERE status = 'waiting' AND id != ? AND connect_code != ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (exclude_id, entry["connect_code"]),
         ).fetchone()
         return dict(row) if row else None
 
