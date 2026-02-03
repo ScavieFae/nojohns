@@ -1,0 +1,12 @@
+# Phillip Fighter Dependencies
+# Requires Python 3.11 due to TensorFlow compatibility
+
+# Install slippi-ai first:
+#   cd fighters/phillip/slippi-ai
+#   pip install -r requirements.txt
+#   pip install -e .
+
+# Then install these additional dependencies:
+tensorflow-macos==2.16.2  # Apple Silicon optimized
+tensorflow-probability==0.24.0  # Compatible with TF 2.16
+tf-keras==2.16.0  # Compatible with TF 2.16

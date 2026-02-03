@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# Add slippi-ai to Python path
-SLIPPI_AI_PATH = Path(__file__).parent.parent.parent / 'phillip-research' / 'slippi-ai'
+# Add slippi-ai to Python path (located alongside this adapter)
+SLIPPI_AI_PATH = Path(__file__).parent / 'slippi-ai'
 if SLIPPI_AI_PATH.exists():
     sys.path.insert(0, str(SLIPPI_AI_PATH))
 
@@ -25,7 +25,7 @@ except ImportError:
     # Define placeholder for type hints
     melee = None
 
-from nojohns.fighter import Fighter, FighterResult, ControllerState
+from nojohns.fighter import Fighter, FighterMetadata, MatchConfig, FighterConfig, MatchResult, ControllerState
 
 # Import melee for GameState type
 import melee
@@ -116,21 +116,40 @@ class PhillipFighter(Fighter):
             logger.error(f"Failed to load model config: {e}")
             raise
 
+    @property
+    def metadata(self) -> FighterMetadata:
+        """Return fighter metadata."""
+        model_name = self.config.model_path.stem
+        policy_config = self._model_config.get('policy', {}) if self._model_config else {}
+        delay = self.config.delay or policy_config.get('delay', 21)
+
+        return FighterMetadata(
+            name=f"phillip-{model_name}",
+            version="1.0.0",
+            display_name=f"Phillip ({model_name})",
+            author="vladfi1 (slippi-ai)",
+            description=f"Neural network AI trained via imitation learning + RL. Delay: {delay} frames",
+            fighter_type="neural-network",
+            characters=[melee.Character.FOX],  # Model supports all characters, but we'll start with Fox
+        )
+
     def name(self) -> str:
         """Return fighter name."""
-        model_name = self.config.model_path.stem
-        return f"Phillip ({model_name})"
+        return self.metadata.display_name
 
     def description(self) -> str:
         """Return fighter description."""
-        policy_config = self._model_config.get('policy', {}) if self._model_config else {}
-        delay = self.config.delay or policy_config.get('delay', '?')
-        network = self._model_config.get('network', {}).get('name', 'unknown') if self._model_config else 'unknown'
+        return self.metadata.description
 
-        return (
-            f"Neural network AI trained via imitation learning + RL. "
-            f"Delay: {delay} frames, Network: {network}"
-        )
+    def setup(self, match: MatchConfig, config: FighterConfig | None = None) -> None:
+        """
+        Prepare for a game. Called by the runner before each game.
+
+        This is different from on_game_start which is called when we detect
+        the game actually starting from gamestate.
+        """
+        # Store match config for later use
+        self._match_config = match
 
     def on_game_start(self, port: int, state: melee.GameState) -> None:
         """
@@ -159,6 +178,7 @@ class PhillipFighter(Fighter):
             f"delay={delay}, console_delay={console_delay}"
         )
 
+        try:
             # Build the agent
             self._agent = eval_lib.build_agent(
                 port=port,
@@ -176,6 +196,7 @@ class PhillipFighter(Fighter):
                 """Minimal controller that satisfies Agent.set_controller()."""
                 def __init__(self, port):
                     self.port = port
+                    self.last_action = None
 
                 def press_button(self, button): pass
                 def release_button(self, button): pass
@@ -183,6 +204,7 @@ class PhillipFighter(Fighter):
                 def press_shoulder(self, button, amount): pass
 
             dummy_controller = DummyController(port)
+            self._dummy_controller = dummy_controller  # Store reference
             self._agent.set_controller(dummy_controller)
 
             # Start the agent (initializes internal state)
@@ -212,35 +234,34 @@ class PhillipFighter(Fighter):
             return ControllerState()
 
         try:
-            # Capture the controller action from agent.step()
-            # The agent calls send_controller() internally, so we intercept it
-            from slippi_ai import controller_lib
+            # Call agent.step() - note: this also calls send_controller internally
+            # but we don't use that, we just want the return value
+            sample_outputs = self._agent.step(state)
 
-            captured_action = None
-            original_send = controller_lib.send_controller
+            # The agent's step() processes and decodes the controller internally
+            # We need to access the decoded controller that was sent
+            # For now, intercept by checking what was stored in dummy controller
+            # or use a simpler approach - just let the agent control directly
 
-            def capture_send(controller, controller_state):
-                nonlocal captured_action
-                captured_action = controller_state
-                # Still call original to update the agent's controller if needed
-                original_send(controller, controller_state)
+            # Extract the raw controller state from sample_outputs
+            # sample_outputs.controller_state is the encoded version
+            encoded_controller = sample_outputs.controller_state
 
-            # Temporarily replace send_controller
-            controller_lib.send_controller = capture_send
+            # We need to decode it the same way the agent does
+            # Looking at agent code: action = utils.map_nt(lambda x: x[0], action)
+            # Then: action = self._agent.embed_controller.decode(action)
+            import numpy as np
+            from slippi_ai import utils
 
-            try:
-                # Call agent.step() which processes state and calls send_controller
-                self._agent.step(state)
-            finally:
-                # Always restore original function
-                controller_lib.send_controller = original_send
+            action = utils.map_nt(lambda x: x[0], encoded_controller)
+            decoded_controller = self._agent._agent.embed_controller.decode(action)
 
-            if captured_action is None:
-                logger.warning("Agent step() did not produce action")
-                return ControllerState()
+            if self._agent.mirror:
+                from slippi_ai import mirror_lib
+                decoded_controller = mirror_lib.mirror_controller(decoded_controller)
 
-            # Convert Phillip's Controller format to our ControllerState
-            return self._convert_controller(captured_action)
+            # Convert to our ControllerState format
+            return self._convert_controller(decoded_controller)
 
         except Exception as e:
             logger.error(f"Phillip agent error: {e}", exc_info=True)
@@ -278,7 +299,7 @@ class PhillipFighter(Fighter):
             # Those remain False (default)
         )
 
-    def on_game_end(self, result: FighterResult) -> None:
+    def on_game_end(self, result: MatchResult) -> None:
         """
         Called when game ends.
 
@@ -317,7 +338,7 @@ def load_phillip(model_name: str = "all_d21_imitation_v3") -> PhillipFighter:
         >>> phillip = load_phillip("all_d21_imitation_v3")
         >>> # Use in a match
     """
-    models_dir = Path(__file__).parent.parent.parent / 'phillip-research' / 'models'
+    models_dir = Path(__file__).parent / 'models'
     model_path = models_dir / f'{model_name}.pkl'
 
     config = PhillipConfig(

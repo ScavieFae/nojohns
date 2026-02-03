@@ -109,6 +109,7 @@ class MatchRunner:
         self.dolphin = dolphin
         self._console: melee.Console | None = None
         self._controllers: dict[int, melee.Controller] = {}
+        self._menu_helper = melee.MenuHelper()
     
     def run_match(
         self,
@@ -294,6 +295,12 @@ class MatchRunner:
                     start_frame = state.frame
                     logger.info("Game started")
 
+                    # Notify fighters that the game has started (if they implement it)
+                    if hasattr(fighter1, 'on_game_start'):
+                        fighter1.on_game_start(1, state)
+                    if hasattr(fighter2, 'on_game_start'):
+                        fighter2.on_game_start(2, state)
+
                 # Track damage dealt
                 for port in [1, 2]:
                     player = state.players.get(port)
@@ -308,7 +315,7 @@ class MatchRunner:
                     action1 = fighter1.act(state)
                     action2 = fighter2.act(state)
                 except Exception as e:
-                    logger.error(f"Fighter error: {e}")
+                    logger.error(f"Fighter error: {e}", exc_info=True)
                     action1 = ControllerState()
                     action2 = ControllerState()
 
@@ -347,7 +354,7 @@ class MatchRunner:
 
             # Postgame scores — skip through
             if state.menu_state == melee.Menu.POSTGAME_SCORES:
-                melee.MenuHelper.skip_postgame(
+                self._menu_helper.skip_postgame(
                     controller=self._controllers[1],
                     gamestate=state,
                 )
@@ -362,7 +369,7 @@ class MatchRunner:
             (1, settings.p1_character, settings.p1_cpu_level),
             (2, settings.p2_character, settings.p2_cpu_level),
         ]:
-            melee.MenuHelper.menu_helper_simple(
+            self._menu_helper.menu_helper_simple(
                 gamestate=state,
                 controller=self._controllers[port],
                 character_selected=char,
