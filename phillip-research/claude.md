@@ -155,6 +155,33 @@ Phillip is a neural network-based Melee AI developed by vladfi1 (x_pilot on Twit
 
 ## Key Discoveries
 
+### How x_pilot Runs His Twitch Bot
+
+From `scripts/twitchbot.py` (this is what he uses!):
+
+**Model Storage:**
+```python
+MODELS_PATH = flags.DEFINE_string('models', 'pickled_models', 'Path to models')
+```
+- Default path: `pickled_models/` directory
+- Bot scans this directory and loads ALL `.pkl` files
+
+**Model Loading:**
+```python
+for model in os.listdir(self._models_path):
+    path = os.path.join(self._models_path, model)
+    state = saving.load_state_from_disk(path)
+    add_agent(self._single_agent(model=model))
+```
+
+**Agent Types Created:**
+1. **Regular agents** - from any .pkl in models path
+2. **Imitation agents** - "basic-*" prefix (phase 1 training)
+3. **Auto agents** - "auto-*" prefix (best matchup selection)
+4. **Medium agents** - special configured agents
+
+**Key Finding:** x_pilot definitely HAS all the model files in a local `pickled_models/` directory. They're just not distributed publicly.
+
 ### Architecture Deep Dive
 
 From exploring the slippi-ai codebase:
