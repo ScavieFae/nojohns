@@ -342,6 +342,48 @@ Two-machine test using `test_netplay_stability.py`. Each side runs independently
 - Pre-throttle, with browser tabs: 9/10 completed, 1 disconnect
 - With `input_throttle=3`, fewer tabs: 10/10 completed, 0 disconnects
 
+## Arena Matchmaking
+
+Two-machine matchmaking test. The server runs on one machine, both sides connect to it.
+
+**Step 1: Start the arena server (Scav):**
+```bash
+.venv/bin/python -m nojohns.cli arena --port 8000
+```
+
+Find Scav's IP: `ipconfig getifaddr en0`
+
+**Step 2: Both sides matchmake (order doesn't matter — first one waits, second triggers the match):**
+
+**Scav (this machine):**
+```bash
+.venv/bin/python -m nojohns.cli matchmake random \
+  --code SCAV#382 --server http://localhost:8000 \
+  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
+  --delay 6 --throttle 3 \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+```
+
+**ScavieFae (queenmab):**
+```bash
+.venv/bin/python -m nojohns.cli matchmake random \
+  --code SCAV#861 --server http://<scav-ip>:8000 \
+  -d "/Users/queenmab/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app" \
+  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+```
+
+Note: ScavieFae does NOT use `--dolphin-home` (causes fullscreen issues on that machine — see gotcha #17). Delay and throttle default to 6 and 3.
+
+**How it works**: The arena server is a FIFO matchmaker (FastAPI + SQLite). Each side POSTs to `/queue/join`, polls every 2s until matched, gets the opponent's Slippi connect code, launches netplay, and reports the result. The server never touches the game — it just brokers the connection. Stale queue entries expire after 5 minutes of no polling.
+
+**ScavieFae setup** (first time only):
+```bash
+cd ~/claude-projects/nojohns
+git pull
+.venv/bin/pip install -e ".[arena]"
+```
+
 ## Questions to Ask Yourself
 
 When modifying this codebase:
