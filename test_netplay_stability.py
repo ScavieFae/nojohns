@@ -21,18 +21,37 @@ from pathlib import Path
 
 from melee import Character
 
-# Test configuration
+# Test configuration - ALL Melee characters!
 CHARACTERS = [
+    # Top tier
     Character.FOX,
     Character.FALCO,
     Character.MARTH,
-    Character.ZELDA,
+    # Character.SHEIK,  # Removed - menu nav can't find it reliably
     Character.JIGGLYPUFF,
     Character.PEACH,
     Character.CPTFALCON,
     Character.PIKACHU,
     Character.SAMUS,
     Character.YLINK,
+    Character.ICECLIMBERS,
+    # Mid tier
+    Character.LINK,
+    Character.LUIGI,
+    Character.GANONDORF,
+    Character.DOC,
+    Character.MARIO,
+    Character.YOSHI,
+    Character.DK,
+    # Low tier
+    Character.ZELDA,
+    Character.ROY,
+    Character.MEWTWO,
+    Character.NESS,
+    Character.GAMEANDWATCH,
+    Character.BOWSER,
+    Character.KIRBY,
+    Character.PICHU,
 ]
 
 DELAY = 6
