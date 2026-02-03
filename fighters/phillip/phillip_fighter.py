@@ -159,7 +159,6 @@ class PhillipFighter(Fighter):
             f"delay={delay}, console_delay={console_delay}"
         )
 
-        try:
             # Build the agent
             self._agent = eval_lib.build_agent(
                 port=port,
@@ -169,6 +168,22 @@ class PhillipFighter(Fighter):
                 async_inference=self.config.async_inference,
                 # jit_compile=False,  # Disable JIT for debugging
             )
+
+            # Create a dummy controller for the agent to update
+            # We don't actually connect to Dolphin with this - we just use it
+            # to capture controller state in act()
+            class DummyController:
+                """Minimal controller that satisfies Agent.set_controller()."""
+                def __init__(self, port):
+                    self.port = port
+
+                def press_button(self, button): pass
+                def release_button(self, button): pass
+                def tilt_analog(self, button, x, y): pass
+                def press_shoulder(self, button, amount): pass
+
+            dummy_controller = DummyController(port)
+            self._agent.set_controller(dummy_controller)
 
             # Start the agent (initializes internal state)
             self._agent.start()
@@ -197,27 +212,71 @@ class PhillipFighter(Fighter):
             return ControllerState()
 
         try:
-            # Phillip's agent works differently from our act() pattern:
-            # 1. The agent is called via step(gamestate)
-            # 2. It maintains internal delay buffer
-            # 3. It updates a controller object directly (via set_controller)
-            #
-            # We need to:
-            # 1. Call agent.step(state) to process the gamestate
-            # 2. Read back the controller state from the agent's controller
+            # Capture the controller action from agent.step()
+            # The agent calls send_controller() internally, so we intercept it
+            from slippi_ai import controller_lib
 
-            # TODO: This needs to be tested with actual slippi-ai code
-            # The agent might not have a step() method - need to check eval_lib
-            # For now, return neutral until we can test
+            captured_action = None
+            original_send = controller_lib.send_controller
 
-            logger.debug(f"Phillip act() called for port {self._port}, frame {state.frame}")
+            def capture_send(controller, controller_state):
+                nonlocal captured_action
+                captured_action = controller_state
+                # Still call original to update the agent's controller if needed
+                original_send(controller, controller_state)
 
-            # Placeholder - will implement after testing with slippi-ai
-            return ControllerState()
+            # Temporarily replace send_controller
+            controller_lib.send_controller = capture_send
+
+            try:
+                # Call agent.step() which processes state and calls send_controller
+                self._agent.step(state)
+            finally:
+                # Always restore original function
+                controller_lib.send_controller = original_send
+
+            if captured_action is None:
+                logger.warning("Agent step() did not produce action")
+                return ControllerState()
+
+            # Convert Phillip's Controller format to our ControllerState
+            return self._convert_controller(captured_action)
 
         except Exception as e:
             logger.error(f"Phillip agent error: {e}", exc_info=True)
             return ControllerState()
+
+    def _convert_controller(self, phillip_ctrl) -> ControllerState:
+        """
+        Convert Phillip's Controller NamedTuple to our ControllerState.
+
+        Args:
+            phillip_ctrl: slippi_ai.types.Controller NamedTuple
+
+        Returns:
+            Our ControllerState with equivalent inputs
+        """
+        return ControllerState(
+            # Analog sticks (Phillip uses 0.5 as neutral, same as us)
+            main_x=float(phillip_ctrl.main_stick.x),
+            main_y=float(phillip_ctrl.main_stick.y),
+            c_x=float(phillip_ctrl.c_stick.x),
+            c_y=float(phillip_ctrl.c_stick.y),
+
+            # Triggers (Phillip only uses one 'shoulder' value for L trigger)
+            l_trigger=float(phillip_ctrl.shoulder),
+            r_trigger=0.0,  # Phillip doesn't separate L/R triggers
+
+            # Buttons
+            a=bool(phillip_ctrl.buttons.A),
+            b=bool(phillip_ctrl.buttons.B),
+            x=bool(phillip_ctrl.buttons.X),
+            y=bool(phillip_ctrl.buttons.Y),
+            z=bool(phillip_ctrl.buttons.Z),
+            d_up=bool(phillip_ctrl.buttons.D_UP),
+            # Note: Phillip doesn't use d_down, d_left, d_right, start
+            # Those remain False (default)
+        )
 
     def on_game_end(self, result: FighterResult) -> None:
         """
@@ -230,13 +289,12 @@ class PhillipFighter(Fighter):
         """
         if self._agent:
             try:
-                # Stop the agent (cleanup internal threads/resources)
-                # TODO: Check if Agent has a stop() or cleanup() method
                 logger.info(f"Phillip game ended: {result}")
 
-                # The agent might not have an explicit stop method
-                # It may clean up automatically or via __del__
-                # We'll need to verify this when testing
+                # Stop the agent (cleanup internal threads/resources)
+                # The agent has async inference threads that need cleanup
+                if hasattr(self._agent, 'stop'):
+                    self._agent.stop()
 
             except Exception as e:
                 logger.warning(f"Error during Phillip cleanup: {e}")
