@@ -333,6 +333,14 @@ class NetplayRunner:
                             fighter.on_game_end(self._to_fighter_result(game_result))
                             logger.debug("Game end detected, waiting for postgame transition")
 
+                # If game ended but stocks reset (new match starting), return immediately
+                elif game_result is not None:
+                    p1 = state.players.get(1)
+                    p2 = state.players.get(2)
+                    if p1 and p2 and p1.stock > 0 and p2.stock > 0:
+                        logger.info("Stocks reset after game end - returning result without postgame")
+                        return game_result
+
                 continue
 
             # Postgame scores — skip through and return
