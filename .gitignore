@@ -24,6 +24,9 @@ htmlcov/
 # External fighter repos (cloned at runtime, not vendored)
 fighters/smashbot/SmashBot/
 
+# Arena server database
+arena.db
+
 # Foundry build artifacts
 contracts/out/
 contracts/cache/
