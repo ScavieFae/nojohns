@@ -97,7 +97,10 @@ nojohns/
 │   ├── test/              # Forge tests
 │   └── lib/               # forge install dependencies
 │
-├── arena/                 # Arena server (TODO)
+├── arena/                 # Matchmaking server (FastAPI + SQLite)
+│   ├── __init__.py        # Package init
+│   ├── server.py          # FastAPI app, all endpoints
+│   └── db.py              # SQLite setup + queries
 │
 └── skill/                 # OpenClaw skill
     └── SKILL.md           # Skill documentation
@@ -190,13 +193,15 @@ See `docs/FIGHTERS.md` for full spec.
 - Base classes implemented (BaseFighter, DoNothingFighter, RandomFighter)
 - Match runner working end-to-end (`runner.py`)
 - Slippi netplay runner (`netplay.py`) — single-sided runner for remote competition via Slippi direct connect
-- CLI working (`cli.py` — fight, netplay, netplay-test, list-fighters, info commands)
+- CLI working (`cli.py` — fight, netplay, netplay-test, matchmake, arena, list-fighters, info)
 - Documentation structure (SPEC, FIGHTERS, ARENA, API docs)
 - **Tested with real Dolphin + libmelee** — full match runs successfully
 - SmashBot adapter (`fighters/smashbot/`) — InterceptController + SmashBotFighter
 - SmashBot adapter unit tests (13 passing)
 - Game-specific code separated into `games/melee/` package
 - Foundry contracts scaffold (`contracts/`)
+- Arena matchmaking server (`arena/`) — FastAPI + SQLite, FIFO queue, result reporting
+- Matchmake CLI command — joins queue, polls, launches netplay, reports results
 
 ### Phase 1 TODO (Local CLI)
 - [ ] SmashBot integration test (adapter exists, needs real SmashBot clone to verify)
@@ -210,9 +215,10 @@ See `docs/FIGHTERS.md` for full spec.
 - [ ] Result formatting for chat
 
 ### Phase 3 TODO (Multi-Moltbot)
-- [ ] Arena server
-- [ ] Matchmaking API
-- [ ] ELO system
+- [x] Arena server (Milestone A — FIFO matchmaking, no auth)
+- [x] Matchmaking API (queue/join, queue/poll, matches/result)
+- [ ] Auth / API keys (Milestone B — needed when server is public)
+- [ ] ELO system (match results are recorded, ratings not yet calculated)
 
 ### Phase 4 TODO (Community)
 - [ ] Community skills — LLM-usable actions beyond fighting
@@ -404,6 +410,17 @@ cd contracts && forge test
 .venv/bin/python -m nojohns.cli netplay-test random random \
   --code1 "AAAA#111" --code2 "BBBB#222" \
   --home1 /path/to/dolphin-home-1 --home2 /path/to/dolphin-home-2 \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+
+# Arena — start the matchmaking server
+.venv/bin/python -m nojohns.cli arena --port 8000
+
+# Matchmake — join arena queue, get matched, play netplay automatically
+.venv/bin/python -m nojohns.cli matchmake random \
+  --code SCAV#382 --server http://localhost:8000 \
+  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
+  --delay 6 --throttle 3 \
   -d "/Applications/Slippi Dolphin.app" \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```

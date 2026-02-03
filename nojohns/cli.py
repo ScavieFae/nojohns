@@ -87,6 +87,167 @@ def cmd_fight(args):
         return 1
 
 
+def cmd_matchmake(args):
+    """Join the arena queue, wait for a match, play, and report results."""
+    import json
+    import time
+    import urllib.error
+    import urllib.request
+
+    from games.melee import NetplayConfig, NetplayRunner, NetplayDisconnectedError
+    from melee import Character, Stage
+
+    fighter = load_fighter(args.fighter)
+    if fighter is None:
+        return 1
+
+    server = args.server.rstrip("/")
+
+    # --- Helper: HTTP calls via stdlib ---
+    def _post(path: str, body: dict) -> dict:
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(
+            f"{server}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+
+    def _get(path: str) -> dict:
+        req = urllib.request.Request(f"{server}{path}")
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+
+    def _delete(path: str) -> dict:
+        req = urllib.request.Request(f"{server}{path}", method="DELETE")
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+
+    # --- Step 1: Join queue ---
+    queue_id = None
+    match_id = None
+    try:
+        try:
+            result = _post("/queue/join", {
+                "connect_code": args.code,
+                "fighter_name": args.fighter,
+            })
+        except urllib.error.URLError as e:
+            logger.error(f"Cannot reach arena server at {server}: {e}")
+            return 1
+
+        queue_id = result["queue_id"]
+        status = result["status"]
+
+        if status == "matched":
+            match_id = result["match_id"]
+            opponent_code = result["opponent_code"]
+            logger.info(f"Matched! Opponent: {opponent_code}")
+        else:
+            position = result.get("position", "?")
+            logger.info(f"Joined queue (position: {position})")
+            logger.info("Waiting for opponent...")
+
+            # --- Step 2: Poll for match ---
+            poll_count = 0
+            max_polls = 150  # 5 minutes at 2-second intervals
+            while status == "waiting" and poll_count < max_polls:
+                time.sleep(2)
+                poll_count += 1
+                try:
+                    result = _get(f"/queue/{queue_id}")
+                except urllib.error.URLError:
+                    logger.warning("Lost connection to arena, retrying...")
+                    continue
+
+                status = result["status"]
+
+                if status == "matched":
+                    match_id = result["match_id"]
+                    opponent_code = result["opponent_code"]
+                    logger.info(f"Matched! Opponent: {opponent_code}")
+                    break
+
+            if status != "matched":
+                logger.error("Queue timed out — no opponent found.")
+                _delete(f"/queue/{queue_id}")
+                return 1
+
+        # --- Step 3: Run netplay ---
+        logger.info("Launching netplay...")
+
+        config = NetplayConfig(
+            dolphin_path=args.dolphin,
+            iso_path=args.iso,
+            opponent_code=opponent_code,
+            character=Character[args.char.upper()],
+            stage=Stage[args.stage.upper()],
+            stocks=args.stocks,
+            time_minutes=args.time,
+            online_delay=args.delay,
+            input_throttle=args.throttle,
+            dolphin_home_path=args.dolphin_home,
+        )
+
+        runner = NetplayRunner(config)
+        start_time = time.time()
+        outcome = "COMPLETED"
+
+        try:
+            match_result = runner.run_netplay(fighter, games=1)
+            duration = time.time() - start_time
+            logger.info(f"Match complete! Result: {outcome}")
+        except NetplayDisconnectedError:
+            duration = time.time() - start_time
+            outcome = "DISCONNECT"
+            logger.warning(f"Match ended with disconnect after {duration:.1f}s")
+        except Exception as e:
+            duration = time.time() - start_time
+            outcome = "ERROR"
+            logger.error(f"Match error: {e}")
+
+        # --- Step 4: Report result ---
+        try:
+            _post(f"/matches/{match_id}/result", {
+                "queue_id": queue_id,
+                "outcome": outcome,
+                "duration_seconds": round(duration, 1),
+            })
+            logger.info("Reported result to arena.")
+        except urllib.error.URLError as e:
+            logger.warning(f"Failed to report result: {e}")
+
+        return 0
+
+    except KeyboardInterrupt:
+        logger.info("\nCancelled.")
+        if queue_id:
+            try:
+                _delete(f"/queue/{queue_id}")
+            except Exception:
+                pass
+        return 130
+
+
+def cmd_arena(args):
+    """Start the arena matchmaking server."""
+    try:
+        import uvicorn
+    except ImportError:
+        logger.error("Arena requires extra dependencies: pip install nojohns[arena]")
+        return 1
+
+    from arena.server import app
+
+    # Set DB path on app state so lifespan picks it up
+    app.state.db_path = args.db
+    logger.info(f"Starting arena server on port {args.port} (db: {args.db})")
+    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
+    return 0
+
+
 def cmd_netplay(args):
     """Run a fighter over Slippi netplay against a remote opponent."""
     from games.melee import NetplayConfig, NetplayRunner
@@ -326,6 +487,28 @@ def main():
     nptest_parser.add_argument("--p1-char", default="FOX", help="Side 1 character (default: FOX)")
     nptest_parser.add_argument("--p2-char", default="FOX", help="Side 2 character (default: FOX)")
     nptest_parser.set_defaults(func=cmd_netplay_test)
+
+    # matchmake command
+    mm_parser = subparsers.add_parser("matchmake", help="Join arena queue, get matched, play netplay")
+    mm_parser.add_argument("fighter", help="Fighter to run")
+    mm_parser.add_argument("--code", "-c", required=True, help="Your Slippi connect code (e.g. SCAV#382)")
+    mm_parser.add_argument("--server", required=True, help="Arena server URL (e.g. http://localhost:8000)")
+    mm_parser.add_argument("--dolphin", "-d", required=True, help="Path to Slippi Dolphin")
+    mm_parser.add_argument("--iso", "-i", required=True, help="Path to Melee ISO")
+    mm_parser.add_argument("--char", default="FOX", help="Character (default: FOX)")
+    mm_parser.add_argument("--stage", default="FINAL_DESTINATION", help="Stage (default: FINAL_DESTINATION)")
+    mm_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game (default: 4)")
+    mm_parser.add_argument("--time", "-t", type=int, default=8, help="Time limit in minutes (default: 8)")
+    mm_parser.add_argument("--delay", type=int, default=6, help="Online input delay in frames (default: 6)")
+    mm_parser.add_argument("--throttle", type=int, default=3, help="AI input throttle (default: 3)")
+    mm_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
+    mm_parser.set_defaults(func=cmd_matchmake)
+
+    # arena command
+    arena_parser = subparsers.add_parser("arena", help="Start the matchmaking server")
+    arena_parser.add_argument("--port", "-p", type=int, default=8000, help="Server port (default: 8000)")
+    arena_parser.add_argument("--db", default="arena.db", help="SQLite database path (default: arena.db)")
+    arena_parser.set_defaults(func=cmd_arena)
 
     # list-fighters command
     list_parser = subparsers.add_parser("list-fighters", help="List available fighters")

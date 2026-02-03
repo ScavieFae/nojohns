@@ -35,6 +35,10 @@ dev = [
     "ruff",
     "mypy",
 ]
+arena = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+]
 smashbot = [
     # SmashBot dependencies when available
 ]
@@ -54,7 +58,7 @@ nojohns = "nojohns.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nojohns*", "fighters*", "games*"]
+include = ["nojohns*", "fighters*", "games*", "arena*"]
 
 [tool.black]
 line-length = 100
