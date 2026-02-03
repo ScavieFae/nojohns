@@ -238,6 +238,11 @@ class NetplayRunner:
         consecutive_nones = 0
         game_result = None  # Store result when game ends, return after postgame
 
+        # Freeze detection - track when frames stop advancing
+        last_frame_number = None
+        last_frame_time = time.time()
+        freeze_timeout = 10  # seconds without frame advancement = freeze
+
         # Main game loop
         while True:
             state = self._console.step()
@@ -250,6 +255,16 @@ class NetplayRunner:
                     )
                 continue
             consecutive_nones = 0
+
+            # Detect freeze by checking if frames are advancing
+            if state.frame != last_frame_number:
+                last_frame_number = state.frame
+                last_frame_time = time.time()
+            elif game_started and time.time() - last_frame_time > freeze_timeout:
+                logger.error(f"Freeze detected: no frame advancement for {freeze_timeout}s at frame {state.frame}")
+                raise NetplayDisconnectedError(
+                    f"Game frozen (no frame advancement for {freeze_timeout} seconds)"
+                )
 
             # In game — the hot path
             if state.menu_state in [melee.Menu.IN_GAME, melee.Menu.SUDDEN_DEATH]:
