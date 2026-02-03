@@ -104,19 +104,19 @@ hdiutil detach "/Volumes/Slippi Launcher"
 
 > **WAIT FOR USER**: The Slippi Launcher is a GUI app. Ask the user to:
 > 1. Open Slippi Launcher from `/Applications`
-> 2. Let it download Dolphin (installs to `/Applications/Slippi Dolphin.app`)
+> 2. Let it download Dolphin (installs to `~/Library/Application Support/Slippi Launcher/netplay/`)
 > 3. Log in or create a Slippi account
 > 4. Note their connect code (shown on the home screen, e.g. `ABCD#123`)
 > 5. If macOS blocks the app, right-click > Open to bypass Gatekeeper
 >
-> When they confirm, verify with:
+> When they confirm, verify Dolphin is installed:
 > ```bash
-> ls "/Applications/Slippi Dolphin.app" && echo "Dolphin OK"
+> ls ~/Library/Application\ Support/Slippi\ Launcher/netplay/Slippi\ Dolphin.app && echo "Dolphin OK"
 > ```
-> If Dolphin isn't there, check:
-> ```bash
-> ls ~/Library/Application\ Support/Slippi\ Launcher/netplay/
-> ```
+> Note: The Dolphin path is inside Slippi Launcher's `netplay/` directory,
+> **not** `/Applications/Slippi Dolphin.app`. This matters — vladfi1's
+> libmelee fork validates that the path contains "netplay" and will reject
+> `/Applications/Slippi Dolphin.app` with `Unknown path`.
 
 ## Step 6: Clone and Install No Johns
 
@@ -134,15 +134,15 @@ python3.12 -m venv .venv
 LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
   .venv/bin/pip install --no-cache-dir --no-binary :all: pyenet
 
-# Now install nojohns + remaining dependencies
+# Install nojohns (pulls vladfi1's libmelee fork automatically)
 .venv/bin/pip install -e .
 ```
 
 **Verify:**
 
 ```bash
-# libmelee imports
-.venv/bin/python -c "import melee; print(f'libmelee {melee.__version__}')"
+# libmelee imports (vladfi1's fork doesn't have __version__, so test the import)
+.venv/bin/python -c "import melee; print('libmelee OK')"
 
 # nojohns CLI works
 .venv/bin/python -m nojohns.cli list-fighters
@@ -151,7 +151,61 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 ```
 
-## Step 7: Place the Melee ISO
+## Step 7: Install Phillip (Neural Net Fighter)
+
+Most No Johns fighters use Phillip — a neural network AI trained on
+human Melee replays. This step installs slippi-ai (Phillip's runtime),
+TensorFlow, and the model weights.
+
+```bash
+# Install Phillip's Python dependencies
+.venv/bin/pip install -e ".[phillip]"
+
+# Clone slippi-ai (Phillip's runtime — gitignored, not vendored)
+git clone https://github.com/vladfi1/slippi-ai.git docs/phillip-research/slippi-ai
+.venv/bin/pip install -e docs/phillip-research/slippi-ai
+
+# Download the model weights (~40 MB)
+mkdir -p fighters/phillip/models
+curl -L -o fighters/phillip/models/all_d21_imitation_v3.pkl \
+  'https://dl.dropbox.com/scl/fi/bppnln3rfktxfdocottuw/all_d21_imitation_v3?rlkey=46yqbsp7vi5222x04qt4npbkq&st=6knz106y&dl=1'
+```
+
+**Verify:**
+
+```bash
+# TensorFlow loads
+.venv/bin/python -c "import tensorflow as tf; print(f'TF {tf.__version__} OK')"
+
+# Model loads
+.venv/bin/python -c "
+from slippi_ai import saving
+state = saving.load_state_from_disk('fighters/phillip/models/all_d21_imitation_v3.pkl')
+print(f'Model OK — delay={state[\"config\"][\"policy\"][\"delay\"]} frames')
+"
+
+# Phillip shows up in the registry
+.venv/bin/python -m nojohns.cli list-fighters
+# Should show: phillip  neural-network  FOX  No
+```
+
+### TensorFlow Troubleshooting
+
+**TF 2.20 crashes on macOS ARM** (`mutex lock failed: Invalid argument`):
+This is a known issue. The `[phillip]` extra pins TF 2.18.1 which works.
+If you installed TF separately, downgrade:
+
+```bash
+.venv/bin/pip install "tensorflow==2.18.1" "tf-keras==2.18.0"
+```
+
+**`No module named 'tf_keras'`**: Install it explicitly:
+
+```bash
+.venv/bin/pip install "tf-keras==2.18.0"
+```
+
+## Step 8: Place the Melee ISO
 
 > **WAIT FOR USER**: Ask the user to place their Melee ISO on the machine
 > and tell you the path. Suggest `~/games/melee/` as a location:
@@ -164,22 +218,26 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 > ls -la "<path-they-gave-you>" && echo "ISO OK"
 > ```
 
-## Step 8: Smoke Test (Local Fight)
+## Step 9: Smoke Test (Local Fight)
 
 This opens a Dolphin window and runs two bots against each other locally.
 Confirms Dolphin, libmelee, and nojohns all work together.
 
-First, clear Gatekeeper on Dolphin so it can launch without a security popup:
+First, find your Dolphin path and clear Gatekeeper:
 
 ```bash
-xattr -cr "/Applications/Slippi Dolphin.app"
+# Dolphin is inside Slippi Launcher's netplay directory
+DOLPHIN=~/Library/Application\ Support/Slippi\ Launcher/netplay
+
+# Clear Gatekeeper
+xattr -cr "$DOLPHIN/Slippi Dolphin.app"
 ```
 
-Then run the smoke test (use the ISO path from Step 7):
+Then run the smoke test (use the ISO path from Step 8):
 
 ```bash
 .venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d "$DOLPHIN" \
   -i ~/games/melee/melee.iso
 ```
 
@@ -195,20 +253,50 @@ launch, run briefly (DoNothing will lose quickly), and exit.
 - MoltenVK `VK_NOT_READY` errors — cosmetic, Dolphin runs fine
 - BrokenPipeError on cleanup — harmless, from SIGKILL cleanup path
 
-## Step 9: Netplay
+## Step 10: Netplay
 
-With both machines set up, each side runs:
+With both machines set up, each side connects through the arena server
+or directly via Slippi connect codes.
+
+### Via Arena (Recommended)
+
+One machine starts the server, both sides matchmake:
 
 ```bash
-.venv/bin/python -m nojohns.cli netplay <fighter> \
-  --code "<OPPONENT_CONNECT_CODE>" \
-  -d "/Applications/Slippi Dolphin.app" \
+# Machine 1: Start the arena server
+.venv/bin/pip install -e ".[arena]"
+.venv/bin/python -m nojohns.cli arena --port 8000
+
+# Machine 1: Matchmake (in another terminal)
+.venv/bin/python -m nojohns.cli matchmake phillip \
+  --code YOUR_CODE --server http://localhost:8000 \
+  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
+  --delay 6 --throttle 3 \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
+  -i ~/games/melee/melee.iso
+
+# Machine 2: Matchmake (use Machine 1's IP)
+.venv/bin/python -m nojohns.cli matchmake phillip \
+  --code YOUR_CODE --server http://<machine1-ip>:8000 \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/melee.iso
 ```
 
-Both sides launch Dolphin, navigate to Slippi direct connect, enter the
-opponent's code, and play. The fighter handles inputs; Slippi handles
-networking.
+### Direct Connect
+
+```bash
+.venv/bin/python -m nojohns.cli netplay phillip \
+  --code "OPPONENT_CODE" --delay 6 --throttle 3 \
+  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
+  -i ~/games/melee/melee.iso
+```
+
+**Key flags:**
+- `--dolphin-home`: Points to Slippi's config dir (has your login). Required for netplay.
+- `--delay 6`: Online delay frames. Lower values cause desyncs under AI input load.
+- `--throttle 3`: AI sends input every 3rd frame (20/sec instead of 60). Prevents desync.
+- `-d`: Dolphin path — must be the Slippi Launcher's `netplay/` directory.
 
 ## Troubleshooting
 
@@ -251,9 +339,19 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 .venv/bin/pip install -e .
 ```
 
+### `Unknown path` error from libmelee
+
+vladfi1's libmelee fork validates the Dolphin path and requires "netplay"
+in the path string. If you get `Unknown path '/Applications/Slippi Dolphin.app'`,
+use the Slippi Launcher's internal path instead:
+
+```bash
+-d ~/Library/Application\ Support/Slippi\ Launcher/netplay
+```
+
 ### Dolphin not found
 
-Slippi Launcher manages Dolphin. If it's not at `/Applications/Slippi Dolphin.app`:
+Slippi Launcher manages Dolphin. If it's not where expected:
 
 1. Open Slippi Launcher
 2. Check if it prompts to install/update Dolphin
@@ -278,4 +376,12 @@ libmelee connects via Slippi's spectator port (UDP 51441). If this fails:
 
 First launch of Slippi Dolphin may trigger Gatekeeper. Either:
 - Right-click > Open (bypasses for that app)
-- Or: `xattr -cr "/Applications/Slippi Dolphin.app"`
+- Or: `xattr -cr ~/Library/Application\ Support/Slippi\ Launcher/netplay/Slippi\ Dolphin.app`
+
+### Phillip stands still in netplay
+
+If Phillip loads but doesn't move during netplay, check:
+- The `on_game_start()` hook must fire — look for `Starting Phillip on port`
+  in the logs. If missing, update to latest `games/melee/netplay.py`.
+- The parser needs frame -123 to initialize. If you see `'Agent' object has
+  no attribute '_parser'`, update to latest `fighters/phillip/phillip_fighter.py`.

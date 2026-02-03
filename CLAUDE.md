@@ -21,17 +21,18 @@ source .venv/bin/activate   # Python 3.12, libmelee + nojohns installed
 ```
 
 Paths on this machine:
-- **Dolphin**: `/Applications/Slippi Dolphin.app`
+- **Dolphin**: `~/Library/Application Support/Slippi Launcher/netplay` (vladfi1's libmelee requires the Launcher's `netplay/` path — `/Applications/Slippi Dolphin.app` will be rejected with `Unknown path`)
+- **Dolphin home**: `~/Library/Application Support/Slippi Dolphin` (Slippi account config, needed for `--dolphin-home`)
 - **Melee ISO**: `~/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`
 
 **Setting up a new machine?** See [docs/SETUP.md](docs/SETUP.md) — covers
 fresh Mac → running netplay, step by step. Written for Claude Code to follow.
 
-Quick smoke test (verified working 2026-01-30):
+Quick smoke test (verified working 2026-02-03):
 
 ```bash
 .venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
@@ -176,7 +177,7 @@ class MyFighter(BaseFighter):
 ### Running a Local Fight
 ```bash
 .venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
@@ -274,9 +275,15 @@ See `docs/FIGHTERS.md` for full spec.
 
 | Package | Purpose | Docs |
 |---------|---------|------|
-| `melee` | Dolphin/Melee interface | libmelee.readthedocs.io |
-| `torch` | Neural net fighters | pytorch.org |
+| `melee` (vladfi1 fork v0.43.0) | Dolphin/Melee interface | github.com/vladfi1/libmelee |
+| `tensorflow` 2.18.1 | Phillip neural net runtime | tensorflow.org |
+| `slippi-ai` | Phillip agent framework | github.com/vladfi1/slippi-ai |
 | `forge` | Solidity build/test | book.getfoundry.sh |
+
+**Note:** We use vladfi1's libmelee fork, not mainline. This is the default —
+`pip install -e .` pulls it automatically via pyproject.toml. The fork adds
+`MenuHelper` as instance methods, `get_dolphin_version()`, and Dolphin path
+validation that requires "netplay" in the path.
 
 ## Gotchas
 
@@ -289,6 +296,8 @@ See `docs/FIGHTERS.md` for full spec.
 4. **Frame timing**: `act()` must be fast (<16ms). Don't do heavy computation there.
 
 5. **Controller state**: libmelee uses 0-1 for analog (0.5 = neutral), not -1 to 1.
+
+5b. **vladfi1's libmelee fork is the default**: pyproject.toml pulls vladfi1's fork v0.43.0. Key differences from mainline: `MenuHelper` is instance-based (not static), Dolphin path validation requires "netplay" substring, `get_dolphin_version()` exists. All our code expects the fork.
 
 6. **Slippi ranked**: Do NOT enable play on Slippi's online ranked. Against ToS.
 
@@ -320,6 +329,16 @@ See `docs/FIGHTERS.md` for full spec.
 
 20. **Dolphin "Invalid read" modal**: Dolphin occasionally throws a modal warning dialog (`Invalid read from 0x3031000a, PC = 0x801c165c`). This is a Dolphin/emulation bug, not our code. The modal freezes the game loop, which blocks `console.step()`. The watchdog catches this and kills Dolphin after 15s. The test script moves on to the next match automatically.
 
+21. **Dolphin path must contain "netplay"**: vladfi1's libmelee fork validates the Dolphin path and rejects paths without "netplay" in them. Use `~/Library/Application Support/Slippi Launcher/netplay` (the Launcher's internal path), NOT `/Applications/Slippi Dolphin.app`. This is a hard requirement.
+
+22. **TensorFlow 2.20 crashes on macOS ARM**: `mutex lock failed: Invalid argument` on import. Use TF 2.18.1 with tf-keras 2.18.0. The `[phillip]` extra in pyproject.toml pins these correctly.
+
+23. **Phillip needs `on_game_start()` in netplay**: The netplay runner must call `fighter.on_game_start(port, state)` when the game starts. Without it, Phillip's agent never initializes and the fighter stands still. The local runner (`runner.py`) has always had this; `netplay.py` was missing it until commit `c9f6a48`.
+
+24. **Phillip needs frame -123 for parser init**: slippi-ai's `Agent.step()` creates its `_parser` only on frame -123 (the "new game" signal). In netplay, the runner joins mid-game and never sees that frame. The adapter synthesizes it in `on_game_start()` by temporarily setting `state.frame = -123` and calling `step()`.
+
+25. **Arena self-matching**: If a player's stale queue entry is still "waiting" when they rejoin, the server would match them against themselves (same connect code). Fixed by cancelling stale entries on rejoin and filtering `connect_code` in `find_waiting_opponent()`.
+
 ## Netplay Stability Testing
 
 Two-machine test using `test_netplay_stability.py`. Each side runs independently.
@@ -329,7 +348,7 @@ Two-machine test using `test_netplay_stability.py`. Each side runs independently
 .venv/bin/python test_netplay_stability.py \
   --opponent "SCAV#861" --label mattie \
   --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
@@ -366,7 +385,7 @@ Find Scav's IP: `ipconfig getifaddr en0`
   --code SCAV#382 --server http://localhost:8000 \
   --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
   --delay 6 --throttle 3 \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
@@ -435,12 +454,12 @@ cd contracts && forge test
 
 # Run a fight (Dolphin window will open)
 .venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 
 # Bo3 match
 .venv/bin/python -m nojohns.cli fight random random \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso" \
   --games 3
 
@@ -449,7 +468,7 @@ cd contracts && forge test
 # Without it, Dolphin uses a temp dir with no account and crashes immediately.
 .venv/bin/python -m nojohns.cli netplay random --code "SCAV#861" --delay 6 \
   --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 
 # Netplay test — two local Dolphins connected via Slippi (needs two Slippi accounts)
@@ -457,7 +476,7 @@ cd contracts && forge test
 .venv/bin/python -m nojohns.cli netplay-test random random \
   --code1 "AAAA#111" --code2 "BBBB#222" \
   --home1 /path/to/dolphin-home-1 --home2 /path/to/dolphin-home-2 \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 
 # Arena — start the matchmaking server
@@ -468,7 +487,7 @@ cd contracts && forge test
   --code SCAV#382 --server http://localhost:8000 \
   --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
   --delay 6 --throttle 3 \
-  -d "/Applications/Slippi Dolphin.app" \
+  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 

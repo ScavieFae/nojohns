@@ -1,12 +1,16 @@
 # Phillip Fighter Dependencies
-# Requires Python 3.11 due to TensorFlow compatibility
+# Python 3.12 works (3.13 does not — pyenet build fails)
 
-# Install slippi-ai first:
-#   cd fighters/phillip/slippi-ai
-#   pip install -r requirements.txt
-#   pip install -e .
+# TensorFlow — pin to 2.18.1 (2.20 crashes on macOS ARM with mutex error)
+tensorflow==2.18.1
+tf-keras==2.18.0
+tensorflow-probability  # Required by slippi-ai
 
-# Then install these additional dependencies:
-tensorflow-macos==2.16.2  # Apple Silicon optimized
-tensorflow-probability==0.24.0  # Compatible with TF 2.16
-tf-keras==2.16.0  # Compatible with TF 2.16
+# slippi-ai must also be installed:
+#   git clone https://github.com/vladfi1/slippi-ai.git docs/phillip-research/slippi-ai
+#   pip install -e docs/phillip-research/slippi-ai
+#
+# Model weights must be downloaded:
+#   mkdir -p fighters/phillip/models
+#   curl -L -o fighters/phillip/models/all_d21_imitation_v3.pkl \
+#     'https://dl.dropbox.com/scl/fi/bppnln3rfktxfdocottuw/all_d21_imitation_v3?rlkey=46yqbsp7vi5222x04qt4npbkq&st=6knz106y&dl=1'

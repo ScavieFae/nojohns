@@ -23,7 +23,7 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "melee>=0.40.0",
+    "melee @ git+https://github.com/vladfi1/libmelee.git@v0.43.0",
 ]
 
 [project.optional-dependencies]
@@ -42,8 +42,9 @@ smashbot = [
     # SmashBot dependencies when available
 ]
 phillip = [
-    "torch>=2.0",
-    "numpy",
+    "tensorflow==2.18.1",
+    "tf-keras==2.18.0",
+    "tensorflow-probability",
 ]
 
 [project.urls]

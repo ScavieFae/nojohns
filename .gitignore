@@ -31,6 +31,8 @@ phillip-research/
 
 # Arena server database
 arena.db
+arena.db-shm
+arena.db-wal
 
 # Foundry build artifacts
 contracts/out/
