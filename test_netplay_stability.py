@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import logging
+import random
 import subprocess
 import sys
 import time
@@ -115,12 +116,13 @@ def main():
     results = []
 
     for match_num in range(1, MATCHES_TO_RUN + 1):
-        char = CHARACTERS[(match_num - 1) % len(CHARACTERS)]
+        # Random character selection for variety
+        char = random.choice(CHARACTERS)
         char_name = char.name
 
         logger.info("")
         logger.info("=" * 80)
-        logger.info(f"MATCH {match_num}/{MATCHES_TO_RUN}: {char_name}")
+        logger.info(f"MATCH {match_num}/{MATCHES_TO_RUN}: {char_name} (random)")
         logger.info("=" * 80)
 
         config = NetplayConfig(
