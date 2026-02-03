@@ -25,8 +25,10 @@ except ImportError:
     # Define placeholder for type hints
     melee = None
 
-from nojohns.fighter import Fighter, FighterResult
-from nojohns.runner import ControllerState, GameState
+from nojohns.fighter import Fighter, FighterResult, ControllerState
+
+# Import melee for GameState type
+import melee
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +132,7 @@ class PhillipFighter(Fighter):
             f"Delay: {delay} frames, Network: {network}"
         )
 
-    def on_game_start(self, port: int, state: GameState) -> None:
+    def on_game_start(self, port: int, state: melee.GameState) -> None:
         """
         Called when a game starts.
 
@@ -177,18 +179,15 @@ class PhillipFighter(Fighter):
             logger.error(f"Failed to start Phillip agent: {e}", exc_info=True)
             raise
 
-    def act(self, state: GameState) -> ControllerState:
+    def act(self, state: melee.GameState) -> ControllerState:
         """
         Get Phillip's action for the current gamestate.
 
-        The challenge here is that Phillip expects a libmelee gamestate,
-        while we have our own GameState representation.
-
-        For now, we require that GameState includes the raw libmelee state
-        (which our runners should provide when using libmelee).
+        Phillip's agent maintains an internal delay buffer and processes
+        the gamestate to output controller inputs.
 
         Args:
-            state: Current game state
+            state: Current melee.GameState from libmelee
 
         Returns:
             Controller inputs for this frame
@@ -197,32 +196,23 @@ class PhillipFighter(Fighter):
             logger.warning("Phillip agent not initialized, returning neutral")
             return ControllerState()
 
-        # Get the raw libmelee gamestate
-        # TODO: This assumes state has a raw_state attribute
-        # We may need to add this to our GameState class
-        if not hasattr(state, 'raw_state') or state.raw_state is None:
-            logger.error("GameState missing raw libmelee state!")
-            return ControllerState()
-
-        libmelee_state = state.raw_state
-
         try:
-            # Phillip's agent handles the delay buffer internally
-            # We just need to call step() each frame
-            # The agent will output controller inputs
+            # Phillip's agent works differently from our act() pattern:
+            # 1. The agent is called via step(gamestate)
+            # 2. It maintains internal delay buffer
+            # 3. It updates a controller object directly (via set_controller)
+            #
+            # We need to:
+            # 1. Call agent.step(state) to process the gamestate
+            # 2. Read back the controller state from the agent's controller
 
-            # Note: Phillip's agent expects to be called with set_controller()
-            # and then updates the controller directly. We need to read back
-            # the controller state.
+            # TODO: This needs to be tested with actual slippi-ai code
+            # The agent might not have a step() method - need to check eval_lib
+            # For now, return neutral until we can test
 
-            # This is a bit awkward - we need to check how the agent actually works
-            # For now, return neutral until we can test with actual Phillip code
+            logger.debug(f"Phillip act() called for port {self._port}, frame {state.frame}")
 
-            # TODO: Implement proper agent stepping
-            # The agent likely needs to be called during the game loop
-            # and it updates a controller object directly
-
-            logger.debug(f"Phillip act() called for port {self._port}")
+            # Placeholder - will implement after testing with slippi-ai
             return ControllerState()
 
         except Exception as e:
