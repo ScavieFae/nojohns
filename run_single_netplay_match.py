@@ -32,6 +32,7 @@ def main():
     parser.add_argument("-i", "--iso", required=True, help="Path to Melee ISO")
     parser.add_argument("--delay", type=int, default=6, help="Online delay (frames)")
     parser.add_argument("--throttle", type=int, default=3, help="AI input throttle (get new input every N frames)")
+    parser.add_argument("--max-game-seconds", type=int, default=180, help="Auto-end game after N seconds")
     parser.add_argument("--match-num", type=int, default=1, help="Match number for logging")
 
     args = parser.parse_args()
@@ -59,6 +60,7 @@ def main():
         character=char,
         online_delay=args.delay,
         input_throttle=args.throttle,
+        max_game_seconds=args.max_game_seconds,
         fullscreen=False,
     )
 

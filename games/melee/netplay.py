@@ -62,6 +62,7 @@ class NetplayConfig:
     # Netplay tuning
     online_delay: int = 2  # Frames of input delay for rollback
     input_throttle: int = 1  # Only get new AI input every N frames (1=every frame, 3=every 3rd frame)
+    max_game_seconds: int = 480  # Auto-end game after this many seconds (0=no limit)
 
     # Paths
     dolphin_home_path: str | None = None
@@ -353,10 +354,11 @@ class NetplayRunner:
                         p1 = state.players.get(1)
                         p2 = state.players.get(2)
 
-                        # Timeout: 60s in-game = success, move on
+                        # Timeout: move on after max_game_seconds
                         elapsed_frames = state.frame - (start_frame or 0)
-                        if elapsed_frames >= 3600:  # 60s * 60fps
-                            logger.info(f"Match timeout (60s) — counting as completed")
+                        max_frames = self.config.max_game_seconds * 60
+                        if elapsed_frames >= max_frames:
+                            logger.info(f"Match timeout ({self.config.max_game_seconds}s) — counting as completed")
                             game_result = GameResult(
                                 winner_port=1,  # Arbitrary — both survived
                                 p1_stocks=p1.stock if p1 else 0,
