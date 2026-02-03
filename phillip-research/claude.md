@@ -65,20 +65,21 @@ Phillip is a neural network-based Melee AI developed by vladfi1 (x_pilot on Twit
   - libmelee's standard UDP protocol (port 51441)
   - Agent reads gamestate, outputs controller inputs via libmelee Controller class
 
-### 3. Model Access ❓
-- [ ] Are the trained model weights publicly available?
-  - **NOT in the repo** (would be too large for git)
-  - Need to check if x_pilot hosts them somewhere
-  - May need to contact vladfi1 or train our own
-- [ ] Which agents should we prioritize? (fox_d18_ditto_v3 for Fox?)
-  - Start with **any basic imitation agent** for testing
-  - Advanced agents: fox_d18_ditto_v3, marth_d18_ditto_v3
-- [ ] Can we get basic-* agents for testing before trying advanced ones?
-  - Basic agents are just phase 1 (imitation learning)
-  - Would be smaller and easier to work with initially
-- [ ] Licensing concerns?
+### 3. Model Access ✅ (Bad News)
+- [x] Are the trained model weights publicly available?
+  - **NO - Intentionally not released**
+  - Quote from vladfi1: "I am hesitant to release any trained agents as I don't want people using them on ranked/unranked, so at the moment the bot isn't available to play against locally."
+  - **Old phillip repo** has some agents in `agents/delay0/` but project is deprecated
+  - **New slippi-ai repo** does NOT include weights
+- [x] Which agents should we prioritize?
+  - Would need to train our own from scratch
+  - Start with basic imitation learning (days on good GPU)
+- [x] Can we get basic-* agents for testing?
+  - **Not publicly available for slippi-ai**
+  - Old phillip repo has some delay0 agents (but different architecture)
+- [x] Licensing concerns?
   - **Repo is Apache 2.0 licensed** ✅
-  - Model weights distribution: unclear, need to verify with x_pilot
+  - **Model weights:** Developer explicitly not distributing to prevent ranked abuse
 
 ### 4. Performance Requirements
 - [x] GPU required? If so, what specs?
@@ -128,10 +129,27 @@ Phillip is a neural network-based Melee AI developed by vladfi1 (x_pilot on Twit
    - Implement Fighter protocol wrapper
    - Test with local match first
 
+## How to Contact x_pilot/vladfi1
+
+**Discord (Best Option):**
+- Phillip Discord: https://discord.gg/hfVTXGu
+- Main Slippi Discord: https://slippi.gg/discord (40k+ members, training data links here)
+
+**GitHub:**
+- Profile: https://github.com/vladfi1 (Vlad Firoiu)
+- slippi-ai repo: https://github.com/vladfi1/slippi-ai
+- Old phillip repo: https://github.com/vladfi1/phillip
+
+**Twitch:**
+- Channel: https://twitch.tv/x_pilot (streams almost constantly)
+- Bot connect code: PHAI#591
+
 ## Resources
 
 - **Source:** https://github.com/vladfi1/slippi-ai
+- **Old Project:** https://github.com/vladfi1/phillip (has agents/delay0/ but deprecated)
 - **Twitch:** https://twitch.tv/x_pilot
+- **Discord:** https://discord.gg/hfVTXGu
 - **Reddit bounty thread:** https://www.reddit.com/r/SSBM/comments/18jyduo/
 - **Credits in nojohns README:** vladfi1/slippi-ai
 
@@ -211,6 +229,62 @@ The biggest blocker is **getting trained model weights**. Options:
    - Check if anyone else has shared weights
    - Look for Phillip forks with models
 
+## Options Moving Forward
+
+### Option 1: Request Special Access from vladfi1
+**Approach:** Explain nojohns use case (controlled tournament, not ranked abuse)
+- **Pros:** Get actual trained models, skip weeks of training
+- **Cons:** He may still say no (understandably protective)
+- **How:** DM on Discord (https://discord.gg/hfVTXGu) or GitHub issue
+
+**Message draft:**
+> Hey! I'm working on "No Johns" - a tournament system for Melee AI fighters. We're integrating SmashBot and wanted to add Phillip as well. Our use case is strictly for controlled tournaments (not ranked/unranked play). Would you be willing to share basic imitation models, or is there any way we could get access? We totally understand if not - happy to credit the work properly and respect any restrictions you'd want.
+
+### Option 2: Use Old phillip Repo Agents
+**Approach:** Use the deprecated agents from vladfi1/phillip repo
+- **Pros:** Publicly available in `agents/delay0/` directory
+- **Cons:**
+  - Old architecture (pure RL, not imitation learning)
+  - "Subject to bit-rot" per README
+  - Different codebase than slippi-ai
+  - May not be as strong or human-like
+- **Feasibility:** Medium - would need to integrate old phillip instead of slippi-ai
+
+### Option 3: Train Our Own Phillip
+**Approach:** Use slippi-ai framework to train from scratch
+- **Pros:** Full control, could customize for tournament
+- **Cons:**
+  - Takes days-weeks on good GPU (3080Ti mentioned)
+  - Need large Slippi replay dataset
+  - Training costs (GPU time)
+  - Significant time investment
+- **Datasets:** Available in Slippi Discord (anonymized ranked collections)
+
+### Option 4: Wait for Community Weights
+**Approach:** Monitor for someone else releasing weights
+- **Pros:** Free, no work needed
+- **Cons:** May never happen, could be low quality
+- **Likelihood:** Low - vladfi1's concerns about ranked abuse apply to anyone
+
+### Option 5: Focus on Other Neural Fighters
+**Approach:** Look for other neural network Melee AIs with available weights
+- **Pros:** May find more accessible options
+- **Cons:** Phillip is the strongest/most well-known
+- **Examples to explore:**
+  - Eric Gu's project ([ericyuegu.com/melee-pt1](https://ericyuegu.com/melee-pt1)) - also not releasing weights yet
+  - Community forks of Phillip
+  - Other RL projects
+
+## Recommendation
+
+**Start with Option 1** - reach out to vladfi1 with our use case. Key points:
+- Controlled tournament environment (not public ranked)
+- Educational/research project
+- Willing to add restrictions (e.g., not connect to ranked)
+- Just need basic imitation models to start
+
+If that fails, **Option 2** (old repo agents) as fallback, even though they're deprecated.
+
 ## Notes
 
 - The 18-frame delay is actually a FEATURE for our use case - makes it fairer in tournaments
@@ -218,3 +292,5 @@ The biggest blocker is **getting trained model weights**. Options:
 - If we can't get models, we could potentially train our own using the framework
 - **Phillip uses TensorFlow**, while we're on Python 3.12 - need to check TF compatibility
 - **libmelee version mismatch**: Phillip uses v0.43.0 fork, we use mainline - potential issue
+- **Developer's concern is valid:** Protecting ranked integrity is important
+- **Our use case is different:** Controlled tournaments, not public matchmaking
