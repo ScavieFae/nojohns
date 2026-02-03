@@ -130,6 +130,7 @@ def main():
             character=char,
             online_delay=DELAY,
             dolphin_home_path=args.dolphin_home,
+            fullscreen=False,
         )
 
         runner = NetplayRunner(config)
@@ -174,7 +175,19 @@ def main():
                     capture_output=True,
                     timeout=5,
                 )
-                time.sleep(2)  # Let it fully terminate
+                # Wait for Dolphin to fully terminate
+                for _ in range(10):  # Try for up to 5 seconds
+                    result = subprocess.run(
+                        ["pgrep", "-f", "Slippi Dolphin"],
+                        capture_output=True,
+                    )
+                    if result.returncode != 0:  # No process found
+                        break
+                    time.sleep(0.5)
+                else:
+                    logger.warning("Dolphin still running after 5s, forcing cleanup")
+
+                time.sleep(2)  # Extra buffer for socket/temp cleanup
             except Exception:
                 pass  # Already dead is fine
 
