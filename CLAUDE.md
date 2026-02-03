@@ -284,7 +284,9 @@ See `docs/FIGHTERS.md` for full spec.
 
 10. **Tests mock melee**: `test_smashbot_adapter.py` and `test_netplay.py` install a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
 
-11. **Netplay needs two Slippi accounts**: `netplay-test` runs two Dolphins on one machine. Each needs its own Dolphin home dir with a separate Slippi account (configured via Slippi Launcher). The `slippi_port` is different for each instance (51441, 51442) to avoid port conflicts.
+11. **Netplay needs `--dolphin-home`**: Without it, Dolphin creates a temp home dir with no Slippi account and crashes on connect. Point it at `~/Library/Application Support/Slippi Dolphin` (the dir with Config/GCPadNew.ini). Also use `--delay 6` — lower values freeze under active AI input.
+
+12. **Netplay test needs two Slippi accounts**: `netplay-test` runs two Dolphins on one machine. Each needs its own Dolphin home dir with a separate Slippi account (configured via Slippi Launcher). The `slippi_port` is different for each instance (51441, 51442) to avoid port conflicts.
 
 ## Questions to Ask Yourself
 
@@ -342,11 +344,15 @@ cd contracts && forge test
   --games 3
 
 # Netplay — connect one fighter to a remote opponent via Slippi direct
-.venv/bin/python -m nojohns.cli netplay random --code "ABCD#123" \
+# IMPORTANT: --dolphin-home is required for netplay (Slippi account lives there).
+# Without it, Dolphin uses a temp dir with no account and crashes immediately.
+.venv/bin/python -m nojohns.cli netplay random --code "SCAV#861" --delay 6 \
+  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
   -d "/Applications/Slippi Dolphin.app" \
   -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 
 # Netplay test — two local Dolphins connected via Slippi (needs two Slippi accounts)
+# Each side needs its own --home with a separate Slippi account configured
 .venv/bin/python -m nojohns.cli netplay-test random random \
   --code1 "AAAA#111" --code2 "BBBB#222" \
   --home1 /path/to/dolphin-home-1 --home2 /path/to/dolphin-home-2 \
