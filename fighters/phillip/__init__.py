@@ -9,6 +9,6 @@ refined through self-play reinforcement learning. It plays in a human-like
 style with consistent reaction delays.
 """
 
-from .phillip_fighter import PhillipFighter, PhillipConfig
+from .phillip_fighter import PhillipFighter, PhillipConfig, load_phillip
 
-__all__ = ['PhillipFighter', 'PhillipConfig']
+__all__ = ['PhillipFighter', 'PhillipConfig', 'load_phillip']
