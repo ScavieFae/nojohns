@@ -189,9 +189,9 @@ def main():
                 else:
                     logger.warning("Dolphin still running after 5s, forcing cleanup")
 
-                # LONG delay to ensure everything fully settles
-                logger.info("Waiting 60s for full cleanup and resource release...")
-                time.sleep(60)
+                # Longer delay to ensure everything fully settles
+                logger.info("Waiting 20s for full cleanup and resource release...")
+                time.sleep(20)
             except Exception:
                 pass  # Already dead is fine
 
