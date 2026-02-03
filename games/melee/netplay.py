@@ -418,7 +418,14 @@ class NetplayRunner:
 
     def _cleanup(self) -> None:
         """Clean up Dolphin and controller."""
+        import shutil
+
         logger.debug("Cleaning up netplay session")
+
+        # Track temp directory for cleanup
+        temp_dir = None
+        if self._console and hasattr(self._console, 'dolphin_home_path'):
+            temp_dir = self._console.dolphin_home_path
 
         if self._console:
             process = self._console._process
@@ -435,6 +442,16 @@ class NetplayRunner:
             self._console = None
 
         self._controller = None
+
+        # Clean up temp directory if it was created by libmelee
+        if temp_dir and 'tmp' in str(temp_dir).lower():
+            try:
+                import os
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    logger.debug(f"Cleaned up temp directory: {temp_dir}")
+            except Exception as e:
+                logger.debug(f"Failed to clean temp directory: {e}")
 
 
 # ============================================================================

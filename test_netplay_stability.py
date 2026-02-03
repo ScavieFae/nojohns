@@ -189,7 +189,8 @@ def main():
                 else:
                     logger.warning("Dolphin still running after 5s, forcing cleanup")
 
-                time.sleep(2)  # Extra buffer for socket/temp cleanup
+                # Longer delay for socket/temp cleanup (OS needs time to release resources)
+                time.sleep(5)  # Increased from 2s to 5s
             except Exception:
                 pass  # Already dead is fine
 
