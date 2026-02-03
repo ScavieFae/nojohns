@@ -103,6 +103,7 @@ class NetplayRunner:
         self._console: melee.Console | None = None
         self._controller: melee.Controller | None = None
         self._menu_navigator = SlippiMenuNavigator()
+        self._menu_helper = melee.MenuHelper()
 
     def run_netplay(
         self,
@@ -408,7 +409,7 @@ class NetplayRunner:
 
                 # Postgame scores — skip through
                 if state.menu_state == melee.Menu.POSTGAME_SCORES:
-                    melee.MenuHelper.skip_postgame(
+                    self._menu_helper.skip_postgame(
                         controller=self._controller,
                         gamestate=state,
                     )
@@ -430,7 +431,7 @@ class NetplayRunner:
         Uses libmelee's menu_helper_simple. Now that accessibility permissions
         are enabled, this should work properly.
         """
-        melee.MenuHelper.menu_helper_simple(
+        self._menu_helper.menu_helper_simple(
             gamestate=state,
             controller=self._controller,
             character_selected=self.config.character,
