@@ -225,15 +225,14 @@ class TestNetplayRunner:
         """_handle_menu should pass opponent_code to menu_helper_simple."""
         runner = self._make_runner(opponent_code="ABCD#123")
         runner._controller = MagicMock()
+        runner._menu_helper = MagicMock()
 
         mock_state = MagicMock()
-        mock_helper = runner._menu_helper
-        mock_helper.menu_helper_simple.reset_mock()
 
         runner._handle_menu(mock_state)
 
-        mock_helper.menu_helper_simple.assert_called_once()
-        call_kwargs = mock_helper.menu_helper_simple.call_args[1]
+        runner._menu_helper.menu_helper_simple.assert_called_once()
+        call_kwargs = runner._menu_helper.menu_helper_simple.call_args[1]
         assert call_kwargs["connect_code"] == "ABCD#123"
         assert call_kwargs["controller"] == runner._controller
         assert call_kwargs["gamestate"] == mock_state
@@ -244,14 +243,13 @@ class TestNetplayRunner:
         # Override after init since Character enum may differ in mock
         runner.config.character = Character.FALCO
         runner._controller = MagicMock()
+        runner._menu_helper = MagicMock()
 
         mock_state = MagicMock()
-        mock_helper = runner._menu_helper
-        mock_helper.menu_helper_simple.reset_mock()
 
         runner._handle_menu(mock_state)
 
-        call_kwargs = mock_helper.menu_helper_simple.call_args[1]
+        call_kwargs = runner._menu_helper.menu_helper_simple.call_args[1]
         assert call_kwargs["character_selected"] == Character.FALCO
 
     def test_fighter_setup_gets_port_1(self):

@@ -15,28 +15,30 @@ Success = match lasts ≥60 seconds of in-game time before freeze/completion.
 
 ## Commands
 
-**ScavieFae side:**
-```bash
-cd /Users/queenmab/claude-projects/nojohns
-git pull
-.venv/bin/python test_netplay_stability.py \
-  --opponent "SCAV#382" \
-  --label scaviefae \
-  -d "/Users/queenmab/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app" \
-  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso" \
-  --dolphin-home "/Users/queenmab/Library/Application Support/Slippi Launcher"
-```
+Each side runs independently. Paths come from `~/.nojohns/config.toml`
+(set up via `nojohns setup melee`), or can be passed explicitly.
 
-**Scav side:**
+**Side A:**
 ```bash
 cd /path/to/nojohns
 git pull
 .venv/bin/python test_netplay_stability.py \
-  --opponent "SCAVIEFAE#XXX" \
-  --label scav \
-  -d "/path/to/Slippi Dolphin.app" \
-  -i "/path/to/melee.iso" \
-  --dolphin-home "/path/to/Slippi Launcher"
+  --opponent "OPPONENT_CODE" \
+  --label side-a \
+  -d /path/to/Slippi/netplay \
+  -i /path/to/melee.iso \
+  --dolphin-home /path/to/dolphin-home
+```
+
+**Side B:**
+```bash
+cd /path/to/nojohns
+git pull
+.venv/bin/python test_netplay_stability.py \
+  --opponent "OPPONENT_CODE" \
+  --label side-b \
+  -d /path/to/Slippi/netplay \
+  -i /path/to/melee.iso
 ```
 
 ## Character Order

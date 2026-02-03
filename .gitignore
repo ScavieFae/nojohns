@@ -26,8 +26,9 @@ fighters/smashbot/SmashBot/
 fighters/phillip/slippi-ai/
 fighters/phillip/models/*.pkl
 
-# Old phillip-research folder (to be removed)
+# Phillip research notes (archived on phillip-research branch)
 phillip-research/
+docs/phillip-research/
 
 # Arena server database
 arena.db

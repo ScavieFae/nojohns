@@ -151,19 +151,39 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 ```
 
+## Step 6b: Configure Melee Paths (Recommended)
+
+After installing nojohns, run the setup wizard to configure paths once.
+After this, you never type Dolphin/ISO paths again:
+
+```bash
+# Configure Melee paths interactively (Dolphin, ISO, connect code)
+.venv/bin/python -m nojohns.cli setup melee
+```
+
+This writes `~/.nojohns/config.toml`. All CLI commands read from it
+(CLI flags still override config when passed explicitly).
+
 ## Step 7: Install Phillip (Neural Net Fighter)
 
 Most No Johns fighters use Phillip — a neural network AI trained on
-human Melee replays. This step installs slippi-ai (Phillip's runtime),
-TensorFlow, and the model weights.
+human Melee replays. The easiest way to install it:
+
+```bash
+.venv/bin/python -m nojohns.cli setup melee phillip
+```
+
+This handles everything: TF 2.18.1, slippi-ai clone, model weights download.
+
+**Manual alternative** (if you prefer doing it step by step):
 
 ```bash
 # Install Phillip's Python dependencies
 .venv/bin/pip install -e ".[phillip]"
 
 # Clone slippi-ai (Phillip's runtime — gitignored, not vendored)
-git clone https://github.com/vladfi1/slippi-ai.git docs/phillip-research/slippi-ai
-.venv/bin/pip install -e docs/phillip-research/slippi-ai
+git clone https://github.com/vladfi1/slippi-ai.git fighters/phillip/slippi-ai
+.venv/bin/pip install -e fighters/phillip/slippi-ai
 
 # Download the model weights (~40 MB)
 mkdir -p fighters/phillip/models

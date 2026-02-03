@@ -1,12 +1,8 @@
-# No Johns Setup Issues Log
+# No Johns Troubleshooting
 
-**Date:** 2026-02-02
-**Platform:** macOS (Apple Silicon)
-**Python Version:** 3.12.12
+Common issues encountered during setup and netplay.
 
-## Issues Encountered
-
-### 1. pyenet Build Failure (BLOCKING)
+## pyenet Build Failure
 
 **Error:**
 ```
@@ -96,9 +92,8 @@ otool -L .venv/lib/python3.12/site-packages/enet.cpython-312-darwin.so
 
 ---
 
-## Summary
+## Summary: Working Setup Command
 
-**Complete Working Setup Command:**
 ```bash
 # Step 1: Install system dependencies
 brew install enet python@3.12
@@ -114,26 +109,9 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 # Step 4: Install nojohns
 .venv/bin/pip install -e .
 
-# Step 5: Install dev dependencies (optional)
-.venv/bin/pip install -e ".[dev]"
+# Step 5: Configure paths
+.venv/bin/python -m nojohns.cli setup melee
 ```
-
-**Test Results:**
-- ✅ libmelee imports successfully
-- ✅ nojohns CLI works (`list-fighters` command)
-- ✅ All 32 tests pass
-
----
-
-## Configuration Detected
-
-**Dolphin Path:**
-`~/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app`
-
-**ISO Path:**
-`/Users/queenmab/claude-projects/games/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2)/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`
-
----
 
 ---
 
@@ -161,8 +139,7 @@ Connect codes containing the digit '9' fail to enter correctly on macOS Sequoia.
 - ✅ Position 38: '2' - WORKS
 - ✅ Position 48: '0' - WORKS
 
-**Confirmed Working Connect Code:** SCAV#382 ✓
-**Confirmed Failing Connect Code:** SCAV#968 ✗ (contains '9')
+**Workaround:** Use connect codes that don't contain the digit '9'.
 
 **Workaround:**
 1. Use connect codes that don't contain the digit '9'
@@ -284,37 +261,16 @@ Document in README/SETUP that netplay with AI is experimental:
 
 ---
 
-## ✅ SETUP COMPLETE!
+## Smoke Test
 
-**Smoke Test:** PASSED (2026-02-02 12:02-12:04)
-- Random vs Do Nothing fight ran successfully
-- P2 won 0-1 (Do Nothing lost the game 0-4)
-- All expected warnings observed (MoltenVK, BrokenPipeError on cleanup)
-- libmelee connection working
-- Dolphin launching and running properly
+After setup, verify with:
 
-**Final Setup Status:**
-- ✅ Rosetta 2 installed
-- ✅ Xcode Command Line Tools (pre-installed)
-- ✅ Homebrew (pre-installed)
-- ✅ Python 3.12.12 installed
-- ✅ enet library installed via Homebrew
-- ✅ pyenet compiled and linked correctly (with workaround)
-- ✅ libmelee 0.41.1 working
-- ✅ nojohns CLI functional
-- ✅ All 32 tests passing
-- ✅ Slippi Dolphin configured
-- ✅ Melee ISO loaded
-- ✅ End-to-end fight working
-
-**Known Working Command:**
 ```bash
-.venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay/Slippi\ Dolphin.app \
-  -i "/Users/queenmab/claude-projects/games/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2)/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+nojohns fight random do-nothing
 ```
 
----
+Expected: Dolphin opens, DoNothing loses quickly, match ends.
+Expected noise to ignore: MoltenVK errors, BrokenPipeError on cleanup.
 
 ---
 
@@ -415,10 +371,8 @@ A signal was received. A second signal will force Dolphin to stop.
 - "the crash manifests as the dolphin screen freezes on that frame in-game, always with the stock explosion"
 - "I originally noticed this behavior at the end of matches we played locally with two agent-controlled computers. For that, it was always on the final, fourth stock ending the match that it froze."
 
-**CRITICAL:** This is reproducible and happens specifically on the Sequoia machine (SCAV#861), not the other machine (SCAV#382).
-
 **Updated Hypothesis:**
-This is a **Dolphin rendering bug on macOS Sequoia 26.2** during stock explosion animation:
+This is a **Dolphin rendering bug on macOS Sequoia** during stock explosion animation:
 1. Stock explosion visual effect starts rendering
 2. Dolphin freezes on that frame (likely MoltenVK/Vulkan issue)
 3. Python code waits indefinitely at `console.step()` for next frame
@@ -445,13 +399,6 @@ This is a **Dolphin rendering bug on macOS Sequoia 26.2** during stock explosion
 - Local fights: ✅ WORK FINE on both systems (tested Sequoia)
 - Issue is specific to netplay mode synchronization
 
-**Testing Results:**
-```
-Test 1 (2026-02-02 13:23): Netplay SCAV#382, froze on FIRST stock
-Test 2 (2026-02-02 13:40): Local fight, completed successfully ✓
-Test 3 (2026-02-02 13:41): Netplay SCAV#382, played full match, froze on FINAL stock
-```
-
 **Updated Pattern:**
 - Netplay freezes happen at FINAL stock (game end) on BOTH Sequoia and Sonoma
 - Occasionally freezes earlier on Sequoia (stock 1)
@@ -470,46 +417,11 @@ The freeze occurs during the game end transition, likely related to:
 3. **Multi-game matches** - Try Bo3 to see if freeze happens between games or only at match end
 4. **Check libmelee version** - Try different libmelee versions
 
-**Reporting:**
-- Report to [Slippi Discord #mac-support](https://discord.com/invite/pPfEaW5)
-- Include: macOS Sequoia 26.2, M3 Pro, stock explosion freeze, must force quit
-- Mention it's reproducible on both local and netplay
-- Provide Dolphin version: v2.0.3-1233-dirty
-
 **For No Johns Project:**
-- **Document in README**: Known issue on macOS Sequoia 26.2
-- **Recommend macOS Sonoma** for now
-- This blocks netplay functionality on Sequoia until Dolphin fix
+- Known issue on macOS Sequoia
+- Higher online_delay (6+) reduces but doesn't eliminate the problem
 
 ---
-
-## Recommendations for Project
-
-### Critical: Update SETUP.md
-
-The current SETUP.md needs updates for the pyenet issue:
-
-**Add to Step 4 (Python 3.12):**
-```bash
-brew install python@3.12 enet
-```
-
-**Update Step 6 (Install No Johns):**
-```bash
-# Install pyenet with explicit linking (macOS requirement)
-LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
-  .venv/bin/pip install --no-cache-dir --no-binary :all: pyenet
-
-# Install nojohns
-.venv/bin/pip install -e .
-```
-
-### Optional Improvements
-
-1. **Add troubleshooting section** for pyenet build failures
-2. **Document Dolphin location** - it may be in Launcher's netplay dir, not /Applications
-3. **Note xattr limitations** - can't clear on code-signed apps in ~/Library
-4. **Add example with relative ISO paths** for convenience
 
 ---
 

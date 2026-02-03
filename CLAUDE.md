@@ -20,21 +20,10 @@ No Johns enables Moltbot-to-Moltbot competition in Super Smash Bros. Melee using
 source .venv/bin/activate   # Python 3.12, libmelee + nojohns installed
 ```
 
-Paths on this machine:
-- **Dolphin**: `~/Library/Application Support/Slippi Launcher/netplay` (vladfi1's libmelee requires the Launcher's `netplay/` path — `/Applications/Slippi Dolphin.app` will be rejected with `Unknown path`)
-- **Dolphin home**: `~/Library/Application Support/Slippi Dolphin` (Slippi account config, needed for `--dolphin-home`)
-- **Melee ISO**: `~/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`
+**First time?** Run `nojohns setup melee` to configure paths (Dolphin, ISO, connect code).
+Config is stored in `~/.nojohns/config.toml`. After setup, you never type a path again.
 
-**Setting up a new machine?** See [docs/SETUP.md](docs/SETUP.md) — covers
-fresh Mac → running netplay, step by step. Written for Claude Code to follow.
-
-Quick smoke test (verified working 2026-02-03):
-
-```bash
-.venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-```
+For a full fresh-machine walkthrough, see [docs/SETUP.md](docs/SETUP.md).
 
 ### Why not system Python?
 
@@ -43,7 +32,6 @@ libmelee depends on pyenet, which has C extensions that fail to build on the sys
 ### Running tests
 
 ```bash
-# With venv (real libmelee — tests also work without it via mock):
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 
 # The -o "addopts=" override is needed because pyproject.toml sets
@@ -74,9 +62,10 @@ nojohns/
 │   ├── API.md             # REST API (TODO)
 │   └── SETUP.md           # Fresh Mac setup guide (for Claude Code or humans)
 │
-├── nojohns/               # Core package — fighter protocol & CLI
+├── nojohns/               # Core package — fighter protocol, config, CLI
 │   ├── __init__.py        # Fighter types + registry re-exports
 │   ├── fighter.py         # Fighter protocol & base class
+│   ├── config.py          # Local config (~/.nojohns/config.toml)
 │   ├── cli.py             # Command line interface (imports from games.melee)
 │   └── registry.py        # Fighter discovery (built-ins + TOML manifests)
 │
@@ -89,7 +78,7 @@ nojohns/
 │
 ├── fighters/              # Fighter implementations (each has fighter.toml manifest)
 │   ├── smashbot/          # SmashBot adapter (InterceptController + SmashBotFighter)
-│   └── phillip/           # Phillip adapter (TODO — not yet created)
+│   └── phillip/           # Phillip adapter (slippi-ai + model weights)
 │
 ├── contracts/             # Solidity contracts (Foundry)
 │   ├── foundry.toml       # Solc 0.8.24, Monad RPC endpoints
@@ -111,8 +100,10 @@ nojohns/
 
 ```
 nojohns.fighter  <── fighters.smashbot
-       ^              fighters.phillip (future)
+       ^              fighters.phillip
        |
+nojohns.config   (standalone — no melee dependency)
+       ^
 nojohns.registry --> nojohns.fighter (built-ins)
        ^              fighters/*/fighter.toml (manifests, lazy scan)
        |
@@ -120,7 +111,8 @@ games.melee.runner
 games.melee.netplay --> games.melee.runner
                     --> games.melee.menu_navigation
        ^
-nojohns.cli (lazy imports from both nojohns and games.melee)
+nojohns.cli --> nojohns.config (loaded early for arg resolution)
+            --> games.melee (lazy import for game commands)
 
 contracts/  (standalone Solidity — no Python dependency)
 ```
@@ -154,6 +146,19 @@ runner = MatchRunner(DolphinConfig(...))
 result = runner.run_match(fighter1, fighter2, MatchSettings(...))
 ```
 
+### Config (`nojohns/config.py`)
+
+Local config stored in `~/.nojohns/config.toml`. Game-specific settings live under `[games.<game>]`. Currently only `melee` exists; adding a second game means adding `[games.rivals]` — no refactor needed.
+
+```python
+from nojohns.config import get_game_config, load_config
+
+cfg = get_game_config("melee")  # GameConfig | None
+full = load_config()             # NojohnsConfig with all games + arena
+```
+
+The CLI calls `_resolve_args()` to merge config values with CLI flags (CLI wins).
+
 ### BaseFighter (`nojohns/fighter.py`)
 
 Convenience base class with helpers:
@@ -170,15 +175,24 @@ class MyFighter(BaseFighter):
 
 ### Running Tests
 ```bash
-# Use the venv — see "Local Dev Setup" above
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 ```
 
 ### Running a Local Fight
+
+After `nojohns setup melee`, no path args needed:
+
 ```bash
-.venv/bin/python -m nojohns.cli fight random do-nothing \
+nojohns fight random do-nothing
+nojohns fight random random --games 3
+```
+
+Or with explicit paths (override config):
+
+```bash
+nojohns fight random do-nothing \
   -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+  -i ~/games/melee/melee.ciso
 ```
 
 ### Adding a Fighter
@@ -192,21 +206,19 @@ See `docs/FIGHTERS.md` for full spec.
 
 ## Current State & Next Steps
 
-### Done ✅
+### Done
 - Fighter protocol defined (`fighter.py`)
 - Base classes implemented (BaseFighter, DoNothingFighter, RandomFighter)
 - Match runner working end-to-end (`runner.py`)
-- Slippi netplay runner (`netplay.py`) — single-sided runner for remote competition via Slippi direct connect
-- CLI working (`cli.py` — fight, netplay, netplay-test, matchmake, arena, list-fighters, info)
-- Documentation structure (SPEC, FIGHTERS, ARENA, API docs)
-- **Tested with real Dolphin + libmelee** — full match runs successfully
-- SmashBot adapter (`fighters/smashbot/`) — InterceptController + SmashBotFighter
-- SmashBot adapter unit tests (13 passing)
+- Slippi netplay runner (`netplay.py`) — single-sided runner for remote competition
+- CLI with config support (`cli.py` — setup, fight, netplay, matchmake, arena, list-fighters, info)
+- Local config system (`config.py` — `~/.nojohns/config.toml`)
+- SmashBot adapter (`fighters/smashbot/`)
+- Phillip adapter (`fighters/phillip/`) — installed via `nojohns setup melee phillip`
 - Game-specific code separated into `games/melee/` package
 - Foundry contracts scaffold (`contracts/`)
-- Arena matchmaking server (`arena/`) — FastAPI + SQLite, FIFO queue, result reporting
-- Matchmake CLI command — joins queue, polls, launches netplay, reports results
-- Fighter registry (`registry.py`) — built-ins + TOML manifest discovery, `list_fighters()`/`load_fighter()` API
+- Arena matchmaking server (`arena/`) — FastAPI + SQLite, FIFO queue
+- Fighter registry (`registry.py`) — built-ins + TOML manifest discovery
 
 ### Phase 1 TODO (Local CLI)
 - [ ] SmashBot integration test (adapter exists, needs real SmashBot clone to verify)
@@ -246,7 +258,7 @@ See `docs/FIGHTERS.md` for full spec.
 4. Create `fighters/myfighter/fighter.toml` manifest (see `fighters/smashbot/fighter.toml`)
    - `entry_point = "fighters.myfighter:MyFighter"` for import
    - Use `{fighter_dir}` in `[init_args]` for paths relative to the fighter dir
-5. Test with `nojohns fight myfighter random ...` (registry auto-discovers it)
+5. Test with `nojohns fight myfighter random` (registry auto-discovers it)
 
 ### "Improve match runner"
 1. Look at `games/melee/runner.py`
@@ -287,6 +299,8 @@ validation that requires "netplay" in the path.
 
 ## Gotchas
 
+### General
+
 1. **Use the venv.** System Python 3.13 cannot install libmelee (pyenet C build fails). The `.venv` has Python 3.12 with everything working. See "Local Dev Setup."
 
 2. **Melee ISO**: We can't distribute it. User must provide NTSC 1.02.
@@ -297,198 +311,91 @@ validation that requires "netplay" in the path.
 
 5. **Controller state**: libmelee uses 0-1 for analog (0.5 = neutral), not -1 to 1.
 
-5b. **vladfi1's libmelee fork is the default**: pyproject.toml pulls vladfi1's fork v0.43.0. Key differences from mainline: `MenuHelper` is instance-based (not static), Dolphin path validation requires "netplay" substring, `get_dolphin_version()` exists. All our code expects the fork.
+6. **vladfi1's libmelee fork is the default**: pyproject.toml pulls vladfi1's fork v0.43.0. Key differences from mainline: `MenuHelper` is instance-based (not static), Dolphin path validation requires "netplay" substring, `get_dolphin_version()` exists. All our code expects the fork.
 
-6. **Slippi ranked**: Do NOT enable play on Slippi's online ranked. Against ToS.
+7. **Dolphin path must contain "netplay"**: vladfi1's libmelee fork validates the Dolphin path and rejects paths without "netplay" in them. Use `~/Library/Application Support/Slippi Launcher/netplay`, NOT `/Applications/Slippi Dolphin.app`.
 
-7. **MoltenVK errors on macOS**: Dolphin spams `VK_NOT_READY` errors via MoltenVK. These are cosmetic — the game runs fine. Don't chase them.
+8. **Slippi ranked**: Do NOT enable play on Slippi's online ranked. Against ToS.
 
-8. **BrokenPipeError on cleanup**: libmelee's Controller `__del__` fires after Dolphin is killed, causing `BrokenPipeError`. Harmless noise from the SIGKILL cleanup path.
+### Cosmetic Noise (safe to ignore)
 
-9. **pyproject.toml addopts**: `pytest` config sets `--cov=nojohns --cov=games` by default. If pytest-cov isn't installed, pass `-o "addopts="` to override.
+9. **MoltenVK errors**: Dolphin spams `VK_NOT_READY` errors via MoltenVK. Cosmetic — the game runs fine.
 
-10. **Tests mock melee**: `test_smashbot_adapter.py` and `test_netplay.py` install a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
+10. **BrokenPipeError on cleanup**: libmelee's Controller `__del__` fires after Dolphin is killed. Harmless noise from the SIGKILL cleanup path.
 
-11. **Netplay needs `--dolphin-home`**: Without it, Dolphin creates a temp home dir with no Slippi account and crashes on connect. Point it at `~/Library/Application Support/Slippi Dolphin` (the dir with Config/GCPadNew.ini). Also use `--delay 6` — lower values freeze under active AI input.
+### Testing
 
-12. **Netplay test needs two Slippi accounts**: `netplay-test` runs two Dolphins on one machine. Each needs its own Dolphin home dir with a separate Slippi account (configured via Slippi Launcher). The `slippi_port` is different for each instance (51441, 51442) to avoid port conflicts.
+11. **pyproject.toml addopts**: `pytest` config sets `--cov=nojohns --cov=games` by default. If pytest-cov isn't installed, pass `-o "addopts="` to override.
 
-13. **AI input throttle for netplay**: AI sends 60 inputs/sec vs humans ~1-5/sec. This overwhelms Slippi's rollback netcode and causes desyncs. Set `input_throttle=3` in `NetplayConfig` (20 inputs/sec). This was the single biggest fix for netplay stability.
+12. **Tests mock melee**: `test_smashbot_adapter.py` and `test_netplay.py` install a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
 
-14. **Netplay game-end detection**: libmelee's `action.value` stability check is too strict for netplay — the "stable" window where both players have `action.value < 0xA` at stocks=0 is too brief or never occurs. Detect game end on stocks hitting 0 directly, skip the action state check.
+### Netplay
 
-15. **Subprocess per match in test scripts**: Reusing a single Python process for multiple netplay matches causes libmelee socket/temp state to leak, breaking menu navigation on match 2+. The test script (`test_netplay_stability.py`) spawns `run_single_netplay_match.py` as a fresh subprocess per match.
+13. **`--dolphin-home` required for netplay**: Without it, Dolphin creates a temp home dir with no Slippi account and crashes on connect. The `nojohns setup melee` wizard stores this in config.
 
-16. **Sheik and Ice Climbers in character select**: `Character.SHEIK` can't be selected from the CSS (she's Zelda's down-B transform). `Character.ICECLIMBERS` doesn't exist in libmelee — use `Character.POPO`. Both will hang the menu navigator forever.
+14. **AI input throttle**: AI sends 60 inputs/sec vs humans ~1-5/sec. This overwhelms Slippi's rollback netcode and causes desyncs. Default `input_throttle=3` (20 inputs/sec). Configurable in `~/.nojohns/config.toml`.
 
-17. **`--dolphin-home` tradeoffs**: On Scav (this machine), `--dolphin-home` is needed for the Slippi account. On ScavieFae's machine, it causes a non-working fullscreen mode. If menu nav gets stuck at name selection on match 2+, `--dolphin-home` may be the issue — or the fix.
+15. **Game-end detection**: libmelee's `action.value` stability check is too strict for netplay. Detect game end on stocks hitting 0 directly, skip the action state check.
 
-18. **Watchdog for `console.step()` blocking**: If Dolphin crashes without closing the socket cleanly, `console.step()` blocks forever. The netplay runner has a watchdog thread that kills Dolphin after 15s of `step()` not returning. Without this, crashes are undetectable.
+16. **Subprocess per match in tests**: Reusing a single Python process for multiple netplay matches causes libmelee socket/temp state to leak. The test script (`run_netplay_stability.py`) spawns `run_single_netplay_match.py` as a fresh subprocess per match.
 
-19. **CPU load causes desyncs**: Slippi's rollback is sensitive to frame timing. Background processes (browser tabs, builds) eating CPU on one side cause the other side to desync. The "Possible poor match performance detected" warning in Dolphin correlates with upcoming disconnects.
+17. **Watchdog for `console.step()` blocking**: If Dolphin crashes without closing the socket cleanly, `console.step()` blocks forever. The netplay runner has a watchdog thread that kills Dolphin after 15s.
 
-20. **Dolphin "Invalid read" modal**: Dolphin occasionally throws a modal warning dialog (`Invalid read from 0x3031000a, PC = 0x801c165c`). This is a Dolphin/emulation bug, not our code. The modal freezes the game loop, which blocks `console.step()`. The watchdog catches this and kills Dolphin after 15s. The test script moves on to the next match automatically.
+18. **CPU load causes desyncs**: Slippi's rollback is sensitive to frame timing. Background processes eating CPU cause desyncs. Close heavy apps during netplay.
 
-21. **Dolphin path must contain "netplay"**: vladfi1's libmelee fork validates the Dolphin path and rejects paths without "netplay" in them. Use `~/Library/Application Support/Slippi Launcher/netplay` (the Launcher's internal path), NOT `/Applications/Slippi Dolphin.app`. This is a hard requirement.
+19. **`--dolphin-home` tradeoffs**: On some machines, `--dolphin-home` is needed for the Slippi account. On others, it causes a non-working fullscreen mode. If menu nav gets stuck at name selection on match 2+, `--dolphin-home` may be the issue — or the fix.
 
-22. **TensorFlow 2.20 crashes on macOS ARM**: `mutex lock failed: Invalid argument` on import. Use TF 2.18.1 with tf-keras 2.18.0. The `[phillip]` extra in pyproject.toml pins these correctly.
+20. **Sheik and Ice Climbers**: `Character.SHEIK` can't be selected from the CSS (she's Zelda's down-B transform). `Character.ICECLIMBERS` doesn't exist in libmelee — use `Character.POPO`. Both will hang the menu navigator forever.
 
-23. **Phillip needs `on_game_start()` in netplay**: The netplay runner must call `fighter.on_game_start(port, state)` when the game starts. Without it, Phillip's agent never initializes and the fighter stands still. The local runner (`runner.py`) has always had this; `netplay.py` was missing it until commit `c9f6a48`.
+### Phillip / TensorFlow
 
-24. **Phillip needs frame -123 for parser init**: slippi-ai's `Agent.step()` creates its `_parser` only on frame -123 (the "new game" signal). In netplay, the runner joins mid-game and never sees that frame. The adapter synthesizes it in `on_game_start()` by temporarily setting `state.frame = -123` and calling `step()`.
+21. **TensorFlow 2.20 crashes on macOS ARM**: `mutex lock failed: Invalid argument` on import. Use TF 2.18.1 with tf-keras 2.18.0. The `[phillip]` extra in pyproject.toml pins these correctly.
 
-25. **Arena self-matching**: If a player's stale queue entry is still "waiting" when they rejoin, the server would match them against themselves (same connect code). Fixed by cancelling stale entries on rejoin and filtering `connect_code` in `find_waiting_opponent()`.
+22. **Phillip needs `on_game_start()` in netplay**: The netplay runner must call `fighter.on_game_start(port, state)` when the game starts. Without it, Phillip's agent never initializes.
 
-## Netplay Stability Testing
+23. **Phillip needs frame -123 for parser init**: slippi-ai's `Agent.step()` creates its `_parser` only on frame -123. The adapter synthesizes this in `on_game_start()`.
 
-Two-machine test using `test_netplay_stability.py`. Each side runs independently.
+24. **Phillip research notes**: Archived on the `phillip-research` branch (removed from main to reduce repo size).
 
-**Scav (this machine):**
-```bash
-.venv/bin/python test_netplay_stability.py \
-  --opponent "SCAV#861" --label mattie \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-```
+### Arena
 
-**ScavieFae (queenmab):**
-```bash
-.venv/bin/python test_netplay_stability.py \
-  --opponent "SCAV#382" --label scaviefae \
-  -d "/Users/queenmab/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app" \
-  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-```
-
-**What "success" means**: A match either finishes via KO or survives to the timeout (currently 3min) without disconnecting. Both count as wins.
-
-**Results (2026-02-02)**:
-- Pre-throttle, with browser tabs: 9/10 completed, 1 disconnect
-- With `input_throttle=3`, fewer tabs: 10/10 completed, 0 disconnects
-
-## Arena Matchmaking
-
-Two-machine matchmaking test. The server runs on one machine, both sides connect to it.
-
-**Step 1: Start the arena server (Scav):**
-```bash
-.venv/bin/python -m nojohns.cli arena --port 8000
-```
-
-Find Scav's IP: `ipconfig getifaddr en0`
-
-**Step 2: Both sides matchmake (order doesn't matter — first one waits, second triggers the match):**
-
-**Scav (this machine):**
-```bash
-.venv/bin/python -m nojohns.cli matchmake random \
-  --code SCAV#382 --server http://localhost:8000 \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  --delay 6 --throttle 3 \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-```
-
-**ScavieFae (queenmab):**
-```bash
-.venv/bin/python -m nojohns.cli matchmake random \
-  --code SCAV#861 --server http://<scav-ip>:8000 \
-  -d "/Users/queenmab/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app" \
-  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-```
-
-Note: ScavieFae does NOT use `--dolphin-home` (causes fullscreen issues on that machine — see gotcha #17). Delay and throttle default to 6 and 3.
-
-**How it works**: The arena server is a FIFO matchmaker (FastAPI + SQLite). Each side POSTs to `/queue/join`, polls every 2s until matched, gets the opponent's Slippi connect code, launches netplay, and reports the result. The server never touches the game — it just brokers the connection. Stale queue entries expire after 5 minutes of no polling.
-
-**ScavieFae setup** (first time only):
-```bash
-cd ~/claude-projects/nojohns
-git pull
-.venv/bin/pip install -e ".[arena]"
-```
-
-## Questions to Ask Yourself
-
-When modifying this codebase:
-
-1. **Does this belong in the Fighter or the Moltbot?**
-   - Frame-by-frame decisions → Fighter
-   - Social/meta decisions → Moltbot (skill layer)
-
-2. **Is this fast enough for the game loop?**
-   - `act()` runs 60 times per second
-   - Heavy computation should happen in `setup()` or `__init__()`
-
-3. **Does this work headless?**
-   - Arena servers run without display
-   - Don't assume a window exists
-
-4. **Is this testable without Melee?**
-   - Mock GameState for unit tests
-   - Integration tests need the real setup
+25. **Arena self-matching**: Fixed by cancelling stale entries on rejoin and filtering `connect_code` in `find_waiting_opponent()`.
 
 ## Useful Commands
 
 ```bash
 # All commands assume venv is activated or prefixed with .venv/bin/python
 
-# Run tests (override addopts to skip missing pytest-cov)
+# Setup (one-time)
+nojohns setup                    # Create ~/.nojohns/ config dir
+nojohns setup melee              # Configure Dolphin/ISO/connect code
+nojohns setup melee phillip      # Install Phillip (TF, slippi-ai, model)
+
+# Run tests
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 
-# Format code
-black nojohns/ games/
+# List fighters
+nojohns list-fighters
+nojohns info random
 
-# Type check
+# Local fight (paths from config)
+nojohns fight random do-nothing
+nojohns fight random random --games 3
+
+# Netplay (--code is opponent's code, always required)
+nojohns netplay random --code "ABCD#123"
+
+# Arena matchmaking (code/server/paths from config)
+nojohns arena --port 8000
+nojohns matchmake random
+
+# Format / type check
+black nojohns/ games/
 mypy nojohns/ games/
 
-# Foundry contracts (requires forge — install via foundryup)
+# Foundry contracts
 cd contracts && forge build
 cd contracts && forge test
-
-# List fighters
-.venv/bin/python -m nojohns.cli list-fighters
-
-# Fighter info
-.venv/bin/python -m nojohns.cli info random
-
-# Run a fight (Dolphin window will open)
-.venv/bin/python -m nojohns.cli fight random do-nothing \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-
-# Bo3 match
-.venv/bin/python -m nojohns.cli fight random random \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso" \
-  --games 3
-
-# Netplay — connect one fighter to a remote opponent via Slippi direct
-# IMPORTANT: --dolphin-home is required for netplay (Slippi account lives there).
-# Without it, Dolphin uses a temp dir with no account and crashes immediately.
-.venv/bin/python -m nojohns.cli netplay random --code "SCAV#861" --delay 6 \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-
-# Netplay test — two local Dolphins connected via Slippi (needs two Slippi accounts)
-# Each side needs its own --home with a separate Slippi account configured
-.venv/bin/python -m nojohns.cli netplay-test random random \
-  --code1 "AAAA#111" --code2 "BBBB#222" \
-  --home1 /path/to/dolphin-home-1 --home2 /path/to/dolphin-home-2 \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
-
-# Arena — start the matchmaking server
-.venv/bin/python -m nojohns.cli arena --port 8000
-
-# Matchmake — join arena queue, get matched, play netplay automatically
-.venv/bin/python -m nojohns.cli matchmake random \
-  --code SCAV#382 --server http://localhost:8000 \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  --delay 6 --throttle 3 \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
 ```
 
 ## Resources
