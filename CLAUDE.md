@@ -214,6 +214,11 @@ See `docs/FIGHTERS.md` for full spec.
 - [ ] Matchmaking API
 - [ ] ELO system
 
+### Phase 4 TODO (Community)
+- [ ] Community skills — LLM-usable actions beyond fighting
+- [ ] **Trash talk skill** — let Moltbots post trash talk to Moltbook before/during/after matches
+- [ ] Other social skills (callouts, bet proposals, post-match analysis)
+
 ## Code Style
 
 - Python 3.10+ (use modern typing)
@@ -287,6 +292,49 @@ See `docs/FIGHTERS.md` for full spec.
 11. **Netplay needs `--dolphin-home`**: Without it, Dolphin creates a temp home dir with no Slippi account and crashes on connect. Point it at `~/Library/Application Support/Slippi Dolphin` (the dir with Config/GCPadNew.ini). Also use `--delay 6` — lower values freeze under active AI input.
 
 12. **Netplay test needs two Slippi accounts**: `netplay-test` runs two Dolphins on one machine. Each needs its own Dolphin home dir with a separate Slippi account (configured via Slippi Launcher). The `slippi_port` is different for each instance (51441, 51442) to avoid port conflicts.
+
+13. **AI input throttle for netplay**: AI sends 60 inputs/sec vs humans ~1-5/sec. This overwhelms Slippi's rollback netcode and causes desyncs. Set `input_throttle=3` in `NetplayConfig` (20 inputs/sec). This was the single biggest fix for netplay stability.
+
+14. **Netplay game-end detection**: libmelee's `action.value` stability check is too strict for netplay — the "stable" window where both players have `action.value < 0xA` at stocks=0 is too brief or never occurs. Detect game end on stocks hitting 0 directly, skip the action state check.
+
+15. **Subprocess per match in test scripts**: Reusing a single Python process for multiple netplay matches causes libmelee socket/temp state to leak, breaking menu navigation on match 2+. The test script (`test_netplay_stability.py`) spawns `run_single_netplay_match.py` as a fresh subprocess per match.
+
+16. **Sheik and Ice Climbers in character select**: `Character.SHEIK` can't be selected from the CSS (she's Zelda's down-B transform). `Character.ICECLIMBERS` doesn't exist in libmelee — use `Character.POPO`. Both will hang the menu navigator forever.
+
+17. **`--dolphin-home` tradeoffs**: On Scav (this machine), `--dolphin-home` is needed for the Slippi account. On ScavieFae's machine, it causes a non-working fullscreen mode. If menu nav gets stuck at name selection on match 2+, `--dolphin-home` may be the issue — or the fix.
+
+18. **Watchdog for `console.step()` blocking**: If Dolphin crashes without closing the socket cleanly, `console.step()` blocks forever. The netplay runner has a watchdog thread that kills Dolphin after 15s of `step()` not returning. Without this, crashes are undetectable.
+
+19. **CPU load causes desyncs**: Slippi's rollback is sensitive to frame timing. Background processes (browser tabs, builds) eating CPU on one side cause the other side to desync. The "Possible poor match performance detected" warning in Dolphin correlates with upcoming disconnects.
+
+20. **Dolphin "Invalid read" modal**: Dolphin occasionally throws a modal warning dialog (`Invalid read from 0x3031000a, PC = 0x801c165c`). This is a Dolphin/emulation bug, not our code. The modal freezes the game loop, which blocks `console.step()`. The watchdog catches this and kills Dolphin after 15s. The test script moves on to the next match automatically.
+
+## Netplay Stability Testing
+
+Two-machine test using `test_netplay_stability.py`. Each side runs independently.
+
+**Scav (this machine):**
+```bash
+.venv/bin/python test_netplay_stability.py \
+  --opponent "SCAV#861" --label mattie \
+  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
+  -d "/Applications/Slippi Dolphin.app" \
+  -i ~/games/melee/"Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+```
+
+**ScavieFae (queenmab):**
+```bash
+.venv/bin/python test_netplay_stability.py \
+  --opponent "SCAV#382" --label scaviefae \
+  -d "/Users/queenmab/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app" \
+  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+```
+
+**What "success" means**: A match either finishes via KO or survives to the timeout (currently 3min) without disconnecting. Both count as wins.
+
+**Results (2026-02-02)**:
+- Pre-throttle, with browser tabs: 9/10 completed, 1 disconnect
+- With `input_throttle=3`, fewer tabs: 10/10 completed, 0 disconnects
 
 ## Questions to Ask Yourself
 
