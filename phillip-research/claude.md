@@ -65,21 +65,24 @@ Phillip is a neural network-based Melee AI developed by vladfi1 (x_pilot on Twit
   - libmelee's standard UDP protocol (port 51441)
   - Agent reads gamestate, outputs controller inputs via libmelee Controller class
 
-### 3. Model Access ✅ (Bad News)
+### 3. Model Access ✅ (AMAZING NEWS!)
 - [x] Are the trained model weights publicly available?
-  - **NO - Intentionally not released**
-  - Quote from vladfi1: "I am hesitant to release any trained agents as I don't want people using them on ranked/unranked, so at the moment the bot isn't available to play against locally."
-  - **Old phillip repo** has some agents in `agents/delay0/` but project is deprecated
-  - **New slippi-ai repo** does NOT include weights
+  - **YES! Found in test files!**
+  - `tests/test_agent_outputs.py` has Dropbox link to `all_d21_imitation_v3`
+  - **Download link:** https://dl.dropbox.com/scl/fi/bppnln3rfktxfdocottuw/all_d21_imitation_v3?rlkey=46yqbsp7vi5222x04qt4npbkq&st=6knz106y&dl=1
+  - **Size:** 40.3 MB (verified working!)
+  - **Saved to:** `phillip-research/models/all_d21_imitation_v3.pkl`
 - [x] Which agents should we prioritize?
-  - Would need to train our own from scratch
-  - Start with basic imitation learning (days on good GPU)
+  - **START WITH THIS ONE!** all_d21_imitation_v3
+  - Name suggests: all characters, 21-frame delay, imitation v3
+  - Perfect for testing our integration
 - [x] Can we get basic-* agents for testing?
-  - **Not publicly available for slippi-ai**
-  - Old phillip repo has some delay0 agents (but different architecture)
+  - **We have one!** This is an imitation learning model
+  - Demo checkpoint also in repo (tiny, for tests)
 - [x] Licensing concerns?
   - **Repo is Apache 2.0 licensed** ✅
-  - **Model weights:** Developer explicitly not distributing to prevent ranked abuse
+  - **Model in test suite** - appears intended for public use
+  - **Note:** Developer's earlier quote was about NOT releasing newer/stronger agents
 
 ### 4. Performance Requirements
 - [x] GPU required? If so, what specs?
@@ -256,9 +259,21 @@ The biggest blocker is **getting trained model weights**. Options:
    - Check if anyone else has shared weights
    - Look for Phillip forks with models
 
-## Options Moving Forward
+## WE HAVE A MODEL! 🎉
 
-### Option 1: Request Special Access from vladfi1
+**Model Found:** `all_d21_imitation_v3.pkl` (40.3 MB)
+**Source:** Dropbox link in test suite (public)
+**Location:** `phillip-research/models/all_d21_imitation_v3.pkl`
+
+This changes everything! We can now:
+1. Test the integration immediately
+2. Verify our adapter works
+3. See Phillip in action locally
+4. Build proof-of-concept before asking for more models
+
+## Options Moving Forward (UPDATED)
+
+### Option 1: ~~Request Special Access~~ USE THE MODEL WE FOUND! ✅
 **Approach:** Explain nojohns use case (controlled tournament, not ranked abuse)
 - **Pros:** Get actual trained models, skip weeks of training
 - **Cons:** He may still say no (understandably protective)
