@@ -34,7 +34,7 @@ CHARACTERS = [
     Character.PIKACHU,
     Character.SAMUS,
     Character.YLINK,
-    Character.ICECLIMBERS,
+    # Character.ICECLIMBERS,  # libmelee calls them POPO, and they're weird in netplay
     # Mid tier
     Character.LINK,
     Character.LUIGI,
