@@ -1,0 +1,19 @@
+name = "phillip"
+version = "1.0.0"
+display_name = "Phillip"
+author = "vladfi1 (slippi-ai)"
+description = "Neural network AI trained via imitation learning on human replays. 21-frame delay. Apache 2.0 licensed."
+fighter_type = "neural-network"
+characters = ["FOX"]
+stages = []
+avg_frame_delay = 21
+repo_url = "https://github.com/vladfi1/slippi-ai"
+weights_required = true
+entry_point = "fighters.phillip:load_phillip"
+
+[hardware]
+gpu_required = false
+min_ram_gb = 2
+
+[init_args]
+model_name = "all_d21_imitation_v3"

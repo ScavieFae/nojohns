@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Test Phillip vs Random fighter.
+Run Phillip vs Random fighter.
 
-NOTE: Phillip requires Python 3.11 due to TensorFlow compatibility.
+Usage (from project root):
+    .venv/bin/python scripts/run_phillip_vs_random.py
 """
 
 import sys
 import logging
 from pathlib import Path
+
+# Add project root to path so nojohns/fighters/games are importable
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # Set up logging
 logging.basicConfig(
@@ -25,7 +30,7 @@ import melee
 print("✅ Imports successful!")
 
 # Configuration
-MODEL_PATH = Path(__file__).parent / 'fighters/phillip/models/all_d21_imitation_v3.pkl'
+MODEL_PATH = PROJECT_ROOT / 'fighters/phillip/models/all_d21_imitation_v3.pkl'
 DOLPHIN_PATH = Path.home() / 'Library/Application Support/Slippi Launcher/netplay'
 ISO_PATH = Path('/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso')
 

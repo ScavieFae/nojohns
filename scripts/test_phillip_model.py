@@ -8,20 +8,18 @@ This script:
 3. Tests that it can be built into an agent
 4. Optionally runs a quick evaluation
 
-Usage:
-    # Basic test (just load and verify)
-    python test_phillip_model.py
-
-    # Test with Dolphin (requires paths)
-    python test_phillip_model.py --dolphin "/path/to/Slippi Dolphin.app" --iso "/path/to/melee.iso"
+Usage (from project root):
+    .venv/bin/python scripts/test_phillip_model.py
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-# Add slippi-ai to path
-sys.path.insert(0, str(Path(__file__).parent / 'slippi-ai'))
+# Add project root and slippi-ai to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / 'fighters/phillip/slippi-ai'))
 
 def test_imports():
     """Test that all required modules can be imported."""
@@ -52,7 +50,8 @@ def test_imports():
 
     try:
         import melee
-        print(f"✅ libmelee {melee.__version__}")
+        version = getattr(melee, '__version__', 'unknown')
+        print(f"✅ libmelee {version}")
     except ImportError as e:
         print(f"❌ Failed to import libmelee: {e}")
         return False
@@ -69,7 +68,7 @@ def test_model_load():
 
     from slippi_ai import saving
 
-    model_path = Path(__file__).parent / 'models' / 'all_d21_imitation_v3.pkl'
+    model_path = PROJECT_ROOT / 'fighters/phillip/models/all_d21_imitation_v3.pkl'
 
     if not model_path.exists():
         print(f"❌ Model not found at: {model_path}")
@@ -114,7 +113,7 @@ def test_agent_build(state, dolphin_path=None, iso_path=None):
     from slippi_ai import eval_lib
     import melee
 
-    model_path = Path(__file__).parent / 'models' / 'all_d21_imitation_v3.pkl'
+    model_path = PROJECT_ROOT / 'fighters/phillip/models/all_d21_imitation_v3.pkl'
 
     # Get config from state
     config = state.get('config', {})
@@ -138,7 +137,11 @@ def test_agent_build(state, dolphin_path=None, iso_path=None):
         )
         print("✅ Agent built successfully!")
         print(f"  Agent type: {type(agent)}")
-        print(f"  Character: {agent.config.character if hasattr(agent, 'config') else 'Unknown'}")
+        if hasattr(agent, 'config'):
+            char = agent.config.get('character', 'all') if isinstance(agent.config, dict) else getattr(agent.config, 'character', 'unknown')
+            print(f"  Character: {char}")
+        else:
+            print("  Character: unknown")
 
     except Exception as e:
         print(f"❌ Failed to build agent: {e}")
