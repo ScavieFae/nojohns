@@ -210,6 +210,17 @@ class PhillipFighter(Fighter):
             # Start the agent (initializes internal state)
             self._agent.start()
 
+            # The agent's step() expects to see frame -123 first to initialize
+            # its parser. In netplay, we don't see that frame because we join
+            # mid-game. Synthesize it by temporarily setting the frame number.
+            original_frame = state.frame
+            state.frame = -123
+            try:
+                self._agent.step(state)
+            except Exception:
+                pass  # First step may partially fail, that's OK — parser is initialized
+            state.frame = original_frame
+
             logger.info(f"Phillip agent started successfully on port {port}")
 
         except Exception as e:
