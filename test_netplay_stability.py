@@ -26,7 +26,7 @@ CHARACTERS = [
     Character.FOX,
     Character.FALCO,
     Character.MARTH,
-    Character.SHEIK,
+    Character.ZELDA,
     Character.JIGGLYPUFF,
     Character.PEACH,
     Character.CPTFALCON,
