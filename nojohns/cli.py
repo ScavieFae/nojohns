@@ -351,88 +351,71 @@ def cmd_netplay_test(args):
 
 def cmd_list_fighters(args):
     """List available fighters."""
-    fighters = get_available_fighters()
-    
+    from nojohns.registry import list_fighters as registry_list
+
+    fighters = registry_list()
+
     print("\n📋 Available Fighters\n")
     print(f"{'Name':<15} {'Type':<12} {'Characters':<20} {'GPU'}")
     print("-" * 60)
-    
+
     for f in fighters:
-        chars = ", ".join(c.name for c in f.characters[:3])
+        chars = ", ".join(f.characters[:3])
         if len(f.characters) > 3:
             chars += "..."
-        gpu = "Yes" if f.gpu_required else "No"
+        gpu = "Yes" if f.hardware.get("gpu_required") else "No"
         print(f"{f.name:<15} {f.fighter_type:<12} {chars:<20} {gpu}")
-    
+
     print()
     return 0
 
 
 def cmd_info(args):
     """Show detailed info about a fighter."""
-    fighter = load_fighter(args.fighter)
-    if fighter is None:
+    from nojohns.registry import get_fighter_info, FighterNotFoundError
+
+    info = get_fighter_info(args.fighter)
+    if info is None:
+        logger.error(f"Unknown fighter: {args.fighter}")
         return 1
-    
-    meta = fighter.metadata
-    
-    print(f"\n🎮 {meta.display_name} v{meta.version}")
-    print(f"   by {meta.author}")
+
+    gpu = "Yes" if info.hardware.get("gpu_required") else "No"
+    ram = info.hardware.get("min_ram_gb", "?")
+
+    print(f"\n🎮 {info.display_name} v{info.version}")
+    print(f"   by {info.author}")
     print()
-    print(f"   Type: {meta.fighter_type}")
-    print(f"   Characters: {', '.join(c.name for c in meta.characters)}")
-    print(f"   GPU Required: {'Yes' if meta.gpu_required else 'No'}")
-    print(f"   Min RAM: {meta.min_ram_gb}GB")
-    print(f"   Frame Delay: {meta.avg_frame_delay}")
+    print(f"   Type: {info.fighter_type}")
+    print(f"   Characters: {', '.join(info.characters)}")
+    print(f"   GPU Required: {gpu}")
+    print(f"   Min RAM: {ram}GB")
+    print(f"   Frame Delay: {info.avg_frame_delay}")
     print()
-    print(f"   {meta.description}")
-    
-    if meta.repo_url:
-        print(f"\n   Repo: {meta.repo_url}")
-    
+    print(f"   {info.description}")
+
+    if info.repo_url:
+        print(f"\n   Repo: {info.repo_url}")
+
     print()
     return 0
 
 
 def load_fighter(name: str):
-    """Load a fighter by name."""
-    from nojohns import DoNothingFighter, RandomFighter
+    """Load a fighter by name via the registry."""
+    from nojohns.registry import (
+        load_fighter as registry_load,
+        FighterNotFoundError,
+        FighterLoadError,
+    )
 
-    # Built-in fighters
-    builtins = {
-        "do-nothing": DoNothingFighter,
-        "random": RandomFighter,
-    }
-
-    if name in builtins:
-        return builtins[name]()
-
-    # SmashBot — look for the clone next to the adapter
-    if name == "smashbot":
-        from fighters.smashbot import SmashBotFighter
-
-        default_path = Path(__file__).resolve().parent.parent / "fighters" / "smashbot" / "SmashBot"
-        if not default_path.is_dir():
-            logger.error(f"SmashBot not found at {default_path}")
-            logger.error("Clone it: git clone https://github.com/altf4/SmashBot fighters/smashbot/SmashBot")
-            return None
-        return SmashBotFighter(str(default_path))
-
-    # TODO: Implement fighter registry for arbitrary fighters
-
-    logger.error(f"Unknown fighter: {name}")
-    logger.error(f"Available: {', '.join(list(builtins.keys()) + ['smashbot'])}")
-    return None
-
-
-def get_available_fighters():
-    """Get metadata for all available fighters."""
-    from nojohns import DoNothingFighter, RandomFighter
-    
-    return [
-        DoNothingFighter().metadata,
-        RandomFighter().metadata,
-    ]
+    try:
+        return registry_load(name)
+    except FighterNotFoundError as e:
+        logger.error(str(e))
+        return None
+    except FighterLoadError as e:
+        logger.error(str(e))
+        return None
 
 
 def main():

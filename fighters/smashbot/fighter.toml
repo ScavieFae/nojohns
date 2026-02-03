@@ -1,0 +1,19 @@
+name = "smashbot"
+version = "1.0.0"
+display_name = "SmashBot"
+author = "altf4"
+description = "Rule-based Melee AI by altf4. Plays Fox with hand-crafted strategies, tactics, and chains. The OG Melee bot."
+fighter_type = "rule-based"
+characters = ["FOX"]
+stages = []
+avg_frame_delay = 0
+repo_url = "https://github.com/altf4/SmashBot"
+weights_required = false
+entry_point = "fighters.smashbot:SmashBotFighter"
+
+[hardware]
+gpu_required = false
+min_ram_gb = 1
+
+[init_args]
+smashbot_path = "{fighter_dir}/SmashBot"

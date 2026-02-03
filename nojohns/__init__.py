@@ -22,6 +22,15 @@ from .fighter import (
     RandomFighter,
 )
 
+from .registry import (
+    FighterInfo,
+    FighterNotFoundError,
+    FighterLoadError,
+    list_fighters,
+    load_fighter,
+    get_fighter_info,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -35,4 +44,11 @@ __all__ = [
     "BaseFighter",
     "DoNothingFighter",
     "RandomFighter",
+    # Registry
+    "FighterInfo",
+    "FighterNotFoundError",
+    "FighterLoadError",
+    "list_fighters",
+    "load_fighter",
+    "get_fighter_info",
 ]

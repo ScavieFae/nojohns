@@ -74,10 +74,10 @@ nojohns/
 │   └── SETUP.md           # Fresh Mac setup guide (for Claude Code or humans)
 │
 ├── nojohns/               # Core package — fighter protocol & CLI
-│   ├── __init__.py        # Fighter types only (no game-specific imports)
+│   ├── __init__.py        # Fighter types + registry re-exports
 │   ├── fighter.py         # Fighter protocol & base class
 │   ├── cli.py             # Command line interface (imports from games.melee)
-│   └── registry.py        # Fighter discovery (TODO — not yet created)
+│   └── registry.py        # Fighter discovery (built-ins + TOML manifests)
 │
 ├── games/
 │   └── melee/             # Melee/Dolphin/Slippi integration
@@ -86,7 +86,7 @@ nojohns/
 │       ├── netplay.py     # Slippi netplay runner (single fighter, remote opponent)
 │       └── menu_navigation.py  # Slippi menu navigation
 │
-├── fighters/              # Fighter implementations
+├── fighters/              # Fighter implementations (each has fighter.toml manifest)
 │   ├── smashbot/          # SmashBot adapter (InterceptController + SmashBotFighter)
 │   └── phillip/           # Phillip adapter (TODO — not yet created)
 │
@@ -111,6 +111,9 @@ nojohns/
 ```
 nojohns.fighter  <── fighters.smashbot
        ^              fighters.phillip (future)
+       |
+nojohns.registry --> nojohns.fighter (built-ins)
+       ^              fighters/*/fighter.toml (manifests, lazy scan)
        |
 games.melee.runner
 games.melee.netplay --> games.melee.runner
@@ -181,8 +184,8 @@ class MyFighter(BaseFighter):
 
 1. Create `fighters/myfighter/` directory
 2. Implement the `Fighter` protocol
-3. Add `fighter.yaml` manifest
-4. Register in `nojohns/registry.py`
+3. Add `fighter.toml` manifest (see `fighters/smashbot/fighter.toml` for example)
+4. The registry auto-discovers it on next `list-fighters` or `load_fighter()` call
 
 See `docs/FIGHTERS.md` for full spec.
 
@@ -202,10 +205,10 @@ See `docs/FIGHTERS.md` for full spec.
 - Foundry contracts scaffold (`contracts/`)
 - Arena matchmaking server (`arena/`) — FastAPI + SQLite, FIFO queue, result reporting
 - Matchmake CLI command — joins queue, polls, launches netplay, reports results
+- Fighter registry (`registry.py`) — built-ins + TOML manifest discovery, `list_fighters()`/`load_fighter()` API
 
 ### Phase 1 TODO (Local CLI)
 - [ ] SmashBot integration test (adapter exists, needs real SmashBot clone to verify)
-- [ ] Fighter registry (`registry.py` — CLI currently hardcodes built-in fighters)
 - [ ] Replay saving
 - [ ] `--headless` flag (CLI accepts it but runner doesn't act on it yet)
 
@@ -227,7 +230,7 @@ See `docs/FIGHTERS.md` for full spec.
 
 ## Code Style
 
-- Python 3.10+ (use modern typing)
+- Python 3.11+ (use modern typing, tomllib is stdlib)
 - Black for formatting (100 char lines)
 - Type hints everywhere
 - Docstrings for public APIs
@@ -237,10 +240,12 @@ See `docs/FIGHTERS.md` for full spec.
 
 ### "Add a new fighter"
 1. Read `docs/FIGHTERS.md`
-2. Create adapter class inheriting `BaseFighter`
+2. Create `fighters/myfighter/` with adapter class inheriting `BaseFighter`
 3. Implement `metadata` property and `act()` method
-4. Create `fighter.yaml` manifest
-5. Test with `nojohns fight myfighter random ...`
+4. Create `fighters/myfighter/fighter.toml` manifest (see `fighters/smashbot/fighter.toml`)
+   - `entry_point = "fighters.myfighter:MyFighter"` for import
+   - Use `{fighter_dir}` in `[init_args]` for paths relative to the fighter dir
+5. Test with `nojohns fight myfighter random ...` (registry auto-discovers it)
 
 ### "Improve match runner"
 1. Look at `games/melee/runner.py`
