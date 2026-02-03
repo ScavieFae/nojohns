@@ -512,3 +512,50 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 4. **Add example with relative ISO paths** for convenience
 
 ---
+
+
+---
+
+## Issue #7: Automated Testing - Menu Navigation "Naming Bug"
+
+**Date:** 2026-02-02  
+**Status:** ✅ RESOLVED
+
+**Symptom:**
+When running automated netplay tests that restart Dolphin between matches, menu navigation would get stuck at connect code entry on the 2nd+ match. Both sides would experience this simultaneously, even when one side had already crashed.
+
+**Investigation:**
+- Initial theory: Timing issue between sides → Tried delays of 5s, 20s, 60s → No improvement
+- Tested temp directory cleanup → No improvement  
+- Tested socket/resource cleanup → No improvement
+- **Key insight:** Manual restart (kill script, restart) always worked ✅
+- **Root cause:** libmelee has internal module-level state that persists between NetplayRunner instances in the same Python process
+
+**Solution:**
+Run each match in a separate subprocess for fresh libmelee state.
+
+Created `run_single_netplay_match.py` helper script that runs one match in isolation. Main `test_netplay_stability.py` spawns this as a subprocess for each match.
+
+**Implementation:**
+```python
+# Each match runs in fresh subprocess
+subprocess.run([
+    sys.executable,
+    "run_single_netplay_match.py",
+    "--opponent", opponent_code,
+    "--character", char_name,
+    # ... other args
+])
+```
+
+**Results:**
+- ✅ No more naming bug
+- ✅ Automated testing works perfectly
+- ✅ Successfully ran 10-match test cycles
+- ✅ Each match gets fresh Python process + libmelee state
+
+**Lessons Learned:**
+1. libmelee menu_helper_simple has persistent state issues
+2. Timing/cleanup delays dont solve state issues
+3. Process isolation (subprocess) is the robust solution
+4. Manual testing worked because each run was fresh process
