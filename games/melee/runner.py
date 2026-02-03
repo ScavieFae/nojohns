@@ -13,7 +13,7 @@ from typing import Callable
 import melee
 from melee import Stage, Character
 
-from .fighter import Fighter, MatchConfig, FighterConfig, MatchResult, ControllerState
+from nojohns.fighter import Fighter, MatchConfig, FighterConfig, MatchResult, ControllerState
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +375,7 @@ class MatchRunner:
     
     def _to_fighter_result(self, game: GameResult, port: int) -> "MatchResult":
         """Convert GameResult to fighter's MatchResult format."""
-        from .fighter import MatchResult as FighterMatchResult
+        from nojohns.fighter import MatchResult as FighterMatchResult
         
         won = game.winner_port == port
         our_stocks = game.p1_stocks if port == 1 else game.p2_stocks

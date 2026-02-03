@@ -24,13 +24,12 @@ logger = logging.getLogger(__name__)
 
 def cmd_fight(args):
     """Run a fight between two fighters."""
-    from nojohns import (
+    from games.melee import (
         DolphinConfig,
         MatchSettings,
         MatchRunner,
-        DoNothingFighter,
-        RandomFighter,
     )
+    from nojohns import DoNothingFighter, RandomFighter
     from melee import Character, Stage
     
     # Load fighters
@@ -90,7 +89,7 @@ def cmd_fight(args):
 
 def cmd_netplay(args):
     """Run a fighter over Slippi netplay against a remote opponent."""
-    from nojohns import NetplayConfig, NetplayRunner
+    from games.melee import NetplayConfig, NetplayRunner
     from melee import Character, Stage
 
     fighter = load_fighter(args.fighter)
@@ -143,7 +142,7 @@ def cmd_netplay(args):
 
 def cmd_netplay_test(args):
     """Run two fighters on two local Dolphins connected via Slippi."""
-    from nojohns import netplay_test
+    from games.melee import netplay_test
     from melee import Character, Stage
 
     fighter1 = load_fighter(args.fighter1)

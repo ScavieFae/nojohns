@@ -18,7 +18,7 @@ from typing import Callable
 import melee
 from melee import Character, Stage
 
-from .fighter import (
+from nojohns.fighter import (
     Fighter,
     FighterConfig,
     MatchConfig,

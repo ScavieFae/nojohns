@@ -23,3 +23,7 @@ htmlcov/
 
 # External fighter repos (cloned at runtime, not vendored)
 fighters/smashbot/SmashBot/
+
+# Foundry build artifacts
+contracts/out/
+contracts/cache/

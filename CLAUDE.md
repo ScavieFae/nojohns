@@ -73,23 +73,53 @@ nojohns/
 │   ├── API.md             # REST API (TODO)
 │   └── SETUP.md           # Fresh Mac setup guide (for Claude Code or humans)
 │
-├── nojohns/               # Core Python package
-│   ├── __init__.py        # Public exports
+├── nojohns/               # Core package — fighter protocol & CLI
+│   ├── __init__.py        # Fighter types only (no game-specific imports)
 │   ├── fighter.py         # Fighter protocol & base class
-│   ├── runner.py          # Match execution engine (local, two fighters)
-│   ├── netplay.py         # Slippi netplay runner (single fighter, remote opponent)
-│   ├── cli.py             # Command line interface
+│   ├── cli.py             # Command line interface (imports from games.melee)
 │   └── registry.py        # Fighter discovery (TODO — not yet created)
+│
+├── games/
+│   └── melee/             # Melee/Dolphin/Slippi integration
+│       ├── __init__.py    # Re-exports runner + netplay public API
+│       ├── runner.py      # Match execution engine (local, two fighters)
+│       ├── netplay.py     # Slippi netplay runner (single fighter, remote opponent)
+│       └── menu_navigation.py  # Slippi menu navigation
 │
 ├── fighters/              # Fighter implementations
 │   ├── smashbot/          # SmashBot adapter (InterceptController + SmashBotFighter)
 │   └── phillip/           # Phillip adapter (TODO — not yet created)
+│
+├── contracts/             # Solidity contracts (Foundry)
+│   ├── foundry.toml       # Solc 0.8.24, Monad RPC endpoints
+│   ├── src/               # Contract sources (Wager.sol, MatchProof.sol, etc.)
+│   ├── script/            # Deployment scripts
+│   ├── test/              # Forge tests
+│   └── lib/               # forge install dependencies
 │
 ├── arena/                 # Arena server (TODO)
 │
 └── skill/                 # OpenClaw skill
     └── SKILL.md           # Skill documentation
 ```
+
+### Dependency Graph
+
+```
+nojohns.fighter  <── fighters.smashbot
+       ^              fighters.phillip (future)
+       |
+games.melee.runner
+games.melee.netplay --> games.melee.runner
+                    --> games.melee.menu_navigation
+       ^
+nojohns.cli (lazy imports from both nojohns and games.melee)
+
+contracts/  (standalone Solidity — no Python dependency)
+```
+
+Arrow direction: `games.melee` depends on `nojohns.fighter`, never the reverse.
+Fighters depend on `nojohns.fighter`, never on `games.melee`.
 
 ## Key Abstractions
 
@@ -106,11 +136,13 @@ class Fighter(Protocol):
     def on_game_end(self, result: MatchResult) -> None: ...
 ```
 
-### Match Runner (`nojohns/runner.py`)
+### Match Runner (`games/melee/runner.py`)
 
 Orchestrates Dolphin, connects fighters, runs games:
 
 ```python
+from games.melee import MatchRunner, DolphinConfig, MatchSettings
+
 runner = MatchRunner(DolphinConfig(...))
 result = runner.run_match(fighter1, fighter2, MatchSettings(...))
 ```
@@ -163,6 +195,8 @@ See `docs/FIGHTERS.md` for full spec.
 - **Tested with real Dolphin + libmelee** — full match runs successfully
 - SmashBot adapter (`fighters/smashbot/`) — InterceptController + SmashBotFighter
 - SmashBot adapter unit tests (13 passing)
+- Game-specific code separated into `games/melee/` package
+- Foundry contracts scaffold (`contracts/`)
 
 ### Phase 1 TODO (Local CLI)
 - [ ] SmashBot integration test (adapter exists, needs real SmashBot clone to verify)
@@ -198,10 +232,16 @@ See `docs/FIGHTERS.md` for full spec.
 5. Test with `nojohns fight myfighter random ...`
 
 ### "Improve match runner"
-1. Look at `nojohns/runner.py`
+1. Look at `games/melee/runner.py`
 2. The `_run_game()` method is the hot path
 3. Menu handling is in `_handle_menu()`
 4. Test changes require Dolphin + ISO
+
+### "Add/modify contracts"
+1. Check `docs/ERC8004-ARENA.md` for the spec
+2. Contract sources go in `contracts/src/`
+3. Build: `cd contracts && forge build`
+4. Test: `cd contracts && forge test`
 
 ### "Add arena feature"
 1. Check `docs/SPEC.md` for architecture
@@ -220,6 +260,7 @@ See `docs/FIGHTERS.md` for full spec.
 |---------|---------|------|
 | `melee` | Dolphin/Melee interface | libmelee.readthedocs.io |
 | `torch` | Neural net fighters | pytorch.org |
+| `forge` | Solidity build/test | book.getfoundry.sh |
 
 ## Gotchas
 
@@ -239,7 +280,7 @@ See `docs/FIGHTERS.md` for full spec.
 
 8. **BrokenPipeError on cleanup**: libmelee's Controller `__del__` fires after Dolphin is killed, causing `BrokenPipeError`. Harmless noise from the SIGKILL cleanup path.
 
-9. **pyproject.toml addopts**: `pytest` config sets `--cov=nojohns` by default. If pytest-cov isn't installed, pass `-o "addopts="` to override.
+9. **pyproject.toml addopts**: `pytest` config sets `--cov=nojohns --cov=games` by default. If pytest-cov isn't installed, pass `-o "addopts="` to override.
 
 10. **Tests mock melee**: `test_smashbot_adapter.py` and `test_netplay.py` install a fake `melee` module so tests run even without libmelee. The mock is skipped if real melee is present.
 
@@ -274,10 +315,14 @@ When modifying this codebase:
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 
 # Format code
-black nojohns/
+black nojohns/ games/
 
 # Type check
-mypy nojohns/
+mypy nojohns/ games/
+
+# Foundry contracts (requires forge — install via foundryup)
+cd contracts && forge build
+cd contracts && forge test
 
 # List fighters
 .venv/bin/python -m nojohns.cli list-fighters

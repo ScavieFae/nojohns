@@ -56,6 +56,9 @@ def _setup_melee_mock():
         CHARACTER_SELECT = auto()
         SLIPPI_ONLINE_CSS = auto()
 
+    class SubMenu(Enum):
+        NAME_ENTRY_SUBMENU = auto()
+
     class ControllerType(Enum):
         STANDARD = auto()
 
@@ -74,6 +77,7 @@ def _setup_melee_mock():
     melee_mod.Character = Character
     melee_mod.Stage = Stage
     melee_mod.Menu = Menu
+    melee_mod.SubMenu = SubMenu
     melee_mod.ControllerType = ControllerType
     melee_mod.Controller = MagicMock
     melee_mod.Console = MagicMock
@@ -92,13 +96,13 @@ _setup_melee_mock()
 import melee
 from melee import Character, Stage
 
-from nojohns.netplay import (
+from games.melee.netplay import (
     NetplayConfig,
     NetplayRunner,
     NetplayDisconnectedError,
     netplay_test,
 )
-from nojohns.runner import GameResult, MatchResult
+from games.melee.runner import GameResult, MatchResult
 from nojohns.fighter import (
     MatchConfig,
     FighterConfig,
@@ -186,7 +190,7 @@ class TestNetplayRunner:
         defaults.update(overrides)
         return NetplayRunner(NetplayConfig(**defaults))
 
-    @patch("nojohns.netplay.melee.Console")
+    @patch("games.melee.netplay.melee.Console")
     def test_setup_console_passes_online_delay(self, mock_console_cls):
         """Console should be created with online_delay from config."""
         runner = self._make_runner(online_delay=3, slippi_port=51442)
@@ -197,7 +201,7 @@ class TestNetplayRunner:
         assert call_kwargs["online_delay"] == 3
         assert call_kwargs["slippi_port"] == 51442
 
-    @patch("nojohns.netplay.melee.Console")
+    @patch("games.melee.netplay.melee.Console")
     def test_setup_console_default_delay(self, mock_console_cls):
         """Default online_delay should be 2."""
         runner = self._make_runner()
@@ -206,7 +210,7 @@ class TestNetplayRunner:
         call_kwargs = mock_console_cls.call_args[1]
         assert call_kwargs["online_delay"] == 2
 
-    @patch("nojohns.netplay.melee.Controller")
+    @patch("games.melee.netplay.melee.Controller")
     def test_setup_controller_port_1(self, mock_controller_cls):
         """Controller should be on port 1."""
         runner = self._make_runner()
