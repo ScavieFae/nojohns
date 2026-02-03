@@ -21,9 +21,6 @@ from pathlib import Path
 
 from melee import Character
 
-from nojohns.cli import load_fighter
-from games.melee.netplay import NetplayConfig, NetplayRunner, NetplayDisconnectedError
-
 # Test configuration
 CHARACTERS = [
     Character.FOX,
@@ -106,12 +103,6 @@ def main():
     logger.info(f"Log file: {log_file}")
     logger.info("=" * 80)
 
-    # Load fighter
-    fighter = load_fighter("random")
-    if not fighter:
-        logger.error("Failed to load random fighter")
-        sys.exit(1)
-
     # Results tracking
     results = []
 
@@ -125,52 +116,60 @@ def main():
         logger.info(f"MATCH {match_num}/{MATCHES_TO_RUN}: {char_name} (random)")
         logger.info("=" * 80)
 
-        config = NetplayConfig(
-            dolphin_path=args.dolphin,
-            iso_path=args.iso,
-            opponent_code=args.opponent,
-            character=char,
-            online_delay=DELAY,
-            dolphin_home_path=args.dolphin_home,
-            fullscreen=False,
-        )
-
-        runner = NetplayRunner(config)
-
-        start_time = time.time()
         start_real = datetime.now()
         outcome = "UNKNOWN"
-        duration_seconds = 0
+        duration_seconds = 0.0
         error_msg = None
 
+        # Run match in subprocess for fresh libmelee state
         try:
-            result = runner.run_netplay(fighter, games=1)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "run_single_netplay_match.py",
+                    "--opponent", args.opponent,
+                    "--character", char_name,
+                    "-d", args.dolphin,
+                    "-i", args.iso,
+                    "--delay", str(DELAY),
+                    "--match-num", str(match_num),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 minute timeout per match
+            )
 
-            # Calculate duration
-            if result.games:
-                game = result.games[0]
-                duration_seconds = game.duration_frames / 60.0  # Convert frames to seconds
+            # Parse result from subprocess output
+            for line in result.stdout.split("\n"):
+                if line.startswith("RESULT:"):
+                    import json
+                    result_data = json.loads(line.split("RESULT:", 1)[1])
+                    outcome = result_data["outcome"]
+                    duration_seconds = result_data["duration_seconds"]
+                    break
 
-            outcome = "COMPLETED"
-            logger.info(f"✅ Match completed! Duration: {duration_seconds:.1f}s")
+            # Also show subprocess logs
+            if result.stderr:
+                logger.info("Match subprocess output:")
+                for line in result.stderr.split("\n"):
+                    if line.strip():
+                        logger.info(f"  {line}")
 
-        except NetplayDisconnectedError as e:
-            duration_real = time.time() - start_time
-            outcome = "FREEZE/DISCONNECT"
-            error_msg = str(e)
-            logger.warning(f"❌ Match failed: {e}")
-            logger.info(f"Real duration before freeze: {duration_real:.1f}s")
+        except subprocess.TimeoutExpired:
+            outcome = "TIMEOUT"
+            error_msg = "Match exceeded 10 minute timeout"
+            logger.error(f"❌ Match timed out after 10 minutes")
 
         except Exception as e:
             outcome = "ERROR"
             error_msg = str(e)
-            logger.error(f"❌ Unexpected error: {e}", exc_info=True)
+            logger.error(f"❌ Subprocess error: {e}", exc_info=True)
 
         finally:
             end_real = datetime.now()
             elapsed_real = (end_real - start_real).total_seconds()
 
-            # Ensure Dolphin is fully killed between matches
+            # Ensure cleanup between matches
             try:
                 subprocess.run(
                     ["killall", "Slippi Dolphin"],
@@ -178,22 +177,19 @@ def main():
                     timeout=5,
                 )
                 # Wait for Dolphin to fully terminate
-                for _ in range(10):  # Try for up to 5 seconds
-                    result = subprocess.run(
+                for _ in range(10):
+                    check = subprocess.run(
                         ["pgrep", "-f", "Slippi Dolphin"],
                         capture_output=True,
                     )
-                    if result.returncode != 0:  # No process found
+                    if check.returncode != 0:
                         break
                     time.sleep(0.5)
-                else:
-                    logger.warning("Dolphin still running after 5s, forcing cleanup")
 
-                # Longer delay to ensure everything fully settles
-                logger.info("Waiting 20s for full cleanup and resource release...")
-                time.sleep(20)
+                # Brief pause for cleanup
+                time.sleep(5)
             except Exception:
-                pass  # Already dead is fine
+                pass
 
         # Determine success
         success = duration_seconds >= SUCCESS_THRESHOLD_SECONDS
@@ -212,11 +208,6 @@ def main():
         results.append(result_entry)
 
         logger.info(f"Result: {outcome} | Duration: {duration_seconds:.1f}s | Success: {success}")
-
-        # Brief pause between matches
-        if match_num < MATCHES_TO_RUN:
-            logger.info("Waiting 5 seconds before next match...")
-            time.sleep(5)
 
     # Summary
     logger.info("")
