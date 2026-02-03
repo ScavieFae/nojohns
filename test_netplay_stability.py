@@ -84,6 +84,11 @@ def main():
         required=True,
         help="Path to Melee ISO",
     )
+    parser.add_argument(
+        "--dolphin-home",
+        default=None,
+        help="Dolphin home dir (with Slippi account config)",
+    )
 
     args = parser.parse_args()
 
@@ -124,6 +129,7 @@ def main():
             opponent_code=args.opponent,
             character=char,
             online_delay=DELAY,
+            dolphin_home_path=args.dolphin_home,
         )
 
         runner = NetplayRunner(config)

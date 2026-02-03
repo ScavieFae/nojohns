@@ -243,122 +243,154 @@ class NetplayRunner:
         last_frame_time = time.time()
         freeze_timeout = 10  # seconds without frame advancement = freeze
 
-        # Main game loop
-        while True:
-            state = self._console.step()
+        # Watchdog: kills Dolphin if console.step() blocks forever
+        # (e.g. Dolphin crashes without closing the socket cleanly)
+        watchdog_heartbeat = [time.time()]
+        watchdog_timeout = 15  # seconds
+        watchdog_stop = threading.Event()
 
-            if state is None:
-                consecutive_nones += 1
-                if consecutive_nones > 600:  # ~10 seconds at 60fps
-                    raise NetplayDisconnectedError(
-                        "Lost connection (no game state for ~10 seconds)"
+        def _watchdog():
+            while not watchdog_stop.is_set():
+                if time.time() - watchdog_heartbeat[0] > watchdog_timeout:
+                    logger.error(
+                        f"Watchdog: console.step() blocked for "
+                        f"{watchdog_timeout}s, killing Dolphin"
                     )
-                continue
-            consecutive_nones = 0
+                    if self._console and self._console._process:
+                        self._console._process.kill()
+                    return
+                watchdog_stop.wait(1)
 
-            # Detect freeze by checking if frames are advancing
-            if state.frame != last_frame_number:
-                last_frame_number = state.frame
-                last_frame_time = time.time()
-            elif game_started and time.time() - last_frame_time > freeze_timeout:
-                logger.error(f"Freeze detected: no frame advancement for {freeze_timeout}s at frame {state.frame}")
-                raise NetplayDisconnectedError(
-                    f"Game frozen (no frame advancement for {freeze_timeout} seconds)"
-                )
+        watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
+        watchdog_thread.start()
 
-            # In game — the hot path
-            if state.menu_state in [melee.Menu.IN_GAME, melee.Menu.SUDDEN_DEATH]:
-                if not game_started:
-                    game_started = True
-                    start_frame = state.frame
-                    logger.info("Game started")
+        # Main game loop
+        try:
+            while True:
+                state = self._console.step()
+                watchdog_heartbeat[0] = time.time()
 
-                # Track damage dealt
-                for port in [1, 2]:
-                    player = state.players.get(port)
-                    if player:
-                        opponent_port = 2 if port == 1 else 1
-                        if player.percent > last_percent[port]:
-                            damage_dealt[opponent_port] += player.percent - last_percent[port]
-                        last_percent[port] = player.percent
+                if state is None:
+                    consecutive_nones += 1
+                    if consecutive_nones > 600:  # ~10 seconds at 60fps
+                        raise NetplayDisconnectedError(
+                            "Lost connection (no game state for ~10 seconds)"
+                        )
+                    continue
+                consecutive_nones = 0
 
-                # Get action from our fighter only
-                # But don't send inputs if we're dead/dying (might help netplay sync)
-                p1 = state.players.get(1)
-                if p1 and p1.stock > 0:
-                    try:
-                        action = fighter.act(state)
-                    except Exception as e:
-                        logger.error(f"Fighter error: {e}")
+                # Detect freeze by checking if frames are advancing
+                if state.frame != last_frame_number:
+                    last_frame_number = state.frame
+                    last_frame_time = time.time()
+                elif game_started and time.time() - last_frame_time > freeze_timeout:
+                    logger.error(f"Freeze detected: no frame advancement for {freeze_timeout}s at frame {state.frame}")
+                    raise NetplayDisconnectedError(
+                        f"Game frozen (no frame advancement for {freeze_timeout} seconds)"
+                    )
+
+                # In game — the hot path
+                if state.menu_state in [melee.Menu.IN_GAME, melee.Menu.SUDDEN_DEATH]:
+                    if not game_started:
+                        game_started = True
+                        start_frame = state.frame
+                        logger.info("Game started")
+
+                    # Track damage dealt
+                    for port in [1, 2]:
+                        player = state.players.get(port)
+                        if player:
+                            opponent_port = 2 if port == 1 else 1
+                            if player.percent > last_percent[port]:
+                                damage_dealt[opponent_port] += player.percent - last_percent[port]
+                            last_percent[port] = player.percent
+
+                    # Get action from our fighter only
+                    # But don't send inputs if we're dead/dying (might help netplay sync)
+                    p1 = state.players.get(1)
+                    if p1 and p1.stock > 0:
+                        try:
+                            action = fighter.act(state)
+                        except Exception as e:
+                            logger.error(f"Fighter error: {e}")
+                            action = ControllerState()
+                    else:
+                        # Player is dead/respawning, send neutral inputs
                         action = ControllerState()
-                else:
-                    # Player is dead/respawning, send neutral inputs
-                    action = ControllerState()
 
-                # Apply to our controller (port 1 only)
-                action.to_libmelee(self._controller)
+                    # Apply to our controller (port 1 only)
+                    action.to_libmelee(self._controller)
 
-                # Frame callback
-                if on_frame:
-                    on_frame(state)
+                    # Frame callback
+                    if on_frame:
+                        on_frame(state)
 
-                # Check for game end - but don't return yet, let explosion finish
-                # Also skip checking during action states that might be mid-explosion
-                if game_result is None:  # Only check once
-                    p1 = state.players.get(1)
-                    p2 = state.players.get(2)
+                    # Check for game end - but don't return yet, let explosion finish
+                    # Also skip checking during action states that might be mid-explosion
+                    if game_result is None:  # Only check once
+                        p1 = state.players.get(1)
+                        p2 = state.players.get(2)
 
-                    # Only check for game end when both players are in stable states
-                    # Skip if either player is None (can happen during respawn)
-                    if p1 and p2 and (p1.stock == 0 or p2.stock == 0):
-                        # Make sure we're not in the middle of a death animation
-                        # Wait for players to be in stable states
-                        p1_stable = p1.action.value < 0xA  # Not in special states
-                        p2_stable = p2.action.value < 0xA
+                        # Only check for game end when both players are in stable states
+                        # Skip if either player is None (can happen during respawn)
+                        if p1 and p2 and (p1.stock == 0 or p2.stock == 0):
+                            # Make sure we're not in the middle of a death animation
+                            # Wait for players to be in stable states
+                            p1_stable = p1.action.value < 0xA  # Not in special states
+                            p2_stable = p2.action.value < 0xA
 
-                        if p1_stable and p2_stable:
-                            winner = 1 if p2.stock == 0 else 2
+                            if p1_stable and p2_stable:
+                                winner = 1 if p2.stock == 0 else 2
 
-                            game_result = GameResult(
-                                winner_port=winner,
-                                p1_stocks=p1.stock,
-                                p2_stocks=p2.stock,
-                                p1_damage_dealt=damage_dealt[1],
-                                p2_damage_dealt=damage_dealt[2],
-                                duration_frames=state.frame - (start_frame or 0),
-                                stage=self.config.stage,
-                            )
+                                game_result = GameResult(
+                                    winner_port=winner,
+                                    p1_stocks=p1.stock,
+                                    p2_stocks=p2.stock,
+                                    p1_damage_dealt=damage_dealt[1],
+                                    p2_damage_dealt=damage_dealt[2],
+                                    duration_frames=state.frame - (start_frame or 0),
+                                    stage=self.config.stage,
+                                )
 
-                            # Notify fighter
-                            fighter.on_game_end(self._to_fighter_result(game_result))
-                            logger.debug("Game end detected, waiting for postgame transition")
+                                # Notify fighter
+                                fighter.on_game_end(self._to_fighter_result(game_result))
+                                logger.debug("Game end detected, waiting for postgame transition")
 
-                # If game ended but stocks reset (new match starting), return immediately
-                elif game_result is not None:
-                    p1 = state.players.get(1)
-                    p2 = state.players.get(2)
-                    if p1 and p2 and p1.stock > 0 and p2.stock > 0:
-                        logger.info("Stocks reset after game end - returning result without postgame")
-                        return game_result
+                    # If game ended but stocks reset (new match starting), return immediately
+                    elif game_result is not None:
+                        p1 = state.players.get(1)
+                        p2 = state.players.get(2)
+                        if p1 and p2 and p1.stock > 0 and p2.stock > 0:
+                            logger.info("Stocks reset after game end - returning result without postgame")
+                            return game_result
 
-                continue
+                    continue
 
-            # Postgame scores — skip through and return
-            if state.menu_state == melee.Menu.POSTGAME_SCORES:
+                    continue
+
+                # If game already ended, return on any non-game state
+                # (Slippi netplay may skip POSTGAME_SCORES entirely)
                 if game_result is not None:
-                    # Game ended, we've reached postgame, now we can return
-                    logger.debug("Reached postgame, returning result")
+                    logger.debug(f"Game ended, left IN_GAME to {state.menu_state}")
                     return game_result
 
-                # Still in postgame from a previous game, skip it
-                melee.MenuHelper.skip_postgame(
-                    controller=self._controller,
-                    gamestate=state,
-                )
-                continue
+                # Postgame scores — skip through
+                if state.menu_state == melee.Menu.POSTGAME_SCORES:
+                    melee.MenuHelper.skip_postgame(
+                        controller=self._controller,
+                        gamestate=state,
+                    )
+                    continue
 
-            # Any other menu state — navigate toward online match
-            self._handle_menu(state)
+                # Any other menu state — navigate toward online match
+                self._handle_menu(state)
+        except OSError:
+            # Watchdog killed Dolphin — step() throws when socket dies
+            raise NetplayDisconnectedError(
+                "Dolphin process killed by watchdog (console.step() blocked)"
+            )
+        finally:
+            watchdog_stop.set()
 
     def _handle_menu(self, state: melee.GameState) -> None:
         """Navigate menus via Slippi direct connect.
