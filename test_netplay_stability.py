@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import logging
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -159,6 +160,17 @@ def main():
         finally:
             end_real = datetime.now()
             elapsed_real = (end_real - start_real).total_seconds()
+
+            # Ensure Dolphin is fully killed between matches
+            try:
+                subprocess.run(
+                    ["killall", "Slippi Dolphin"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                time.sleep(2)  # Let it fully terminate
+            except Exception:
+                pass  # Already dead is fine
 
         # Determine success
         success = duration_seconds >= SUCCESS_THRESHOLD_SECONDS
