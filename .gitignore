@@ -23,6 +23,11 @@ htmlcov/
 
 # External fighter repos (cloned at runtime, not vendored)
 fighters/smashbot/SmashBot/
+fighters/phillip/slippi-ai/
+fighters/phillip/models/*.pkl
+
+# Old phillip-research folder (to be removed)
+phillip-research/
 
 # Foundry build artifacts
 contracts/out/
