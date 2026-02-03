@@ -23,7 +23,8 @@ git pull
   --opponent "SCAV#382" \
   --label scaviefae \
   -d "/Users/queenmab/Library/Application Support/Slippi Launcher/netplay/Slippi Dolphin.app" \
-  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso"
+  -i "/Users/queenmab/claude-projects/games/melee/Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso" \
+  --dolphin-home "/Users/queenmab/Library/Application Support/Slippi Launcher"
 ```
 
 **Scav side:**
@@ -34,7 +35,8 @@ git pull
   --opponent "SCAVIEFAE#XXX" \
   --label scav \
   -d "/path/to/Slippi Dolphin.app" \
-  -i "/path/to/melee.iso"
+  -i "/path/to/melee.iso" \
+  --dolphin-home "/path/to/Slippi Launcher"
 ```
 
 ## Character Order
@@ -82,6 +84,7 @@ Compare logs from both sides:
 
 ## Notes
 
+- **IMPORTANT**: Use `--dolphin-home` to persist Slippi config across matches. This saves the connect code after match 1, making menu navigation much more reliable for matches 2-10.
 - It's OK if sides don't sync perfectly on timing
 - The 5-second pause helps sides catch up
 - Auto freeze detection means no manual intervention needed
