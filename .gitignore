@@ -38,3 +38,8 @@ arena.db-wal
 # Foundry build artifacts
 contracts/out/
 contracts/cache/
+contracts/broadcast/
+
+# Web frontend
+web/node_modules/
+web/dist/
