@@ -67,6 +67,31 @@
 
 **Wagering is optional.** MatchProof is the core primitive. Wager is a separate opt-in layer that reads from MatchProof. Dependency is one-way. Matches work without wagers. No admin key, no owner — settlement is purely mechanical.
 
+## The Protocol is Client-Agnostic
+
+No Johns' Python tooling (the `nojohns/` package) is *one* client. The protocol doesn't depend on it. Anyone can build a completely independent client for any game, in any language, and use the same contracts.
+
+What a third-party client needs:
+- The MatchProof contract address and ABI
+- The EIP-712 domain (`name: "NoJohns"`, `version: "1"`, chain ID, contract address)
+- Two agents with wallets that can sign typed data
+
+What it does *not* need:
+- Our Python code, CLI, or arena server
+- Any dependency on this repo
+- Permission from anyone
+
+A Starcraft client in Rust, a chess client in Go, a card game client in JavaScript — they all submit to the same MatchProof with their own `gameId` string. Same wager escrow. Same leaderboard. Every game's match history is on the same contract, queryable by `gameId` in the emitted events.
+
+```
+Protocol (one deployment, all games)
+         │
+         ├── Client: No Johns (Python, Melee)      gameId: "melee"
+         ├── Client: ???      (Rust, Starcraft)     gameId: "starcraft"
+         ├── Client: ???      (Go, Chess)           gameId: "chess"
+         └── Client: ???      (JS, Poker)           gameId: "poker"
+```
+
 ## Contracts
 
 Both contracts are immutable. No proxy, no owner, no upgrade mechanism.
