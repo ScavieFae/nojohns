@@ -29,6 +29,14 @@ This project is developed by two Claude Code agents on separate machines. **Chec
 - **Shared artifacts:** ScavieFae produces contract ABIs (`contracts/out/`) and deployed addresses (`contracts/deployments.json`). Scav produces arena API endpoints and Python signing code.
 - **Integration checkpoint:** Day 3-4 — deploy contracts to testnet, wire Python, run end-to-end test.
 
+### Code Review
+
+- **Contracts before mainnet deploy:** Non-negotiable. ScavieFae opens a PR, the other agent runs `/review-pr` before we deploy with real MON. Testnet deploys can skip review.
+- **Everything else merges freely.** Directory ownership prevents conflicts. Don't gate on review when we have 11 days.
+- **Integration checkpoint (day 3-4):** Both agents read each other's code when wiring Python to contracts. This is the most useful review — reading with intent to *use* the code.
+- **Spotted something in the other agent's directory?** Open a GitHub issue, don't edit the file.
+- **Mechanism:** GitHub PRs via `gh`. Use `/review-pr` skill for structured review.
+
 ### For ScavieFae
 
 Read `docs/HANDOFF-SCAVIEFAE.md` first, then `contracts/CLAUDE.md` and `web/CLAUDE.md`.
