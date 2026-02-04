@@ -45,8 +45,15 @@ class ArenaDB:
                 status TEXT DEFAULT 'playing',
                 p1_result TEXT,
                 p2_result TEXT,
+                p1_stocks INTEGER,
+                p2_stocks INTEGER,
                 p1_duration REAL,
                 p2_duration REAL,
+                winner_wallet TEXT,
+                loser_wallet TEXT,
+                winner_score INTEGER,
+                loser_score INTEGER,
+                result_timestamp INTEGER,
                 created_at TEXT,
                 completed_at TEXT
             );
@@ -215,6 +222,7 @@ class ArenaDB:
         queue_id: str,
         outcome: str,
         duration_seconds: float | None = None,
+        stocks_remaining: int | None = None,
     ) -> bool:
         """Report one side's result. Returns True if match is now complete."""
         match = self.get_match(match_id)
@@ -225,13 +233,13 @@ class ArenaDB:
 
         if queue_id == match["p1_queue_id"]:
             self._conn.execute(
-                "UPDATE matches SET p1_result = ?, p1_duration = ? WHERE id = ?",
-                (outcome, duration_seconds, match_id),
+                "UPDATE matches SET p1_result = ?, p1_stocks = ?, p1_duration = ? WHERE id = ?",
+                (outcome, stocks_remaining, duration_seconds, match_id),
             )
         elif queue_id == match["p2_queue_id"]:
             self._conn.execute(
-                "UPDATE matches SET p2_result = ?, p2_duration = ? WHERE id = ?",
-                (outcome, duration_seconds, match_id),
+                "UPDATE matches SET p2_result = ?, p2_stocks = ?, p2_duration = ? WHERE id = ?",
+                (outcome, stocks_remaining, duration_seconds, match_id),
             )
         else:
             return False
@@ -240,9 +248,28 @@ class ArenaDB:
         self._conn.commit()
         match = self.get_match(match_id)
         if match["p1_result"] and match["p2_result"]:
+            # Compute deterministic timestamp (unix epoch)
+            ts = int(datetime.fromisoformat(now).timestamp())
+
+            # Determine winner/loser from stocks
+            p1_stocks = match["p1_stocks"] or 0
+            p2_stocks = match["p2_stocks"] or 0
+            if p1_stocks >= p2_stocks:
+                winner_wallet = match["p1_wallet"]
+                loser_wallet = match["p2_wallet"]
+                winner_score = p1_stocks
+                loser_score = p2_stocks
+            else:
+                winner_wallet = match["p2_wallet"]
+                loser_wallet = match["p1_wallet"]
+                winner_score = p2_stocks
+                loser_score = p1_stocks
+
             self._conn.execute(
-                "UPDATE matches SET status = 'completed', completed_at = ? WHERE id = ?",
-                (now, match_id),
+                "UPDATE matches SET status = 'completed', completed_at = ?, "
+                "winner_wallet = ?, loser_wallet = ?, winner_score = ?, loser_score = ?, "
+                "result_timestamp = ? WHERE id = ?",
+                (now, winner_wallet, loser_wallet, winner_score, loser_score, ts, match_id),
             )
             self._conn.commit()
             return True

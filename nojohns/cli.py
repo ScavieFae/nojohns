@@ -578,28 +578,19 @@ def cmd_fight(args):
         return 1
 
 
-def _sign_and_submit(
-    match_id: str,
-    outcome: str,
-    opponent_wallet: str | None,
-    winner_stocks: int,
-    loser_stocks: int,
-    _post,
-):
+def _sign_and_submit(match_id: str, outcome: str, _get, _post):
     """Sign a match result with EIP-712 and submit to the arena.
 
-    Skips silently if wallet or eth-account is not configured.
+    Reads the canonical MatchResult from the arena (deterministic fields
+    computed server-side) so both agents sign the exact same data.
 
-    Args:
-        match_id: Arena match UUID.
-        outcome: "COMPLETED", "DISCONNECT", or "ERROR".
-        opponent_wallet: Opponent's wallet address (from arena), or None.
-        winner_stocks: Stocks remaining for the winner.
-        loser_stocks: Stocks remaining for the loser (usually 0).
-        _post: HTTP POST helper function.
+    Skips silently if wallet or eth-account is not configured.
     """
     import hashlib
-    import time as time_mod
+
+    if outcome != "COMPLETED":
+        logger.debug(f"Outcome '{outcome}' — skipping match signing (match void)")
+        return
 
     nj_cfg = load_config()
     if nj_cfg.wallet is None or nj_cfg.wallet.private_key is None:
@@ -622,48 +613,33 @@ def _sign_and_submit(
     if account is None:
         return
 
-    our_address = account.address
-
-    # Can't sign without knowing the opponent's address
-    if not opponent_wallet:
-        logger.debug("Opponent has no wallet — skipping match signing")
+    # Read the canonical result from the arena — both agents get the same data
+    try:
+        match_data = _get(f"/matches/{match_id}")
+    except Exception as e:
+        logger.warning(f"Failed to fetch match data for signing: {e}")
         return
 
-    # matchId = sha256(match_id string) to get bytes32
-    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
-    # replayHash — placeholder until we have actual replay data
-    replay_hash = b"\x00" * 32
-
-    # Determine winner/loser based on outcome
-    # COMPLETED means our game finished normally — we need to check the match
-    # result to know who won. The netplay runner returns a MatchResult with
-    # winner_port. We derive win/loss from the stocks.
-    if outcome == "COMPLETED" and winner_stocks > loser_stocks:
-        # We won (caller passes our stocks as winner_stocks when we won)
-        winner = our_address
-        loser = opponent_wallet
-        w_score = winner_stocks
-        l_score = loser_stocks
-    elif outcome == "COMPLETED":
-        # We lost
-        winner = opponent_wallet
-        loser = our_address
-        w_score = winner_stocks
-        l_score = loser_stocks
-    else:
-        # DISCONNECT or ERROR — don't sign, match is void
-        logger.debug(f"Outcome '{outcome}' — skipping match signing (match void)")
+    if match_data.get("status") != "completed":
+        logger.debug("Match not yet completed — skipping signing")
         return
 
+    winner_wallet = match_data.get("winner_wallet")
+    loser_wallet = match_data.get("loser_wallet")
+    if not winner_wallet or not loser_wallet:
+        logger.debug("Match missing wallet addresses — skipping signing")
+        return
+
+    # Build MatchResult from the arena's canonical fields
     match_result = {
-        "matchId": match_id_bytes,
-        "winner": winner,
-        "loser": loser,
+        "matchId": hashlib.sha256(match_id.encode()).digest(),
+        "winner": winner_wallet,
+        "loser": loser_wallet,
         "gameId": "melee",
-        "winnerScore": w_score,
-        "loserScore": l_score,
-        "replayHash": replay_hash,
-        "timestamp": int(time_mod.time()),
+        "winnerScore": match_data.get("winner_score", 0),
+        "loserScore": match_data.get("loser_score", 0),
+        "replayHash": b"\x00" * 32,  # placeholder until replay hashing
+        "timestamp": match_data["result_timestamp"],
     }
 
     try:
@@ -673,11 +649,11 @@ def _sign_and_submit(
             chain_id=nj_cfg.chain.chain_id,
             contract_address=nj_cfg.chain.match_proof,
         )
-        logger.info(f"Match result signed by {our_address}")
+        logger.info(f"Match result signed by {account.address}")
 
         # Submit signature to arena
         _post(f"/matches/{match_id}/signature", {
-            "address": our_address,
+            "address": account.address,
             "signature": sig.hex(),
         })
         logger.info("Signature submitted to arena.")
@@ -740,7 +716,6 @@ def cmd_matchmake(args):
     # --- Step 1: Join queue ---
     queue_id = None
     match_id = None
-    opponent_wallet = None
     try:
         try:
             join_body = {
@@ -760,7 +735,7 @@ def cmd_matchmake(args):
         if status == "matched":
             match_id = result["match_id"]
             opponent_code = result["opponent_code"]
-            opponent_wallet = result.get("opponent_wallet")
+
             logger.info(f"Matched! Opponent: {opponent_code}")
         else:
             position = result.get("position", "?")
@@ -784,7 +759,7 @@ def cmd_matchmake(args):
                 if status == "matched":
                     match_id = result["match_id"]
                     opponent_code = result["opponent_code"]
-                    opponent_wallet = result.get("opponent_wallet")
+        
                     logger.info(f"Matched! Opponent: {opponent_code}")
                     break
 
@@ -813,25 +788,15 @@ def cmd_matchmake(args):
         start_time = time.time()
         outcome = "COMPLETED"
 
-        winner_stocks = 0
-        loser_stocks = 0
-        we_won = False
+        our_stocks = 0
 
         try:
             match_result = runner.run_netplay(fighter, games=1)
             duration = time.time() - start_time
-            # Determine win/loss from the result
-            # NetplayRunner returns a MatchResult with p1_stocks, p2_stocks, winner_port
             # We are always port 1 in netplay
-            if hasattr(match_result, "p1_stocks") and hasattr(match_result, "p2_stocks"):
-                if match_result.winner_port == 1:
-                    we_won = True
-                    winner_stocks = match_result.p1_stocks
-                    loser_stocks = match_result.p2_stocks
-                else:
-                    we_won = False
-                    winner_stocks = match_result.p2_stocks
-                    loser_stocks = match_result.p1_stocks
+            if hasattr(match_result, "p1_stocks"):
+                our_stocks = match_result.p1_stocks
+            we_won = hasattr(match_result, "winner_port") and match_result.winner_port == 1
             logger.info(f"Match complete! {'Won' if we_won else 'Lost'}")
         except NetplayDisconnectedError:
             duration = time.time() - start_time
@@ -842,26 +807,20 @@ def cmd_matchmake(args):
             outcome = "ERROR"
             logger.error(f"Match error: {e}")
 
-        # --- Step 4: Report result ---
+        # --- Step 4: Report result (with stocks so arena can determine winner) ---
         try:
             _post(f"/matches/{match_id}/result", {
                 "queue_id": queue_id,
                 "outcome": outcome,
                 "duration_seconds": round(duration, 1),
+                "stocks_remaining": our_stocks,
             })
             logger.info("Reported result to arena.")
         except urllib.error.URLError as e:
             logger.warning(f"Failed to report result: {e}")
 
-        # --- Step 5: Sign match result (if wallet configured) ---
-        _sign_and_submit(
-            match_id,
-            outcome,
-            opponent_wallet,
-            winner_stocks,
-            loser_stocks,
-            _post,
-        )
+        # --- Step 5: Sign canonical match result from arena ---
+        _sign_and_submit(match_id, outcome, _get, _post)
 
         return 0
 

@@ -72,6 +72,7 @@ class ResultRequest(BaseModel):
     queue_id: str
     outcome: str
     duration_seconds: float | None = None
+    stocks_remaining: int | None = None
 
 
 class SuccessResponse(BaseModel):
@@ -87,6 +88,13 @@ class MatchResponse(BaseModel):
     p2_wallet: str | None = None
     p1_result: str | None = None
     p2_result: str | None = None
+    # Canonical result fields — set by arena when match completes.
+    # Both agents sign these exact values for EIP-712 consistency.
+    winner_wallet: str | None = None
+    loser_wallet: str | None = None
+    winner_score: int | None = None  # stocks remaining (per-game, not series)
+    loser_score: int | None = None
+    result_timestamp: int | None = None  # unix epoch, deterministic
     created_at: str | None = None
     completed_at: str | None = None
 
@@ -218,7 +226,7 @@ def report_result(match_id: str, req: ResultRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Match not found")
 
     completed = db.report_result(
-        match_id, req.queue_id, req.outcome, req.duration_seconds
+        match_id, req.queue_id, req.outcome, req.duration_seconds, req.stocks_remaining
     )
     logger.info(
         f"Result reported for {match_id} by {req.queue_id}: {req.outcome}"

@@ -188,6 +188,37 @@ class TestReportResult:
         assert match["p2_result"] == "COMPLETED"
         assert match["completed_at"] is not None
 
+    def test_canonical_result_fields(self, client):
+        """Completed match includes canonical winner/loser/timestamp for signing."""
+        r1 = client.post("/queue/join", json={
+            "connect_code": "SCAV#382",
+            "wallet_address": "0xWINNER",
+        })
+        r2 = client.post("/queue/join", json={
+            "connect_code": "SCAV#861",
+            "wallet_address": "0xLOSER",
+        })
+        d2 = r2.json()
+        match_id = d2["match_id"]
+        qid1 = r1.json()["queue_id"]
+        qid2 = d2["queue_id"]
+
+        # P1 won with 2 stocks, P2 lost with 0
+        client.post(f"/matches/{match_id}/result", json={
+            "queue_id": qid1, "outcome": "COMPLETED", "stocks_remaining": 2,
+        })
+        client.post(f"/matches/{match_id}/result", json={
+            "queue_id": qid2, "outcome": "COMPLETED", "stocks_remaining": 0,
+        })
+
+        match = client.get(f"/matches/{match_id}").json()
+        assert match["winner_wallet"] == "0xWINNER"
+        assert match["loser_wallet"] == "0xLOSER"
+        assert match["winner_score"] == 2
+        assert match["loser_score"] == 0
+        assert isinstance(match["result_timestamp"], int)
+        assert match["result_timestamp"] > 0
+
     def test_disconnect_report(self, client):
         qid1, qid2, match_id = self._make_match(client)
 
