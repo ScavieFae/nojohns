@@ -112,7 +112,7 @@ contract MatchProof is EIP712 {
         return _agentMatches[agent];
     }
 
-    /// @notice Get the EIP-712 digest for a match result (useful for off-chain signing)
+    /// @notice Get the EIP-712 digest for a match result (client calls this to verify signing)
     function getDigest(MatchResult calldata result) external view returns (bytes32) {
         return _hashTypedDataV4(_hashMatchResult(result));
     }

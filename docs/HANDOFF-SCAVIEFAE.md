@@ -134,7 +134,7 @@ Both contracts are written, tested (30/30 passing), and have a deploy script.
 
 **No deviations from the spec.** The `MatchResult` struct is implemented exactly as defined above.
 
-### EIP-712 Signing Details (Scav needs this for Python)
+### EIP-712 Signing Details (client needs this)
 
 **Domain:**
 ```
@@ -198,12 +198,12 @@ signed = Account.sign_typed_data(private_key, full_message=typed_data)
 signature = signed.signature  # bytes, ready for recordMatch()
 ```
 
-**Verification helper:** The contract exposes `getDigest(MatchResult)` as a public view. Scav can call this on-chain to verify the Python-produced digest matches before submitting. Useful for debugging signature mismatches.
+**Verification helper:** The protocol exposes `getDigest(MatchResult)` as a public view. The client can call this on-chain to verify its digest matches before submitting. Useful for debugging signature mismatches.
 
-**Contract interaction (post-match flow):**
-1. Both agents sign the same `MatchResult` using EIP-712
-2. Either agent (or anyone) calls `matchProof.recordMatch(result, sigA, sigB)`
-3. If there's a wager, call `wager.settleWager(wagerId, matchId)` — permissionless, anyone can trigger
+**Protocol / client interaction (post-match flow):**
+1. Both agents sign the same `MatchResult` using EIP-712 (client)
+2. Either agent (or anyone) calls `matchProof.recordMatch(result, sigA, sigB)` (protocol)
+3. If there's a wager, call `wager.settleWager(wagerId, matchId)` — permissionless, anyone can trigger (protocol)
 
 ### Deploy
 
@@ -214,4 +214,57 @@ export MONAD_TESTNET_RPC_URL=https://testnet-rpc.monad.xyz
 cd contracts && forge script script/Deploy.s.sol --rpc-url $MONAD_TESTNET_RPC_URL --broadcast
 ```
 
-After deploy, addresses go in `contracts/deployments.json` and Scav can wire up Python.
+After deploy, addresses go in `contracts/deployments.json` for the client to wire up.
+
+### Architecture Diagram
+
+```
+                        PROTOCOL (onchain — Monad)
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│  ┌──────────────────────┐                           │
+│  │     MatchProof       │                           │
+│  │                      │                           │
+│  │  recordMatch(        │◄──── Agent A signs ───┐   │
+│  │    result,           │◄──── Agent B signs ───┤   │
+│  │    sigA, sigB)       │                       │   │
+│  │                      │                       │   │
+│  │  MatchRecorded ──────┼──────────────────┐    │   │
+│  │  (event)             │                  │    │   │
+│  └──────────┬───────────┘                  │    │   │
+│             │                              │    │   │
+│             │ reads (one-way)              │    │   │
+│             ▼                              │    │   │
+│  ┌──────────────────────┐                  │    │   │
+│  │     Wager            │                  │    │   │
+│  │     (optional)       │                  │    │   │
+│  │                      │                  │    │   │
+│  │  proposeWager() ←─── MON in            │    │   │
+│  │  acceptWager()  ←─── MON in            │    │   │
+│  │  settleWager()  ───► MON to winner     │    │   │
+│  │  cancelWager()  ───► MON refund        │    │   │
+│  │  claimTimeout() ───► MON refund both   │    │   │
+│  └──────────────────────┘                  │    │   │
+│                                            │    │   │
+└────────────────────────────────────────────┼────┼───┘
+                                             │    │
+                                             │    │
+┌────────────────────────┐                   │    │
+│  FRONTEND (web/)       │◄──────────────────┘    │
+│                        │  indexes events        │
+│  - Landing page        │                        │
+│  - Leaderboard         │                        │
+│  - Match history       │                        │
+└────────────────────────┘                        │
+                                                  │
+┌─────────────────────────────────────────────────┤
+│  CLIENT (nojohns/, arena/, games/)              │
+│                                                 │
+│  Arena ──► Match ──► Both agents ──► EIP-712 ───┘
+│  matchmake   fight     sign result    signatures
+│                                       submitted to
+│                                       recordMatch()
+└─────────────────────────────────────────────────┘
+```
+
+**Boundary:** The `recordMatch()` call is the interface between protocol and client. The protocol doesn't know what language the client is written in, how matches are played, or what game it is. The client doesn't need to understand contract internals — just the ABI and EIP-712 domain.
