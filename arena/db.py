@@ -27,6 +27,7 @@ class ArenaDB:
                 id TEXT PRIMARY KEY,
                 connect_code TEXT NOT NULL,
                 fighter_name TEXT,
+                wallet_address TEXT,
                 status TEXT DEFAULT 'waiting',
                 match_id TEXT,
                 created_at TEXT,
@@ -39,11 +40,20 @@ class ArenaDB:
                 p2_queue_id TEXT NOT NULL,
                 p1_connect_code TEXT NOT NULL,
                 p2_connect_code TEXT NOT NULL,
+                p1_wallet TEXT,
+                p2_wallet TEXT,
                 status TEXT DEFAULT 'playing',
                 p1_result TEXT,
                 p2_result TEXT,
+                p1_stocks INTEGER,
+                p2_stocks INTEGER,
                 p1_duration REAL,
                 p2_duration REAL,
+                winner_wallet TEXT,
+                loser_wallet TEXT,
+                winner_score INTEGER,
+                loser_score INTEGER,
+                result_timestamp INTEGER,
                 created_at TEXT,
                 completed_at TEXT
             );
@@ -63,7 +73,12 @@ class ArenaDB:
     # Queue
     # ------------------------------------------------------------------
 
-    def add_to_queue(self, connect_code: str, fighter_name: str | None = None) -> str:
+    def add_to_queue(
+        self,
+        connect_code: str,
+        fighter_name: str | None = None,
+        wallet_address: str | None = None,
+    ) -> str:
         """Add a player to the queue. Returns queue_id.
 
         If the same connect_code already has a waiting entry, it is cancelled
@@ -79,9 +94,9 @@ class ArenaDB:
         queue_id = str(uuid.uuid4())
         now = _now()
         self._conn.execute(
-            "INSERT INTO queue (id, connect_code, fighter_name, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'waiting', ?, ?)",
-            (queue_id, connect_code, fighter_name, now, now),
+            "INSERT INTO queue (id, connect_code, fighter_name, wallet_address, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'waiting', ?, ?)",
+            (queue_id, connect_code, fighter_name, wallet_address, now, now),
         )
         self._conn.commit()
         return queue_id
@@ -175,13 +190,15 @@ class ArenaDB:
         now = _now()
         self._conn.execute(
             "INSERT INTO matches (id, p1_queue_id, p2_queue_id, p1_connect_code, p2_connect_code, "
-            "status, created_at) VALUES (?, ?, ?, ?, ?, 'playing', ?)",
+            "p1_wallet, p2_wallet, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'playing', ?)",
             (
                 match_id,
                 p1_entry["id"],
                 p2_entry["id"],
                 p1_entry["connect_code"],
                 p2_entry["connect_code"],
+                p1_entry.get("wallet_address"),
+                p2_entry.get("wallet_address"),
                 now,
             ),
         )
@@ -205,6 +222,7 @@ class ArenaDB:
         queue_id: str,
         outcome: str,
         duration_seconds: float | None = None,
+        stocks_remaining: int | None = None,
     ) -> bool:
         """Report one side's result. Returns True if match is now complete."""
         match = self.get_match(match_id)
@@ -215,13 +233,13 @@ class ArenaDB:
 
         if queue_id == match["p1_queue_id"]:
             self._conn.execute(
-                "UPDATE matches SET p1_result = ?, p1_duration = ? WHERE id = ?",
-                (outcome, duration_seconds, match_id),
+                "UPDATE matches SET p1_result = ?, p1_stocks = ?, p1_duration = ? WHERE id = ?",
+                (outcome, stocks_remaining, duration_seconds, match_id),
             )
         elif queue_id == match["p2_queue_id"]:
             self._conn.execute(
-                "UPDATE matches SET p2_result = ?, p2_duration = ? WHERE id = ?",
-                (outcome, duration_seconds, match_id),
+                "UPDATE matches SET p2_result = ?, p2_stocks = ?, p2_duration = ? WHERE id = ?",
+                (outcome, stocks_remaining, duration_seconds, match_id),
             )
         else:
             return False
@@ -230,9 +248,28 @@ class ArenaDB:
         self._conn.commit()
         match = self.get_match(match_id)
         if match["p1_result"] and match["p2_result"]:
+            # Compute deterministic timestamp (unix epoch)
+            ts = int(datetime.fromisoformat(now).timestamp())
+
+            # Determine winner/loser from stocks
+            p1_stocks = match["p1_stocks"] or 0
+            p2_stocks = match["p2_stocks"] or 0
+            if p1_stocks >= p2_stocks:
+                winner_wallet = match["p1_wallet"]
+                loser_wallet = match["p2_wallet"]
+                winner_score = p1_stocks
+                loser_score = p2_stocks
+            else:
+                winner_wallet = match["p2_wallet"]
+                loser_wallet = match["p1_wallet"]
+                winner_score = p2_stocks
+                loser_score = p1_stocks
+
             self._conn.execute(
-                "UPDATE matches SET status = 'completed', completed_at = ? WHERE id = ?",
-                (now, match_id),
+                "UPDATE matches SET status = 'completed', completed_at = ?, "
+                "winner_wallet = ?, loser_wallet = ?, winner_score = ?, loser_score = ?, "
+                "result_timestamp = ? WHERE id = ?",
+                (now, winner_wallet, loser_wallet, winner_score, loser_score, ts, match_id),
             )
             self._conn.commit()
             return True

@@ -6,7 +6,7 @@ Usage:
     nojohns setup                  # Create ~/.nojohns/ config
     nojohns setup melee            # Configure Melee paths
     nojohns setup melee phillip    # Install Phillip fighter
-    nojohns setup monad            # Configure wallet + chain
+    nojohns setup wallet           # Configure wallet + chain (onchain features)
     nojohns fight <f1> <f2>        # Run a local fight
     nojohns netplay <f> --code X   # Netplay against remote opponent
     nojohns matchmake <f>          # Arena matchmaking
@@ -82,7 +82,7 @@ def _require_melee_args(args) -> bool:
 # ============================================================================
 
 def cmd_setup(args):
-    """Handle `nojohns setup [melee [phillip] | monad]`."""
+    """Handle `nojohns setup [melee [phillip] | wallet]`."""
     target = args.setup_target
 
     if not target:
@@ -91,11 +91,11 @@ def cmd_setup(args):
         return _setup_melee()
     elif target == ["melee", "phillip"]:
         return _setup_melee_phillip()
-    elif target == ["monad"]:
+    elif target in (["wallet"], ["monad"]):  # "monad" kept as alias
         return _setup_monad()
     else:
         logger.error(f"Unknown setup target: {' '.join(target)}")
-        logger.error("Usage: nojohns setup [melee [phillip] | monad]")
+        logger.error("Usage: nojohns setup [melee [phillip] | wallet]")
         return 1
 
 
@@ -578,13 +578,19 @@ def cmd_fight(args):
         return 1
 
 
-def _sign_and_submit(match_id: str, outcome: str, server: str, _post):
+def _sign_and_submit(match_id: str, outcome: str, _get, _post):
     """Sign a match result with EIP-712 and submit to the arena.
+
+    Reads the canonical MatchResult from the arena (deterministic fields
+    computed server-side) so both agents sign the exact same data.
 
     Skips silently if wallet or eth-account is not configured.
     """
     import hashlib
-    import time as time_mod
+
+    if outcome != "COMPLETED":
+        logger.debug(f"Outcome '{outcome}' — skipping match signing (match void)")
+        return
 
     nj_cfg = load_config()
     if nj_cfg.wallet is None or nj_cfg.wallet.private_key is None:
@@ -607,36 +613,33 @@ def _sign_and_submit(match_id: str, outcome: str, server: str, _post):
     if account is None:
         return
 
-    # Build the MatchResult data
-    # matchId = keccak256(match_id string) to get bytes32
-    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
-    # replayHash — placeholder until we have actual replay data
-    replay_hash = b"\x00" * 32
+    # Read the canonical result from the arena — both agents get the same data
+    try:
+        match_data = _get(f"/matches/{match_id}")
+    except Exception as e:
+        logger.warning(f"Failed to fetch match data for signing: {e}")
+        return
 
-    # Determine winner/loser from our perspective
-    # In matchmake, we are always one side. We use our address for the appropriate role.
-    our_address = account.address
-    # For now, use a zero address for the opponent until we have their address
-    zero_address = "0x0000000000000000000000000000000000000000"
+    if match_data.get("status") != "completed":
+        logger.debug("Match not yet completed — skipping signing")
+        return
 
-    if outcome == "COMPLETED":
-        winner = our_address
-        loser = zero_address
-        winner_score, loser_score = 1, 0
-    else:
-        winner = zero_address
-        loser = our_address
-        winner_score, loser_score = 0, 0
+    winner_wallet = match_data.get("winner_wallet")
+    loser_wallet = match_data.get("loser_wallet")
+    if not winner_wallet or not loser_wallet:
+        logger.debug("Match missing wallet addresses — skipping signing")
+        return
 
+    # Build MatchResult from the arena's canonical fields
     match_result = {
-        "matchId": match_id_bytes,
-        "winner": winner,
-        "loser": loser,
+        "matchId": hashlib.sha256(match_id.encode()).digest(),
+        "winner": winner_wallet,
+        "loser": loser_wallet,
         "gameId": "melee",
-        "winnerScore": winner_score,
-        "loserScore": loser_score,
-        "replayHash": replay_hash,
-        "timestamp": int(time_mod.time()),
+        "winnerScore": match_data.get("winner_score", 0),
+        "loserScore": match_data.get("loser_score", 0),
+        "replayHash": b"\x00" * 32,  # placeholder until replay hashing
+        "timestamp": match_data["result_timestamp"],
     }
 
     try:
@@ -646,11 +649,11 @@ def _sign_and_submit(match_id: str, outcome: str, server: str, _post):
             chain_id=nj_cfg.chain.chain_id,
             contract_address=nj_cfg.chain.match_proof,
         )
-        logger.info(f"Match result signed by {our_address}")
+        logger.info(f"Match result signed by {account.address}")
 
         # Submit signature to arena
         _post(f"/matches/{match_id}/signature", {
-            "address": our_address,
+            "address": account.address,
             "signature": sig.hex(),
         })
         logger.info("Signature submitted to arena.")
@@ -704,15 +707,24 @@ def cmd_matchmake(args):
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
+    # Load wallet address to include in queue join (if configured)
+    nj_cfg = load_config()
+    our_wallet = None
+    if nj_cfg.wallet and nj_cfg.wallet.address:
+        our_wallet = nj_cfg.wallet.address
+
     # --- Step 1: Join queue ---
     queue_id = None
     match_id = None
     try:
         try:
-            result = _post("/queue/join", {
+            join_body = {
                 "connect_code": args.code,
                 "fighter_name": args.fighter,
-            })
+            }
+            if our_wallet:
+                join_body["wallet_address"] = our_wallet
+            result = _post("/queue/join", join_body)
         except urllib.error.URLError as e:
             logger.error(f"Cannot reach arena server at {server}: {e}")
             return 1
@@ -723,6 +735,7 @@ def cmd_matchmake(args):
         if status == "matched":
             match_id = result["match_id"]
             opponent_code = result["opponent_code"]
+
             logger.info(f"Matched! Opponent: {opponent_code}")
         else:
             position = result.get("position", "?")
@@ -746,6 +759,7 @@ def cmd_matchmake(args):
                 if status == "matched":
                     match_id = result["match_id"]
                     opponent_code = result["opponent_code"]
+        
                     logger.info(f"Matched! Opponent: {opponent_code}")
                     break
 
@@ -774,10 +788,15 @@ def cmd_matchmake(args):
         start_time = time.time()
         outcome = "COMPLETED"
 
+        our_stocks = 0
+
         try:
             match_result = runner.run_netplay(fighter, games=1)
             duration = time.time() - start_time
-            logger.info(f"Match complete! Result: {outcome}")
+            # We are always port 1 in netplay
+            if hasattr(match_result, "p1_stocks"):
+                our_stocks = match_result.p1_stocks
+            we_won = hasattr(match_result, "winner_port") and match_result.winner_port == 1
         except NetplayDisconnectedError:
             duration = time.time() - start_time
             outcome = "DISCONNECT"
@@ -787,19 +806,49 @@ def cmd_matchmake(args):
             outcome = "ERROR"
             logger.error(f"Match error: {e}")
 
-        # --- Step 4: Report result ---
+        # --- Step 4: Report result (with stocks so arena can determine winner) ---
         try:
             _post(f"/matches/{match_id}/result", {
                 "queue_id": queue_id,
                 "outcome": outcome,
                 "duration_seconds": round(duration, 1),
+                "stocks_remaining": our_stocks,
             })
-            logger.info("Reported result to arena.")
         except urllib.error.URLError as e:
             logger.warning(f"Failed to report result: {e}")
 
-        # --- Step 5: Sign match result (if wallet configured) ---
-        _sign_and_submit(match_id, outcome, server, _post)
+        # --- Step 5: Sign canonical match result from arena ---
+        _sign_and_submit(match_id, outcome, _get, _post)
+
+        # --- Match summary ---
+        print()
+        print("=" * 44)
+        if outcome == "COMPLETED":
+            result_line = "WIN" if we_won else "LOSS"
+            print(f"  {args.fighter} vs {opponent_code}  —  {result_line}")
+            if our_stocks > 0:
+                print(f"  Stocks remaining: {our_stocks}")
+        elif outcome == "DISCONNECT":
+            print(f"  {args.fighter} vs {opponent_code}  —  DISCONNECT")
+        else:
+            print(f"  {args.fighter} vs {opponent_code}  —  ERROR")
+        print(f"  Duration: {duration:.0f}s  |  Match: {match_id[:8]}...")
+        if nj_cfg.wallet and nj_cfg.wallet.address:
+            print(f"  Signed: yes  |  Wallet: {nj_cfg.wallet.address[:10]}...")
+        print("=" * 44)
+        print()
+
+        # One-time nudge for operators without a wallet
+        if not (nj_cfg.wallet and nj_cfg.wallet.address):
+            nudge_marker = CONFIG_DIR / ".wallet-nudged"
+            if not nudge_marker.exists():
+                print("Tip: Record matches onchain and build your agent's reputation.")
+                print("     Run: nojohns setup wallet")
+                print()
+                try:
+                    nudge_marker.touch()
+                except OSError:
+                    pass
 
         return 0
 
@@ -1024,11 +1073,11 @@ def main():
 
     # setup command
     setup_parser = subparsers.add_parser(
-        "setup", help="Configure No Johns (setup / setup melee / setup monad)"
+        "setup", help="Configure No Johns (setup / setup melee / setup wallet)"
     )
     setup_parser.add_argument(
         "setup_target", nargs="*", default=[],
-        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip, monad=wallet+chain",
+        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip, wallet=onchain identity",
     )
     setup_parser.set_defaults(func=cmd_setup)
 
