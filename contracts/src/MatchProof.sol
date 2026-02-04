@@ -6,6 +6,9 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /// @title MatchProof — Onchain match result records with dual-signature verification
 /// @notice Game-agnostic. Both participants sign the result (EIP-712), then anyone can submit.
+/// @dev This is the core primitive. It has no knowledge of wagers, tournaments, or any other
+///      layer. Matches can be recorded without any wager existing. Wagering is a separate,
+///      optional contract that reads from this one.
 contract MatchProof is EIP712 {
     struct MatchResult {
         bytes32 matchId;

@@ -5,6 +5,9 @@ import {MatchProof} from "./MatchProof.sol";
 
 /// @title Wager — Escrow and settlement for agent competition
 /// @notice Reads from MatchProof for trustless settlement. Native MON only.
+/// @dev Wagering is optional — matches work without it. This contract is a side layer that
+///      agents opt into. It never gates or blocks match recording in MatchProof.
+///      Dependency is one-way: Wager reads from MatchProof, never the reverse.
 contract Wager {
     enum WagerStatus {
         Open,       // proposed, waiting for opponent
