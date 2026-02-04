@@ -1,11 +1,11 @@
 ---
 name: review-pr
-description: Review a GitHub PR from the other agent. Use when PRs are open, at integration checkpoints, or before deploying contracts to mainnet. Handles directory ownership checks, schema validation, and contract security review.
+description: Review a GitHub PR. Use when PRs are open, at integration checkpoints, or before deploying contracts to mainnet. Checks protocol/client boundary, schema consistency, and contract security.
 ---
 
 # Review PR
 
-Review a pull request, with awareness of the two-agent collaboration model.
+Review a pull request, checking that changes work correctly within their layer and across the protocol/client boundary.
 
 ## Arguments
 
@@ -16,6 +16,17 @@ If no number given, list open PRs and review the most recent one:
 gh pr list --state open
 ```
 
+## System Layers
+
+| Layer | What | Where |
+|-------|------|-------|
+| **Protocol** | Onchain contracts | `contracts/` |
+| **Client** | Off-chain tooling (arena, fighters, CLI, signing) | `nojohns/`, `games/`, `arena/`, `fighters/` |
+| **Frontend** | Website (read-only) | `web/` |
+| **Shared** | Docs, tests, root files | `docs/`, `tests/`, root |
+
+See `docs/ARCHITECTURE.md` for the full diagram.
+
 ## Steps
 
 ### 1. Get the PR
@@ -25,17 +36,9 @@ gh pr view <number> --json title,body,author,files,additions,deletions
 gh pr diff <number>
 ```
 
-### 2. Directory ownership check
+### 2. Identify which layers the PR touches
 
-This project has two agents with directory ownership:
-
-| Directory | Owner |
-|-----------|-------|
-| `nojohns/`, `games/`, `arena/`, `fighters/` | **Scav** |
-| `contracts/`, `web/` | **ScavieFae** |
-| `docs/`, `tests/`, root files | **Shared** |
-
-Flag if a PR touches directories outside the author's ownership. This isn't necessarily wrong (shared dirs are fine, CLAUDE.md updates happen), but note it in the review.
+Flag if a PR crosses layer boundaries — this isn't wrong, but cross-layer changes need extra attention at the integration boundary.
 
 ### 3. Review criteria
 
@@ -45,51 +48,44 @@ Flag if a PR touches directories outside the author's ownership. This isn't nece
 - Does it follow existing patterns in the codebase?
 - Are there test changes? Should there be?
 
-**For Solidity PRs (contracts/) — extra scrutiny:**
+**For protocol PRs (contracts/) — extra scrutiny:**
 - Reentrancy: does any function send ETH/MON before updating state?
-- Access control: who can call each function? Are there missing `onlyOwner` or signature checks?
-- Integer overflow: is unchecked math used safely?
+- Access control: who can call each function? Are there missing checks?
 - Escrow safety: can funds get locked permanently? Are there escape hatches (timeout, cancel)?
+- Admin keys: does any contract have an owner or admin who can control funds? (This is a design violation — the protocol should never have discretion over escrowed funds.)
 - EIP-712 signature validation: are signatures checked against the correct struct hash and domain separator?
-- Match the shared `MatchResult` struct (defined in `contracts/CLAUDE.md`):
-  ```solidity
-  struct MatchResult {
-      bytes32 matchId;
-      address winner;
-      address loser;
-      string gameId;
-      uint8 winnerScore;
-      uint8 loserScore;
-      bytes32 replayHash;
-      uint256 timestamp;
-  }
-  ```
-  If the struct has changed, flag it — the Python signing code must match.
 - Gas: anything unusually expensive? (Loops over unbounded arrays, excessive storage writes)
-- Events: are key state changes emitted? The website indexes these.
+- Events: are key state changes emitted? The frontend indexes these.
 
-**For Python PRs (nojohns/, games/, arena/):**
+**For client PRs (nojohns/, games/, arena/):**
 - Does it break existing CLI commands?
 - Are new dependencies justified?
-- Does signing code match the contract's EIP-712 domain and struct?
+- Does signing code match the protocol's EIP-712 domain and struct?
 
-**For website PRs (web/):**
+**For frontend PRs (web/):**
 - Does it read from the correct contract addresses?
 - Does it handle RPC errors gracefully?
-- Lighter review — website is read-only, low risk.
+- Lighter review — frontend is read-only, low risk.
 
-### 4. Schema consistency check
+### 4. Protocol/client boundary check
 
-If the PR touches anything related to match results, signatures, or contract interaction, verify the `MatchResult` struct is consistent across:
-- `contracts/src/MatchProof.sol` (Solidity definition)
-- `contracts/CLAUDE.md` (documented spec)
-- Python signing code in `nojohns/` (if it exists yet)
+This is the most important review step for cross-layer changes. If the PR touches anything related to match results, signatures, or contract interaction, verify consistency across the boundary:
 
-Mismatches here cause silent failures — signatures won't verify.
+- `contracts/src/MatchProof.sol` — the Solidity struct and EIP-712 typehash
+- `nojohns/wallet.py` — the Python EIP-712 type definitions and domain
+- `docs/HANDOFF-SCAVIEFAE.md` — the documented spec
+
+Check specifically:
+- Do the struct field names, types, and order match exactly?
+- Is the EIP-712 domain (`name`, `version`, `chainId`, `verifyingContract`) consistent?
+- Does the client's signing produce signatures the protocol will accept?
+- Are addresses real (not `address(0)` placeholders)?
+
+Mismatches here cause silent failures — signatures won't verify on-chain.
 
 ### 5. Post the review
 
-Use `gh pr review` to post:
+Use PR comments for code-specific feedback (attached to the diff, resolved on update). Use issues only for standalone bugs or integration gaps that exist beyond the PR.
 
 ```bash
 # Approve
@@ -107,7 +103,7 @@ gh pr review <number> --comment --body "..."
 ```markdown
 ## Review: <PR title>
 
-**Ownership:** [OK — touches only author's directories / NOTE — touches shared dirs / WARNING — touches other agent's directories]
+**Layers:** [which layers this PR touches]
 
 **Schema:** [OK — consistent / WARNING — MatchResult struct changed / N/A — no schema-related changes]
 
