@@ -87,6 +87,17 @@ class MatchResponse(BaseModel):
     completed_at: str | None = None
 
 
+class SignatureRequest(BaseModel):
+    address: str
+    signature: str  # hex-encoded 65-byte EIP-712 signature
+
+
+class SignatureResponse(BaseModel):
+    match_id: str
+    signatures_received: int
+    ready_for_submission: bool
+
+
 class HealthResponse(BaseModel):
     status: str
     queue_size: int
@@ -216,6 +227,34 @@ def get_match(match_id: str) -> dict[str, Any]:
     if match is None:
         raise HTTPException(status_code=404, detail="Match not found")
     return dict(match)
+
+
+@app.post("/matches/{match_id}/signature", response_model=SignatureResponse)
+def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
+    """Submit an EIP-712 match result signature.
+
+    Each side submits their signature after a match ends. When both
+    signatures are collected, the result is ready for onchain submission.
+    """
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    db.store_signature(match_id, req.address, req.signature)
+    sigs = db.get_signatures(match_id)
+    count = len(sigs)
+
+    logger.info(
+        f"Signature for {match_id} from {req.address} ({count}/2 received)"
+    )
+
+    return {
+        "match_id": match_id,
+        "signatures_received": count,
+        "ready_for_submission": count >= 2,
+    }
 
 
 @app.get("/health", response_model=HealthResponse)

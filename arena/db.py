@@ -47,6 +47,15 @@ class ArenaDB:
                 created_at TEXT,
                 completed_at TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS signatures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id TEXT NOT NULL,
+                address TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                created_at TEXT,
+                UNIQUE(match_id, address)
+            );
             """
         )
 
@@ -228,6 +237,29 @@ class ArenaDB:
             self._conn.commit()
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # Signatures
+    # ------------------------------------------------------------------
+
+    def store_signature(self, match_id: str, address: str, signature: str) -> None:
+        """Store an EIP-712 signature for a match. Upserts by (match_id, address)."""
+        now = _now()
+        self._conn.execute(
+            "INSERT INTO signatures (match_id, address, signature, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(match_id, address) DO UPDATE SET signature = ?, created_at = ?",
+            (match_id, address, signature, now, signature, now),
+        )
+        self._conn.commit()
+
+    def get_signatures(self, match_id: str) -> list[dict[str, Any]]:
+        """Get all signatures for a match."""
+        rows = self._conn.execute(
+            "SELECT address, signature, created_at FROM signatures WHERE match_id = ?",
+            (match_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Stats

@@ -52,19 +52,43 @@ class GameConfig:
 
 
 @dataclass
+class WalletConfig:
+    """Agent wallet for onchain signing."""
+
+    address: str | None = None
+    private_key: str | None = None
+
+
+@dataclass
+class ChainConfig:
+    """Blockchain network configuration."""
+
+    chain_id: int = 10143  # Monad testnet
+    rpc_url: str = "https://testnet-rpc.monad.xyz"
+    match_proof: str | None = None  # MatchProof contract address
+    wager: str | None = None  # Wager contract address
+
+
+@dataclass
 class NojohnsConfig:
     """Top-level configuration."""
 
     games: dict[str, GameConfig]
     arena_server: str | None = None
+    wallet: WalletConfig | None = None
+    chain: ChainConfig | None = None
 
     def __init__(
         self,
         games: dict[str, GameConfig] | None = None,
         arena_server: str | None = None,
+        wallet: WalletConfig | None = None,
+        chain: ChainConfig | None = None,
     ):
         self.games = games or {}
         self.arena_server = arena_server
+        self.wallet = wallet
+        self.chain = chain
 
 
 # ============================================================================
@@ -122,7 +146,29 @@ def load_config(path: Path | None = None) -> NojohnsConfig:
     arena_data = raw.get("arena", {})
     arena_server = arena_data.get("server") if isinstance(arena_data, dict) else None
 
-    return NojohnsConfig(games=games, arena_server=arena_server)
+    # Parse [wallet] section
+    wallet = None
+    if "wallet" in raw and isinstance(raw["wallet"], dict):
+        wallet_data = raw["wallet"]
+        wallet = WalletConfig(
+            address=wallet_data.get("address"),
+            private_key=wallet_data.get("private_key"),
+        )
+
+    # Parse [chain] section
+    chain = None
+    if "chain" in raw and isinstance(raw["chain"], dict):
+        chain_data = raw["chain"]
+        chain = ChainConfig(
+            chain_id=chain_data.get("chain_id", 10143),
+            rpc_url=chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz"),
+            match_proof=chain_data.get("match_proof"),
+            wager=chain_data.get("wager"),
+        )
+
+    return NojohnsConfig(
+        games=games, arena_server=arena_server, wallet=wallet, chain=chain
+    )
 
 
 def get_game_config(game: str = "melee", path: Path | None = None) -> GameConfig | None:

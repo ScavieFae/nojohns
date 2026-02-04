@@ -46,6 +46,9 @@ phillip = [
     "tf-keras==2.18.0",
     "tensorflow-probability",
 ]
+wallet = [
+    "eth-account>=0.10.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/ScavieFae/nojohns"

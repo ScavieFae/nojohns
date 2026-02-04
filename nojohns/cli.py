@@ -6,6 +6,7 @@ Usage:
     nojohns setup                  # Create ~/.nojohns/ config
     nojohns setup melee            # Configure Melee paths
     nojohns setup melee phillip    # Install Phillip fighter
+    nojohns setup monad            # Configure wallet + chain
     nojohns fight <f1> <f2>        # Run a local fight
     nojohns netplay <f> --code X   # Netplay against remote opponent
     nojohns matchmake <f>          # Arena matchmaking
@@ -81,7 +82,7 @@ def _require_melee_args(args) -> bool:
 # ============================================================================
 
 def cmd_setup(args):
-    """Handle `nojohns setup [melee [phillip]]`."""
+    """Handle `nojohns setup [melee [phillip] | monad]`."""
     target = args.setup_target
 
     if not target:
@@ -90,9 +91,11 @@ def cmd_setup(args):
         return _setup_melee()
     elif target == ["melee", "phillip"]:
         return _setup_melee_phillip()
+    elif target == ["monad"]:
+        return _setup_monad()
     else:
         logger.error(f"Unknown setup target: {' '.join(target)}")
-        logger.error("Usage: nojohns setup [melee [phillip]]")
+        logger.error("Usage: nojohns setup [melee [phillip] | monad]")
         return 1
 
 
@@ -347,6 +350,165 @@ def _setup_melee_phillip():
     return 0
 
 
+def _setup_monad():
+    """Configure agent wallet and Monad chain settings."""
+    import tomllib
+
+    # Ensure config dir exists
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Read existing config if present
+    existing_raw = {}
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, "rb") as f:
+                existing_raw = tomllib.load(f)
+        except Exception:
+            pass
+
+    current_wallet = existing_raw.get("wallet", {})
+    current_chain = existing_raw.get("chain", {})
+
+    print("Monad Setup")
+    print("=" * 40)
+    print()
+
+    # Check if wallet already exists
+    if current_wallet.get("address"):
+        print(f"Wallet already configured: {current_wallet['address']}")
+        print()
+        overwrite = input("Overwrite existing wallet? [y/N]: ").strip().lower()
+        if overwrite != "y":
+            print("Keeping existing wallet.")
+            address = current_wallet["address"]
+            private_key = current_wallet.get("private_key", "")
+        else:
+            address, private_key = _monad_wallet_prompt()
+    else:
+        address, private_key = _monad_wallet_prompt()
+
+    # Chain config
+    print()
+    print("Chain Configuration")
+    print("-" * 40)
+    default_chain_id = current_chain.get("chain_id", 10143)
+    default_rpc = current_chain.get("rpc_url", "https://testnet-rpc.monad.xyz")
+
+    chain_choice = input(f"Network — testnet (default) or mainnet? [testnet]: ").strip().lower()
+    if chain_choice == "mainnet":
+        chain_id = 143
+        rpc_url = "https://rpc.monad.xyz"
+        print("  Using Monad mainnet (chain 143)")
+    else:
+        chain_id = 10143
+        rpc_url = "https://testnet-rpc.monad.xyz"
+        print("  Using Monad testnet (chain 10143)")
+
+    # Contract addresses (optional — ScavieFae deploys these)
+    match_proof = current_chain.get("match_proof", "")
+    wager = current_chain.get("wager", "")
+
+    # Build updated config, preserving existing sections
+    lines = ["# No Johns configuration\n"]
+
+    # Preserve [games.*]
+    games_data = existing_raw.get("games", {})
+    for game_name, game_settings in games_data.items():
+        if isinstance(game_settings, dict):
+            lines.append(f"[games.{game_name}]")
+            for k, v in game_settings.items():
+                if isinstance(v, str):
+                    lines.append(f'{k} = "{v}"')
+                else:
+                    lines.append(f"{k} = {v}")
+            lines.append("")
+
+    # Preserve [arena]
+    arena_data = existing_raw.get("arena", {})
+    if arena_data.get("server"):
+        lines.append("[arena]")
+        lines.append(f'server = "{arena_data["server"]}"')
+    else:
+        lines.append("[arena]")
+        lines.append('# server = "http://localhost:8000"')
+    lines.append("")
+
+    # [wallet]
+    lines.append("[wallet]")
+    lines.append(f'address = "{address}"')
+    lines.append(f'private_key = "{private_key}"')
+    lines.append("")
+
+    # [chain]
+    lines.append("[chain]")
+    lines.append(f"chain_id = {chain_id}")
+    lines.append(f'rpc_url = "{rpc_url}"')
+    if match_proof:
+        lines.append(f'match_proof = "{match_proof}"')
+    else:
+        lines.append('# match_proof = "0x..."  # set after contract deploy')
+    if wager:
+        lines.append(f'wager = "{wager}"')
+    else:
+        lines.append('# wager = "0x..."  # set after contract deploy')
+    lines.append("")
+
+    CONFIG_PATH.write_text("\n".join(lines))
+
+    print()
+    print(f"Saved to {CONFIG_PATH}")
+    print()
+    print(f"Agent address: {address}")
+    print()
+    print("IMPORTANT: Your private key is stored in plaintext in config.toml.")
+    print("           Back it up securely. Do not commit it to git.")
+    print()
+    print("Next steps:")
+    print("  1. Fund your agent wallet with testnet MON")
+    print("  2. Contract addresses will be added after deploy")
+    return 0
+
+
+def _monad_wallet_prompt() -> tuple[str, str]:
+    """Prompt user to generate or import a wallet. Returns (address, private_key)."""
+    print("Wallet Setup")
+    print("-" * 40)
+    print("  1. Generate a new wallet")
+    print("  2. Import an existing private key")
+    print()
+    choice = input("Choose [1]: ").strip()
+
+    if choice == "2":
+        key = input("Private key (hex, with or without 0x): ").strip()
+        if not key:
+            logger.error("Private key is required")
+            sys.exit(1)
+        if not key.startswith("0x"):
+            key = "0x" + key
+        try:
+            from nojohns.wallet import _require_eth_account
+            eth_account = _require_eth_account()
+            account = eth_account.Account.from_key(key)
+            address = account.address
+            print(f"  Imported wallet: {address}")
+            return (address, key)
+        except ImportError:
+            logger.error("eth-account required: pip install nojohns[wallet]")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Invalid private key: {e}")
+            sys.exit(1)
+    else:
+        try:
+            from nojohns.wallet import generate_wallet
+            address, key = generate_wallet()
+            print(f"  Generated wallet: {address}")
+            return (address, key)
+        except ImportError:
+            logger.error("eth-account required: pip install nojohns[wallet]")
+            sys.exit(1)
+
+
 # ============================================================================
 # Game Commands
 # ============================================================================
@@ -414,6 +576,86 @@ def cmd_fight(args):
     except Exception as e:
         logger.error(f"Match error: {e}")
         return 1
+
+
+def _sign_and_submit(match_id: str, outcome: str, server: str, _post):
+    """Sign a match result with EIP-712 and submit to the arena.
+
+    Skips silently if wallet or eth-account is not configured.
+    """
+    import hashlib
+    import time as time_mod
+
+    nj_cfg = load_config()
+    if nj_cfg.wallet is None or nj_cfg.wallet.private_key is None:
+        logger.debug("No wallet configured — skipping match signing")
+        return
+    if nj_cfg.chain is None:
+        logger.debug("No chain configured — skipping match signing")
+        return
+    if nj_cfg.chain.match_proof is None:
+        logger.debug("No MatchProof contract address — skipping match signing")
+        return
+
+    try:
+        from nojohns.wallet import load_wallet, sign_match_result
+    except ImportError:
+        logger.warning("eth-account not installed — skipping match signing (pip install nojohns[wallet])")
+        return
+
+    account = load_wallet(nj_cfg)
+    if account is None:
+        return
+
+    # Build the MatchResult data
+    # matchId = keccak256(match_id string) to get bytes32
+    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
+    # replayHash — placeholder until we have actual replay data
+    replay_hash = b"\x00" * 32
+
+    # Determine winner/loser from our perspective
+    # In matchmake, we are always one side. We use our address for the appropriate role.
+    our_address = account.address
+    # For now, use a zero address for the opponent until we have their address
+    zero_address = "0x0000000000000000000000000000000000000000"
+
+    if outcome == "COMPLETED":
+        winner = our_address
+        loser = zero_address
+        winner_score, loser_score = 1, 0
+    else:
+        winner = zero_address
+        loser = our_address
+        winner_score, loser_score = 0, 0
+
+    match_result = {
+        "matchId": match_id_bytes,
+        "winner": winner,
+        "loser": loser,
+        "gameId": "melee",
+        "winnerScore": winner_score,
+        "loserScore": loser_score,
+        "replayHash": replay_hash,
+        "timestamp": int(time_mod.time()),
+    }
+
+    try:
+        sig = sign_match_result(
+            account,
+            match_result,
+            chain_id=nj_cfg.chain.chain_id,
+            contract_address=nj_cfg.chain.match_proof,
+        )
+        logger.info(f"Match result signed by {our_address}")
+
+        # Submit signature to arena
+        _post(f"/matches/{match_id}/signature", {
+            "address": our_address,
+            "signature": sig.hex(),
+        })
+        logger.info("Signature submitted to arena.")
+    except Exception as e:
+        logger.warning(f"Failed to sign/submit match result: {e}")
 
 
 def cmd_matchmake(args):
@@ -555,6 +797,9 @@ def cmd_matchmake(args):
             logger.info("Reported result to arena.")
         except urllib.error.URLError as e:
             logger.warning(f"Failed to report result: {e}")
+
+        # --- Step 5: Sign match result (if wallet configured) ---
+        _sign_and_submit(match_id, outcome, server, _post)
 
         return 0
 
@@ -779,11 +1024,11 @@ def main():
 
     # setup command
     setup_parser = subparsers.add_parser(
-        "setup", help="Configure No Johns (setup / setup melee / setup melee phillip)"
+        "setup", help="Configure No Johns (setup / setup melee / setup monad)"
     )
     setup_parser.add_argument(
         "setup_target", nargs="*", default=[],
-        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip",
+        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip, monad=wallet+chain",
     )
     setup_parser.set_defaults(func=cmd_setup)
 

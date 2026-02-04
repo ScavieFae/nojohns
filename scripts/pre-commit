@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: block commits that contain secrets.
+#
+# Install:
+#   git config core.hooksPath scripts
+#
+# Or symlink:
+#   ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+#
+# Bypass (when you know what you're doing):
+#   git commit --no-verify
+
+set -euo pipefail
+
+BLOCKED=0
+
+# Known test keys that are safe to commit (from eth-account docs / test fixtures)
+ALLOWLIST=(
+    "4c0883a69102937d6231471b5dbb6204fe512961708279f3a3e6d8b4f8e2c7e1"
+)
+
+blocked() {
+    echo "  BLOCKED: $1"
+    BLOCKED=1
+}
+
+# --- Get staged files (added, copied, modified — skip deleted) ---
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)
+
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+# --- Check 1: Dangerous filenames ---
+for file in $STAGED; do
+    name=$(basename "$file")
+    case "$name" in
+        .env|.env.*)
+            blocked "$file — env file"
+            ;;
+        credentials.json|service-account*.json)
+            blocked "$file — credentials file"
+            ;;
+        *.pem|*.key|*.p12|*.pfx|*.jks)
+            blocked "$file — key/cert file"
+            ;;
+        keystore|keystore.json)
+            blocked "$file — keystore file"
+            ;;
+    esac
+done
+
+# --- Check 2: File contents for secret patterns ---
+for file in $STAGED; do
+    # Skip binary files
+    if ! git show ":$file" 2>/dev/null | file - | grep -q text; then
+        continue
+    fi
+
+    content=$(git show ":$file" 2>/dev/null || true)
+    if [ -z "$content" ]; then
+        continue
+    fi
+
+    # Pattern A: 0x + 64 hex chars (Ethereum private key format)
+    matches=$(echo "$content" | grep -noE '0x[0-9a-fA-F]{64}' || true)
+    if [ -n "$matches" ]; then
+        while IFS= read -r match; do
+            hex=$(echo "$match" | grep -oE '[0-9a-fA-F]{64}')
+            allowed=false
+            for safe in "${ALLOWLIST[@]}"; do
+                if [ "$hex" = "$safe" ]; then
+                    allowed=true
+                    break
+                fi
+            done
+            if [ "$allowed" = false ]; then
+                line=$(echo "$match" | cut -d: -f1)
+                blocked "$file:$line — looks like a private key (0x + 64 hex chars)"
+            fi
+        done <<< "$matches"
+    fi
+
+    # Pattern B: private_key / secret_key assignment with a hex-ish value
+    secret_lines=$(echo "$content" | grep -niE '(private_key|secret_key|PRIVATE_KEY|SECRET_KEY)\s*[=:]\s*"?0?x?[0-9a-fA-F]{16,}' || true)
+    if [ -n "$secret_lines" ]; then
+        while IFS= read -r match; do
+            hex=$(echo "$match" | grep -oE '[0-9a-fA-F]{64}' || true)
+            allowed=false
+            if [ -n "$hex" ]; then
+                for safe in "${ALLOWLIST[@]}"; do
+                    if [ "$hex" = "$safe" ]; then
+                        allowed=true
+                        break
+                    fi
+                done
+            fi
+            if [ "$allowed" = false ]; then
+                line=$(echo "$match" | cut -d: -f1)
+                blocked "$file:$line — private/secret key assignment"
+            fi
+        done <<< "$secret_lines"
+    fi
+done
+
+# --- Verdict ---
+if [ $BLOCKED -ne 0 ]; then
+    echo ""
+    echo "Commit blocked — potential secrets in staged files."
+    echo "If intentional, use: git commit --no-verify"
+    exit 1
+fi
+
+exit 0
