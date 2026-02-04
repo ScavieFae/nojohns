@@ -231,16 +231,22 @@ This is left as a decision for implementation, not baked into the spec.
 
 ## Deployment Strategy
 
-### Monad (preferred)
-ERC-8004 registries are designed as singletons per chain. Monad is EVM-compatible and explicitly named as a cross-chain expansion target for ERC-8004. If the singleton contracts aren't deployed on Monad yet, we deploy them (or lobby the ERC-8004 team to — good hackathon PR either way).
+### Monad Mainnet (active)
 
-**Monad advantages:** High throughput for frequent reputation updates, low gas for match proofs, EVM compatibility means standard Solidity tooling.
+ERC-8004 registries are live on Monad mainnet (chain 143). We deploy our custom contracts (MatchProof, Wager) alongside the existing singletons.
 
-### Ethereum L1 (fallback)
-ERC-8004 is live on Ethereum mainnet as of Jan 29, 2026. If Monad deployment isn't ready, register agent identities on L1 and run the wager contract on Monad separately. Identity is cross-chain readable; wagers are chain-specific.
+**Monad network details:**
+- Chain ID: 143
+- RPC: `https://rpc.monad.xyz` (QuickNode, 25 rps) — alternatives at rpc1, rpc2, rpc3
+- Block time: 0.4s, finality: 0.8s, throughput: 10K TPS
+- Native token: MON
+- Explorer: [monadscan.com](https://monadscan.com)
 
-### Hybrid
-Register identity on L1 (permanent, portable). Run reputation updates and match proofs on Monad (high frequency, low cost). Wager contract on Monad reads local reputation/validation and can verify L1 identity via cross-chain query or cached state.
+**Monad advantages:** High throughput for frequent reputation updates, sub-second finality for wager settlement, low gas for match proofs, standard EVM/Solidity tooling.
+
+### Future: Multi-Chain
+
+The architecture is chain-agnostic by design. Game IDs are strings, match proofs are self-contained, and the ERC-8004 registries are deployed as singletons per chain. Adding a second chain means deploying MatchProof and Wager contracts there and pointing the config at the new RPC. No protocol changes needed.
 
 ---
 
@@ -284,13 +290,20 @@ Register identity on L1 (permanent, portable). Run reputation updates and match 
 - [x] ~~Dispute resolution: is dual-signature sufficient?~~ → For the hackathon, yes. Dual-sig is the trustless happy path. Single-sig + timeout handles refusal to sign. Replay-based arbitration is the fallback, with the trust boundary stated explicitly (deterministic parser, not subjective oracle). WASM on-chain verifier is the post-hackathon dream path.
 - [x] ~~Should status/liveness be on-chain?~~ → No. Status changes too frequently and is stale the moment a block confirms. The arena coordination server owns liveness. On-chain identity is "who you are," not "whether you're available right now."
 
+**Resolved:**
+- [x] ~~Are ERC-8004 singleton contracts deployed on Monad?~~ → **Yes.** Deployed on Monad mainnet (chain 143):
+  - IdentityRegistry: `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
+  - ReputationRegistry: `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63`
+  - Also on Monad testnet (chain 10143):
+  - IdentityRegistry: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
+  - ReputationRegistry: `0x8004B663056A597Dffe9eCcC1965A193B7388713`
+- [x] ~~Replay storage~~ → Hash on-chain, store replay files on arena server. IPFS is a nice-to-have, not a requirement. The hash is the anchor; storage is an operational concern.
+
 **Open:**
-- [ ] Are ERC-8004 singleton contracts deployed on Monad? If not, what's the deploy process — is there a factory, or do we deploy manually?
-- [ ] Gas costs for reputation signals on Monad — can we afford an update per match, or do we need to batch?
-- [ ] Replay storage — IPFS, Arweave, or just hash-on-chain with off-chain storage on arena server?
+- [ ] Gas costs for reputation signals on Monad — can we afford an update per match, or do we need to batch? (Monad: 0.4s blocks, low gas, likely fine per-match.)
 - [ ] Should Elo computation be on-chain (view function replaying signals) or off-chain (indexer)? On-chain is more trustless but potentially expensive.
-- [ ] Resolution window duration — 1 hour is the placeholder. What's the right timeout for single-sig resolution? Too short and legitimate network issues cause false resolutions. Too long and wagered funds are locked unnecessarily.
-- [ ] Arena coordination server trust model — it's the entity exchanging connect codes and tracking liveness. Should it be an ERC-8004 registered agent itself? Does it need to be decentralizable, or is centralization acceptable for the coordination layer given that settlement is trustless?
+- [ ] Resolution window duration — 1 hour is the placeholder. What's the right timeout for single-sig resolution?
+- [ ] Arena coordination server trust model — centralized coordination with trustless settlement is acceptable for now. Consider registering the arena server itself as an ERC-8004 agent for discoverability.
 
 ---
 

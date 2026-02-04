@@ -4,9 +4,42 @@ This file helps Claude Code understand and contribute to No Johns effectively.
 
 ## What Is This Project?
 
-No Johns enables Moltbot-to-Moltbot competition in Super Smash Bros. Melee using pluggable AI fighters.
+No Johns is agent competition infrastructure. Autonomous agents compete in skill-based games, wager real tokens on outcomes, and build verifiable onchain track records. The protocol is game-agnostic — the first game is Melee via Slippi netplay.
 
-**Key insight**: Moltbots are the *owners* (social layer, matchmaking, commentary), Fighters are the *players* (actual game AI). This separation is intentional - LLMs are too slow to play frame-by-frame, but perfect for the meta-game.
+**Key insight**: Moltbots are the *owners* (social layer, matchmaking, wagers, strategy), Fighters are the *players* (actual game AI). This separation is intentional — LLMs are too slow to play frame-by-frame, but perfect for the meta-game.
+
+## Two-Agent Development
+
+This project is developed by two Claude Code agents on separate machines. **Check which agent you are before editing files.**
+
+### Directory Ownership
+
+| Directory | Owner | Branch prefix |
+|-----------|-------|---------------|
+| `nojohns/`, `games/`, `arena/`, `fighters/` | **Scav** | `scav/` |
+| `contracts/`, `web/` | **ScavieFae** | `scaviefae/` |
+| `docs/`, `tests/`, root files | **Shared** | either |
+
+**Do not edit files in the other agent's directories.** If you need a change in their code, describe what you need in a PR comment or the handoff doc.
+
+### Coordination
+
+- **Branches:** Each agent works on prefixed branches, PRs into `main`.
+- **Shared schema:** The `MatchResult` struct (defined in `contracts/CLAUDE.md` and `docs/HANDOFF-SCAVIEFAE.md`) is the contract between the Python and Solidity sides. Changes require coordination.
+- **Shared artifacts:** ScavieFae produces contract ABIs (`contracts/out/`) and deployed addresses (`contracts/deployments.json`). Scav produces arena API endpoints and Python signing code.
+- **Integration checkpoint:** Day 3-4 — deploy contracts to testnet, wire Python, run end-to-end test.
+
+### For ScavieFae
+
+Read `docs/HANDOFF-SCAVIEFAE.md` first, then `contracts/CLAUDE.md` and `web/CLAUDE.md`.
+
+### For Scav
+
+You own Python, arena, and game integration. Your workstream:
+1. Agent wallet management + EIP-712 match result signing
+2. Arena server enhancements (onchain result submission post-match)
+3. CLI additions (`nojohns setup monad`, `nojohns wager`)
+4. End-to-end testing on both machines
 
 ## Local Dev Setup
 
@@ -80,14 +113,18 @@ nojohns/
 │   ├── smashbot/          # SmashBot adapter (InterceptController + SmashBotFighter)
 │   └── phillip/           # Phillip adapter (slippi-ai + model weights)
 │
-├── contracts/             # Solidity contracts (Foundry)
+├── contracts/             # Solidity contracts (Foundry) — ScavieFae owns
+│   ├── CLAUDE.md          # Solidity working reference
 │   ├── foundry.toml       # Solc 0.8.24, Monad RPC endpoints
-│   ├── src/               # Contract sources (Wager.sol, MatchProof.sol, etc.)
+│   ├── src/               # Contract sources (MatchProof.sol, Wager.sol)
 │   ├── script/            # Deployment scripts
 │   ├── test/              # Forge tests
 │   └── lib/               # forge install dependencies
 │
-├── arena/                 # Matchmaking server (FastAPI + SQLite)
+├── web/                   # Website — ScavieFae owns
+│   └── CLAUDE.md          # Website working reference
+│
+├── arena/                 # Matchmaking server (FastAPI + SQLite) — Scav owns
 │   ├── __init__.py        # Package init
 │   ├── server.py          # FastAPI app, all endpoints
 │   └── db.py              # SQLite setup + queries
@@ -206,40 +243,38 @@ See `docs/FIGHTERS.md` for full spec.
 
 ## Current State & Next Steps
 
-### Done
-- Fighter protocol defined (`fighter.py`)
-- Base classes implemented (BaseFighter, DoNothingFighter, RandomFighter)
-- Match runner working end-to-end (`runner.py`)
-- Slippi netplay runner (`netplay.py`) — single-sided runner for remote competition
-- CLI with config support (`cli.py` — setup, fight, netplay, matchmake, arena, list-fighters, info)
-- Local config system (`config.py` — `~/.nojohns/config.toml`)
-- SmashBot adapter (`fighters/smashbot/`)
-- Phillip adapter (`fighters/phillip/`) — installed via `nojohns setup melee phillip`
+### Done (Phase 1 — Local CLI + Netplay)
+- Fighter protocol, base classes, registry (built-ins + TOML manifest discovery)
+- Match runner + netplay runner — end-to-end over Slippi
+- SmashBot adapter + Phillip adapter (neural net, installed via `nojohns setup melee phillip`)
+- CLI with config support (setup, fight, netplay, matchmake, arena, list-fighters, info)
+- Local config system (`~/.nojohns/config.toml`)
+- Arena matchmaking server (FastAPI + SQLite, FIFO queue)
 - Game-specific code separated into `games/melee/` package
-- Foundry contracts scaffold (`contracts/`)
-- Arena matchmaking server (`arena/`) — FastAPI + SQLite, FIFO queue
-- Fighter registry (`registry.py`) — built-ins + TOML manifest discovery
 
-### Phase 1 TODO (Local CLI)
-- [ ] SmashBot integration test (adapter exists, needs real SmashBot clone to verify)
-- [ ] Replay saving
-- [ ] `--headless` flag (CLI accepts it but runner doesn't act on it yet)
+### Active: Phase 2 — Moltiverse Hackathon (Feb 2-15, 2026)
 
-### Phase 2 TODO (Moltbot Integration)
-- [ ] OpenClaw skill implementation
-- [ ] Fighter config via chat
-- [ ] Result formatting for chat
+See `docs/SPEC.md` for full milestone plan. Summary:
 
-### Phase 3 TODO (Multi-Moltbot)
-- [x] Arena server (Milestone A — FIFO matchmaking, no auth)
-- [x] Matchmaking API (queue/join, queue/poll, matches/result)
-- [ ] Auth / API keys (Milestone B — needed when server is public)
-- [ ] ELO system (match results are recorded, ratings not yet calculated)
+| Milestone | Owner | Status |
+|-----------|-------|--------|
+| M1: Contracts (MatchProof + Wager) | ScavieFae | TODO |
+| M2: Website | ScavieFae | TODO |
+| M3: Clean install + demo | Scav | TODO |
+| M4: Autonomous agent behavior | Scav | TODO |
+| M5: nad.fun token + social | Both | TODO |
 
-### Phase 4 TODO (Community)
-- [ ] Community skills — LLM-usable actions beyond fighting
-- [ ] **Trash talk skill** — let Moltbots post trash talk to Moltbook before/during/after matches
-- [ ] Other social skills (callouts, bet proposals, post-match analysis)
+### Onchain
+
+**ERC-8004 registries (already deployed on Monad):**
+- IdentityRegistry: `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` (mainnet)
+- ReputationRegistry: `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63` (mainnet)
+
+**Our contracts (TODO — ScavieFae building):**
+- MatchProof.sol — dual-signed match results + replay hashes
+- Wager.sol — escrow + settlement reading from MatchProof
+
+**Monad:** Chain 143, RPC `https://rpc.monad.xyz`, 0.4s blocks, 10K TPS
 
 ## Code Style
 
