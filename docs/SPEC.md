@@ -386,7 +386,7 @@ on-chain settlement, token economics, and agent autonomy.
 **Goal**: A judge (or new competitor) can get running without hand-holding
 
 - [ ] `nojohns setup` end-to-end: config, Dolphin, ISO check, fighter install
-- [ ] `nojohns setup monad` — wallet creation, testnet faucet, identity registration
+- [ ] `nojohns setup wallet` — wallet creation, testnet faucet, identity registration
 - [ ] README walkthrough a judge can follow
 - [ ] Demo video: Phillip vs SmashBot, result posting onchain, wager settling
 

@@ -6,7 +6,7 @@ Usage:
     nojohns setup                  # Create ~/.nojohns/ config
     nojohns setup melee            # Configure Melee paths
     nojohns setup melee phillip    # Install Phillip fighter
-    nojohns setup monad            # Configure wallet + chain
+    nojohns setup wallet           # Configure wallet + chain (onchain features)
     nojohns fight <f1> <f2>        # Run a local fight
     nojohns netplay <f> --code X   # Netplay against remote opponent
     nojohns matchmake <f>          # Arena matchmaking
@@ -82,7 +82,7 @@ def _require_melee_args(args) -> bool:
 # ============================================================================
 
 def cmd_setup(args):
-    """Handle `nojohns setup [melee [phillip] | monad]`."""
+    """Handle `nojohns setup [melee [phillip] | wallet]`."""
     target = args.setup_target
 
     if not target:
@@ -91,11 +91,11 @@ def cmd_setup(args):
         return _setup_melee()
     elif target == ["melee", "phillip"]:
         return _setup_melee_phillip()
-    elif target == ["monad"]:
+    elif target in (["wallet"], ["monad"]):  # "monad" kept as alias
         return _setup_monad()
     else:
         logger.error(f"Unknown setup target: {' '.join(target)}")
-        logger.error("Usage: nojohns setup [melee [phillip] | monad]")
+        logger.error("Usage: nojohns setup [melee [phillip] | wallet]")
         return 1
 
 
@@ -797,7 +797,6 @@ def cmd_matchmake(args):
             if hasattr(match_result, "p1_stocks"):
                 our_stocks = match_result.p1_stocks
             we_won = hasattr(match_result, "winner_port") and match_result.winner_port == 1
-            logger.info(f"Match complete! {'Won' if we_won else 'Lost'}")
         except NetplayDisconnectedError:
             duration = time.time() - start_time
             outcome = "DISCONNECT"
@@ -815,12 +814,41 @@ def cmd_matchmake(args):
                 "duration_seconds": round(duration, 1),
                 "stocks_remaining": our_stocks,
             })
-            logger.info("Reported result to arena.")
         except urllib.error.URLError as e:
             logger.warning(f"Failed to report result: {e}")
 
         # --- Step 5: Sign canonical match result from arena ---
         _sign_and_submit(match_id, outcome, _get, _post)
+
+        # --- Match summary ---
+        print()
+        print("=" * 44)
+        if outcome == "COMPLETED":
+            result_line = "WIN" if we_won else "LOSS"
+            print(f"  {args.fighter} vs {opponent_code}  —  {result_line}")
+            if our_stocks > 0:
+                print(f"  Stocks remaining: {our_stocks}")
+        elif outcome == "DISCONNECT":
+            print(f"  {args.fighter} vs {opponent_code}  —  DISCONNECT")
+        else:
+            print(f"  {args.fighter} vs {opponent_code}  —  ERROR")
+        print(f"  Duration: {duration:.0f}s  |  Match: {match_id[:8]}...")
+        if nj_cfg.wallet and nj_cfg.wallet.address:
+            print(f"  Signed: yes  |  Wallet: {nj_cfg.wallet.address[:10]}...")
+        print("=" * 44)
+        print()
+
+        # One-time nudge for operators without a wallet
+        if not (nj_cfg.wallet and nj_cfg.wallet.address):
+            nudge_marker = CONFIG_DIR / ".wallet-nudged"
+            if not nudge_marker.exists():
+                print("Tip: Record matches onchain and build your agent's reputation.")
+                print("     Run: nojohns setup wallet")
+                print()
+                try:
+                    nudge_marker.touch()
+                except OSError:
+                    pass
 
         return 0
 
@@ -1045,11 +1073,11 @@ def main():
 
     # setup command
     setup_parser = subparsers.add_parser(
-        "setup", help="Configure No Johns (setup / setup melee / setup monad)"
+        "setup", help="Configure No Johns (setup / setup melee / setup wallet)"
     )
     setup_parser.add_argument(
         "setup_target", nargs="*", default=[],
-        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip, monad=wallet+chain",
+        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip, wallet=onchain identity",
     )
     setup_parser.set_defaults(func=cmd_setup)
 

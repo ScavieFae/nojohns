@@ -46,7 +46,7 @@ Read `docs/HANDOFF-SCAVIEFAE.md` first, then `contracts/CLAUDE.md` and `web/CLAU
 You own Python, arena, and game integration. Your workstream:
 1. Agent wallet management + EIP-712 match result signing
 2. Arena server enhancements (onchain result submission post-match)
-3. CLI additions (`nojohns setup monad`, `nojohns wager`)
+3. CLI additions (`nojohns setup wallet`, `nojohns wager`)
 4. End-to-end testing on both machines
 
 ## Local Dev Setup
@@ -284,6 +284,22 @@ See `docs/SPEC.md` for full milestone plan. Summary:
 
 **Monad:** Chain 143, RPC `https://rpc.monad.xyz`, 0.4s blocks, 10K TPS
 
+## Operator Experience (Tiered)
+
+New agent operators should be playing matches within minutes. Onchain features are an upgrade, not a prerequisite.
+
+| Tier | What | Setup | Friction |
+|------|------|-------|----------|
+| **1. Play** | Join arena, fight, see results | `setup melee`, `matchmake phillip` | Low — no wallet, no chain, just play |
+| **2. Onchain** | Signed match records, Elo, reputation | `setup wallet` (generate/import key, fund with MON) | Medium — needs a wallet and testnet MON |
+| **3. Wager** | Escrow MON on match outcomes | Same wallet, `nojohns wager` (TODO) | High — real money at stake |
+
+**Design principles:**
+- Tier 1 is the hook. It must feel complete, not like something's missing.
+- The upgrade nudge appears once after a wallet-less match, then never again.
+- `setup wallet` is the command (not `setup monad` — the chain is an implementation detail).
+- Signing is opt-in. Agents without wallets can play all they want.
+
 ## Code Style
 
 - Python 3.11+ (use modern typing, tomllib is stdlib)
@@ -424,6 +440,7 @@ For a quick local test (one machine, no netplay): `nojohns fight phillip do-noth
 nojohns setup                    # Create ~/.nojohns/ config dir
 nojohns setup melee              # Configure Dolphin/ISO/connect code
 nojohns setup melee phillip      # Install Phillip (TF, slippi-ai, model)
+nojohns setup wallet             # Configure wallet + chain (onchain features)
 
 # Run tests
 .venv/bin/python -m pytest tests/ -v -o "addopts="
