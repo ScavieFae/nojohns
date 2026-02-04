@@ -312,3 +312,157 @@ class TestFIFOMatching:
         assert r2.json()["status"] == "matched"
         assert r4.json()["status"] == "matched"
         assert r2.json()["match_id"] != r4.json()["match_id"]
+
+
+# ======================================================================
+# Wallet Address Tests
+# ======================================================================
+
+
+class TestWalletAddress:
+    def test_join_with_wallet(self, client):
+        """Wallet address is accepted on join."""
+        resp = client.post("/queue/join", json={
+            "connect_code": "SCAV#382",
+            "wallet_address": "0xABC123",
+        })
+        assert resp.status_code == 200
+
+    def test_wallet_returned_on_match(self, client):
+        """Opponent wallet is returned when matched."""
+        client.post("/queue/join", json={
+            "connect_code": "SCAV#382",
+            "wallet_address": "0xWALLET_A",
+        })
+        r2 = client.post("/queue/join", json={
+            "connect_code": "SCAV#861",
+            "wallet_address": "0xWALLET_B",
+        })
+        d2 = r2.json()
+        assert d2["status"] == "matched"
+        assert d2["opponent_wallet"] == "0xWALLET_A"
+
+    def test_wallet_returned_on_poll(self, client):
+        """Opponent wallet is returned when polling after match."""
+        r1 = client.post("/queue/join", json={
+            "connect_code": "SCAV#382",
+            "wallet_address": "0xWALLET_A",
+        })
+        client.post("/queue/join", json={
+            "connect_code": "SCAV#861",
+            "wallet_address": "0xWALLET_B",
+        })
+
+        qid1 = r1.json()["queue_id"]
+        resp = client.get(f"/queue/{qid1}")
+        data = resp.json()
+        assert data["status"] == "matched"
+        assert data["opponent_wallet"] == "0xWALLET_B"
+
+    def test_wallet_null_when_not_provided(self, client):
+        """Opponent wallet is null if they didn't provide one."""
+        client.post("/queue/join", json={"connect_code": "SCAV#382"})
+        r2 = client.post("/queue/join", json={
+            "connect_code": "SCAV#861",
+            "wallet_address": "0xWALLET_B",
+        })
+        d2 = r2.json()
+        assert d2["opponent_wallet"] is None
+
+    def test_wallet_in_match_details(self, client):
+        """Match details include wallet addresses."""
+        client.post("/queue/join", json={
+            "connect_code": "SCAV#382",
+            "wallet_address": "0xWALLET_A",
+        })
+        r2 = client.post("/queue/join", json={
+            "connect_code": "SCAV#861",
+            "wallet_address": "0xWALLET_B",
+        })
+        match_id = r2.json()["match_id"]
+
+        match = client.get(f"/matches/{match_id}").json()
+        assert match["p1_wallet"] == "0xWALLET_A"
+        assert match["p2_wallet"] == "0xWALLET_B"
+
+
+# ======================================================================
+# Signature Tests
+# ======================================================================
+
+
+class TestSignatures:
+    def _make_match(self, client):
+        """Helper: join two players with wallets, return (qid1, qid2, match_id)."""
+        r1 = client.post("/queue/join", json={
+            "connect_code": "SCAV#382",
+            "wallet_address": "0xADDR_A",
+        })
+        r2 = client.post("/queue/join", json={
+            "connect_code": "SCAV#861",
+            "wallet_address": "0xADDR_B",
+        })
+        d2 = r2.json()
+        return r1.json()["queue_id"], d2["queue_id"], d2["match_id"]
+
+    def test_submit_signature(self, client):
+        _, _, match_id = self._make_match(client)
+        resp = client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_A",
+            "signature": "0xdeadbeef",
+        })
+        data = resp.json()
+        assert data["signatures_received"] == 1
+        assert data["ready_for_submission"] is False
+
+    def test_two_signatures_ready(self, client):
+        _, _, match_id = self._make_match(client)
+        client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_A",
+            "signature": "0xsig_a",
+        })
+        resp = client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_B",
+            "signature": "0xsig_b",
+        })
+        data = resp.json()
+        assert data["signatures_received"] == 2
+        assert data["ready_for_submission"] is True
+
+    def test_get_signatures(self, client):
+        _, _, match_id = self._make_match(client)
+        client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_A",
+            "signature": "0xsig_a",
+        })
+        client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_B",
+            "signature": "0xsig_b",
+        })
+
+        resp = client.get(f"/matches/{match_id}/signatures")
+        data = resp.json()
+        assert data["signatures_received"] == 2
+        assert data["ready_for_submission"] is True
+        assert len(data["signatures"]) == 2
+
+    def test_get_signatures_nonexistent_match(self, client):
+        resp = client.get("/matches/not-real/signatures")
+        assert resp.status_code == 404
+
+    def test_signature_upsert(self, client):
+        """Resubmitting from same address updates, doesn't duplicate."""
+        _, _, match_id = self._make_match(client)
+        client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_A",
+            "signature": "0xsig_v1",
+        })
+        resp = client.post(f"/matches/{match_id}/signature", json={
+            "address": "0xADDR_A",
+            "signature": "0xsig_v2",
+        })
+        assert resp.json()["signatures_received"] == 1
+
+        sigs = client.get(f"/matches/{match_id}/signatures").json()["signatures"]
+        assert len(sigs) == 1
+        assert sigs[0]["signature"] == "0xsig_v2"

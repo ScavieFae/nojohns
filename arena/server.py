@@ -51,6 +51,7 @@ app = FastAPI(title="No Johns Arena", lifespan=lifespan)
 class JoinRequest(BaseModel):
     connect_code: str
     fighter_name: str | None = None
+    wallet_address: str | None = None
 
 
 class JoinResponse(BaseModel):
@@ -64,6 +65,7 @@ class QueueStatusResponse(BaseModel):
     position: int | None = None
     match_id: str | None = None
     opponent_code: str | None = None
+    opponent_wallet: str | None = None
 
 
 class ResultRequest(BaseModel):
@@ -81,6 +83,8 @@ class MatchResponse(BaseModel):
     status: str
     p1_connect_code: str
     p2_connect_code: str
+    p1_wallet: str | None = None
+    p2_wallet: str | None = None
     p1_result: str | None = None
     p2_result: str | None = None
     created_at: str | None = None
@@ -117,7 +121,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
     # Sweep stale entries on each queue operation
     db.expire_stale_entries()
 
-    queue_id = db.add_to_queue(req.connect_code, req.fighter_name)
+    queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address)
     logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) -> {queue_id}")
 
     # Try to match immediately
@@ -135,6 +139,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
             "status": "matched",
             "match_id": match_id,
             "opponent_code": opponent["connect_code"],
+            "opponent_wallet": opponent.get("wallet_address"),
         }
 
     # No match yet
@@ -167,14 +172,17 @@ def poll_queue(queue_id: str) -> dict[str, Any]:
         # Figure out which side we are
         if match["p1_queue_id"] == queue_id:
             opponent_code = match["p2_connect_code"]
+            opponent_wallet = match["p2_wallet"]
         else:
             opponent_code = match["p1_connect_code"]
+            opponent_wallet = match["p1_wallet"]
 
         return {
             "queue_id": queue_id,
             "status": "matched",
             "match_id": entry["match_id"],
             "opponent_code": opponent_code,
+            "opponent_wallet": opponent_wallet,
         }
 
     if entry["status"] == "waiting":
@@ -254,6 +262,24 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
         "match_id": match_id,
         "signatures_received": count,
         "ready_for_submission": count >= 2,
+    }
+
+
+@app.get("/matches/{match_id}/signatures")
+def get_signatures(match_id: str) -> dict[str, Any]:
+    """Get all signatures collected for a match."""
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    sigs = db.get_signatures(match_id)
+    return {
+        "match_id": match_id,
+        "signatures": sigs,
+        "signatures_received": len(sigs),
+        "ready_for_submission": len(sigs) >= 2,
     }
 
 

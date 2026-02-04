@@ -27,6 +27,7 @@ class ArenaDB:
                 id TEXT PRIMARY KEY,
                 connect_code TEXT NOT NULL,
                 fighter_name TEXT,
+                wallet_address TEXT,
                 status TEXT DEFAULT 'waiting',
                 match_id TEXT,
                 created_at TEXT,
@@ -39,6 +40,8 @@ class ArenaDB:
                 p2_queue_id TEXT NOT NULL,
                 p1_connect_code TEXT NOT NULL,
                 p2_connect_code TEXT NOT NULL,
+                p1_wallet TEXT,
+                p2_wallet TEXT,
                 status TEXT DEFAULT 'playing',
                 p1_result TEXT,
                 p2_result TEXT,
@@ -63,7 +66,12 @@ class ArenaDB:
     # Queue
     # ------------------------------------------------------------------
 
-    def add_to_queue(self, connect_code: str, fighter_name: str | None = None) -> str:
+    def add_to_queue(
+        self,
+        connect_code: str,
+        fighter_name: str | None = None,
+        wallet_address: str | None = None,
+    ) -> str:
         """Add a player to the queue. Returns queue_id.
 
         If the same connect_code already has a waiting entry, it is cancelled
@@ -79,9 +87,9 @@ class ArenaDB:
         queue_id = str(uuid.uuid4())
         now = _now()
         self._conn.execute(
-            "INSERT INTO queue (id, connect_code, fighter_name, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'waiting', ?, ?)",
-            (queue_id, connect_code, fighter_name, now, now),
+            "INSERT INTO queue (id, connect_code, fighter_name, wallet_address, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'waiting', ?, ?)",
+            (queue_id, connect_code, fighter_name, wallet_address, now, now),
         )
         self._conn.commit()
         return queue_id
@@ -175,13 +183,15 @@ class ArenaDB:
         now = _now()
         self._conn.execute(
             "INSERT INTO matches (id, p1_queue_id, p2_queue_id, p1_connect_code, p2_connect_code, "
-            "status, created_at) VALUES (?, ?, ?, ?, ?, 'playing', ?)",
+            "p1_wallet, p2_wallet, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'playing', ?)",
             (
                 match_id,
                 p1_entry["id"],
                 p2_entry["id"],
                 p1_entry["connect_code"],
                 p2_entry["connect_code"],
+                p1_entry.get("wallet_address"),
+                p2_entry.get("wallet_address"),
                 now,
             ),
         )

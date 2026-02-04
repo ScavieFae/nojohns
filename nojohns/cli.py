@@ -578,10 +578,25 @@ def cmd_fight(args):
         return 1
 
 
-def _sign_and_submit(match_id: str, outcome: str, server: str, _post):
+def _sign_and_submit(
+    match_id: str,
+    outcome: str,
+    opponent_wallet: str | None,
+    winner_stocks: int,
+    loser_stocks: int,
+    _post,
+):
     """Sign a match result with EIP-712 and submit to the arena.
 
     Skips silently if wallet or eth-account is not configured.
+
+    Args:
+        match_id: Arena match UUID.
+        outcome: "COMPLETED", "DISCONNECT", or "ERROR".
+        opponent_wallet: Opponent's wallet address (from arena), or None.
+        winner_stocks: Stocks remaining for the winner.
+        loser_stocks: Stocks remaining for the loser (usually 0).
+        _post: HTTP POST helper function.
     """
     import hashlib
     import time as time_mod
@@ -607,34 +622,46 @@ def _sign_and_submit(match_id: str, outcome: str, server: str, _post):
     if account is None:
         return
 
-    # Build the MatchResult data
-    # matchId = keccak256(match_id string) to get bytes32
+    our_address = account.address
+
+    # Can't sign without knowing the opponent's address
+    if not opponent_wallet:
+        logger.debug("Opponent has no wallet — skipping match signing")
+        return
+
+    # matchId = sha256(match_id string) to get bytes32
     match_id_bytes = hashlib.sha256(match_id.encode()).digest()
     # replayHash — placeholder until we have actual replay data
     replay_hash = b"\x00" * 32
 
-    # Determine winner/loser from our perspective
-    # In matchmake, we are always one side. We use our address for the appropriate role.
-    our_address = account.address
-    # For now, use a zero address for the opponent until we have their address
-    zero_address = "0x0000000000000000000000000000000000000000"
-
-    if outcome == "COMPLETED":
+    # Determine winner/loser based on outcome
+    # COMPLETED means our game finished normally — we need to check the match
+    # result to know who won. The netplay runner returns a MatchResult with
+    # winner_port. We derive win/loss from the stocks.
+    if outcome == "COMPLETED" and winner_stocks > loser_stocks:
+        # We won (caller passes our stocks as winner_stocks when we won)
         winner = our_address
-        loser = zero_address
-        winner_score, loser_score = 1, 0
-    else:
-        winner = zero_address
+        loser = opponent_wallet
+        w_score = winner_stocks
+        l_score = loser_stocks
+    elif outcome == "COMPLETED":
+        # We lost
+        winner = opponent_wallet
         loser = our_address
-        winner_score, loser_score = 0, 0
+        w_score = winner_stocks
+        l_score = loser_stocks
+    else:
+        # DISCONNECT or ERROR — don't sign, match is void
+        logger.debug(f"Outcome '{outcome}' — skipping match signing (match void)")
+        return
 
     match_result = {
         "matchId": match_id_bytes,
         "winner": winner,
         "loser": loser,
         "gameId": "melee",
-        "winnerScore": winner_score,
-        "loserScore": loser_score,
+        "winnerScore": w_score,
+        "loserScore": l_score,
         "replayHash": replay_hash,
         "timestamp": int(time_mod.time()),
     }
@@ -704,15 +731,25 @@ def cmd_matchmake(args):
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
+    # Load wallet address to include in queue join (if configured)
+    nj_cfg = load_config()
+    our_wallet = None
+    if nj_cfg.wallet and nj_cfg.wallet.address:
+        our_wallet = nj_cfg.wallet.address
+
     # --- Step 1: Join queue ---
     queue_id = None
     match_id = None
+    opponent_wallet = None
     try:
         try:
-            result = _post("/queue/join", {
+            join_body = {
                 "connect_code": args.code,
                 "fighter_name": args.fighter,
-            })
+            }
+            if our_wallet:
+                join_body["wallet_address"] = our_wallet
+            result = _post("/queue/join", join_body)
         except urllib.error.URLError as e:
             logger.error(f"Cannot reach arena server at {server}: {e}")
             return 1
@@ -723,6 +760,7 @@ def cmd_matchmake(args):
         if status == "matched":
             match_id = result["match_id"]
             opponent_code = result["opponent_code"]
+            opponent_wallet = result.get("opponent_wallet")
             logger.info(f"Matched! Opponent: {opponent_code}")
         else:
             position = result.get("position", "?")
@@ -746,6 +784,7 @@ def cmd_matchmake(args):
                 if status == "matched":
                     match_id = result["match_id"]
                     opponent_code = result["opponent_code"]
+                    opponent_wallet = result.get("opponent_wallet")
                     logger.info(f"Matched! Opponent: {opponent_code}")
                     break
 
@@ -774,10 +813,26 @@ def cmd_matchmake(args):
         start_time = time.time()
         outcome = "COMPLETED"
 
+        winner_stocks = 0
+        loser_stocks = 0
+        we_won = False
+
         try:
             match_result = runner.run_netplay(fighter, games=1)
             duration = time.time() - start_time
-            logger.info(f"Match complete! Result: {outcome}")
+            # Determine win/loss from the result
+            # NetplayRunner returns a MatchResult with p1_stocks, p2_stocks, winner_port
+            # We are always port 1 in netplay
+            if hasattr(match_result, "p1_stocks") and hasattr(match_result, "p2_stocks"):
+                if match_result.winner_port == 1:
+                    we_won = True
+                    winner_stocks = match_result.p1_stocks
+                    loser_stocks = match_result.p2_stocks
+                else:
+                    we_won = False
+                    winner_stocks = match_result.p2_stocks
+                    loser_stocks = match_result.p1_stocks
+            logger.info(f"Match complete! {'Won' if we_won else 'Lost'}")
         except NetplayDisconnectedError:
             duration = time.time() - start_time
             outcome = "DISCONNECT"
@@ -799,7 +854,14 @@ def cmd_matchmake(args):
             logger.warning(f"Failed to report result: {e}")
 
         # --- Step 5: Sign match result (if wallet configured) ---
-        _sign_and_submit(match_id, outcome, server, _post)
+        _sign_and_submit(
+            match_id,
+            outcome,
+            opponent_wallet,
+            winner_stocks,
+            loser_stocks,
+            _post,
+        )
 
         return 0
 
