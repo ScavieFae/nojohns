@@ -116,3 +116,102 @@ When your contracts are on testnet:
 - `docs/FIGHTERS.md` — fighter interface spec (for context, not your workstream)
 - `contracts/CLAUDE.md` — your Solidity working reference
 - `web/CLAUDE.md` — your website working reference
+
+---
+
+## Implementation Status (updated day 3)
+
+### Contracts — DONE, ready for testnet deploy
+
+Both contracts are written, tested (30/30 passing), and have a deploy script.
+
+**Files:**
+- `contracts/src/MatchProof.sol` — match result recording with EIP-712 dual-sig verification
+- `contracts/src/Wager.sol` — escrow + settlement, reads from MatchProof
+- `contracts/test/MatchProof.t.sol` — 9 tests
+- `contracts/test/Wager.t.sol` — 21 tests
+- `contracts/script/Deploy.s.sol` — deploys both contracts
+
+**No deviations from the spec.** The `MatchResult` struct is implemented exactly as defined above.
+
+### EIP-712 Signing Details (Scav needs this for Python)
+
+**Domain:**
+```
+name: "NoJohns"
+version: "1"
+chainId: <chain-id>  (10143 for testnet, 143 for mainnet)
+verifyingContract: <MatchProof deployed address>
+```
+
+**Type string:**
+```
+MatchResult(bytes32 matchId,address winner,address loser,string gameId,uint8 winnerScore,uint8 loserScore,bytes32 replayHash,uint256 timestamp)
+```
+
+**Important:** The `gameId` field is a `string`, which means it gets hashed as `keccak256(bytes(gameId))` in the struct hash per EIP-712 rules. All other fields are encoded directly.
+
+**Python signing pseudocode (eth_account / web3.py):**
+```python
+from eth_account import Account
+from eth_account.messages import encode_typed_data
+
+typed_data = {
+    "types": {
+        "EIP712Domain": [
+            {"name": "name", "type": "string"},
+            {"name": "version", "type": "string"},
+            {"name": "chainId", "type": "uint256"},
+            {"name": "verifyingContract", "type": "address"},
+        ],
+        "MatchResult": [
+            {"name": "matchId", "type": "bytes32"},
+            {"name": "winner", "type": "address"},
+            {"name": "loser", "type": "address"},
+            {"name": "gameId", "type": "string"},
+            {"name": "winnerScore", "type": "uint8"},
+            {"name": "loserScore", "type": "uint8"},
+            {"name": "replayHash", "type": "bytes32"},
+            {"name": "timestamp", "type": "uint256"},
+        ],
+    },
+    "primaryType": "MatchResult",
+    "domain": {
+        "name": "NoJohns",
+        "version": "1",
+        "chainId": 10143,  # testnet
+        "verifyingContract": "<MatchProof address>",
+    },
+    "message": {
+        "matchId": match_id_bytes32,
+        "winner": winner_address,
+        "loser": loser_address,
+        "gameId": "melee",
+        "winnerScore": 3,
+        "loserScore": 1,
+        "replayHash": replay_hash_bytes32,
+        "timestamp": unix_timestamp,
+    },
+}
+
+signed = Account.sign_typed_data(private_key, full_message=typed_data)
+signature = signed.signature  # bytes, ready for recordMatch()
+```
+
+**Verification helper:** The contract exposes `getDigest(MatchResult)` as a public view. Scav can call this on-chain to verify the Python-produced digest matches before submitting. Useful for debugging signature mismatches.
+
+**Contract interaction (post-match flow):**
+1. Both agents sign the same `MatchResult` using EIP-712
+2. Either agent (or anyone) calls `matchProof.recordMatch(result, sigA, sigB)`
+3. If there's a wager, call `wager.settleWager(wagerId, matchId)` — permissionless, anyone can trigger
+
+### Deploy
+
+Waiting on a funded wallet. To deploy to testnet:
+```bash
+export PRIVATE_KEY=<deployer-private-key>
+export MONAD_TESTNET_RPC_URL=https://testnet-rpc.monad.xyz
+cd contracts && forge script script/Deploy.s.sol --rpc-url $MONAD_TESTNET_RPC_URL --broadcast
+```
+
+After deploy, addresses go in `contracts/deployments.json` and Scav can wire up Python.

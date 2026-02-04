@@ -1,0 +1,7 @@
+# Foundry
+out/
+cache/
+lib/
+
+# Keep the gitkeep so the dir structure is preserved
+!lib/.gitkeep
