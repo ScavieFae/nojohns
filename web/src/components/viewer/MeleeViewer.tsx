@@ -34,8 +34,8 @@ interface MeleeViewerProps {
   height?: number;
 }
 
-// Player colors (port 1-4)
-const PLAYER_COLORS = ["#e53935", "#1e88e5", "#fdd835", "#43a047"];
+// Player colors (port 1-4) - brand colors
+const PLAYER_COLORS = ["#22c55e", "#a855f7", "#3b82f6", "#f59e0b"]; // green, purple, blue, amber
 
 function PlayerRenderer({
   player,
@@ -149,13 +149,14 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
   return (
     <div className="bg-surface-800 rounded-lg overflow-hidden" style={{ width, height }}>
       <svg
-        viewBox="-140 -40 280 180"
+        viewBox="-140 -120 280 200"
         width={width}
         height={height}
         className="bg-surface-900"
         preserveAspectRatio="xMidYMid meet"
       >
         {/* Coordinate system: Y-axis inverted (positive = up) */}
+        {/* ViewBox: x=-140..140, y=-120..80; after Y-flip shows game y=-80..120 */}
         <g transform="scale(1 -1)">
           {/* Stage platform (simplified - Yoshi's Story main platform) */}
           <rect
@@ -182,13 +183,13 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
         {/* HUD overlay (not inverted) */}
         <g>
           {/* Frame counter */}
-          <text x={-135} y={-30} fill="#888" fontSize={6} fontFamily="monospace">
+          <text x={-135} y={-110} fill="#888" fontSize={6} fontFamily="monospace">
             Frame {frame.frame}
           </text>
 
           {/* Player stocks/percent */}
           {frame.players.map((player, i) => (
-            <g key={i} transform={`translate(${-130 + i * 100}, 135)`}>
+            <g key={i} transform={`translate(${-130 + i * 100}, 72)`}>
               <text fill={PLAYER_COLORS[i]} fontSize={7} fontFamily="monospace" fontWeight="bold">
                 P{i + 1}
               </text>

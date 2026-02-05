@@ -9,7 +9,7 @@ import type {
   PlayerFrameData,
 } from "../lib/liveMatchProtocol";
 import type { MatchFrame, PlayerFrame } from "../components/viewer/MeleeViewer";
-import { externalIdByInternalId } from "../lib/meleeIds";
+// Character IDs from arena are already internal IDs (libmelee format)
 import { ARENA_URL } from "../config";
 
 export interface LiveMatchState {
@@ -53,17 +53,11 @@ export function useLiveMatch(
     (data: PlayerFrameData, matchInfo: MatchStartMessage): PlayerFrame => {
       // Find player info from match start
       const playerInfo = matchInfo.players.find((p) => p.port === data.port);
-      const externalCharId = playerInfo?.characterId ?? 0;
-
-      // Map external char ID to internal for animation lookup
-      // (viewer uses internal IDs for animation cache keying)
-      const internalCharId =
-        Object.entries(externalIdByInternalId).find(
-          ([, ext]) => ext === externalCharId
-        )?.[0] ?? "1";
+      // characterId from arena is libmelee's internal ID (same as animation files use)
+      const internalCharId = playerInfo?.characterId ?? 0;
 
       return {
-        internalCharId: parseInt(internalCharId, 10),
+        internalCharId,
         x: data.x,
         y: data.y,
         actionStateId: data.actionStateId,
