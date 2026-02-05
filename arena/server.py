@@ -365,16 +365,17 @@ class ConnectionManager:
 
     async def broadcast(self, match_id: str, message: dict):
         """Broadcast message to all viewers of a match."""
-        if match_id not in self.viewers:
-            return
-
-        # Store match_start for late joiners
+        # Store match_start for late joiners (BEFORE checking viewers)
         if message.get("type") == "match_start":
             self.match_info[match_id] = message
+            logger.info(f"Stored match_info for {match_id}")
 
         # Clean up match_info on match_end
         if message.get("type") == "match_end":
             self.match_info.pop(match_id, None)
+
+        if match_id not in self.viewers:
+            return
 
         dead = []
         for ws in self.viewers[match_id]:
