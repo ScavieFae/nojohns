@@ -78,6 +78,7 @@ class NetplayConfig:
 
     # Display
     fullscreen: bool = False
+    headless: bool = False  # Run without graphics (gfx_backend=Null, disable_audio=True)
 
     # Port — needed for local two-Dolphin testing where both
     # instances run on the same machine and need different ports
@@ -355,6 +356,9 @@ class NetplayRunner:
             save_replays=self.config.slippi_replay_dir is not None,
             online_delay=self.config.online_delay,
             slippi_port=self.config.slippi_port,
+            # Headless mode: no graphics, no audio
+            gfx_backend="Null" if self.config.headless else "",
+            disable_audio=self.config.headless,
         )
 
     def _setup_controller(self) -> None:

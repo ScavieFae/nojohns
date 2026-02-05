@@ -1188,6 +1188,7 @@ def cmd_matchmake(args):
             input_throttle=args.throttle,
             dolphin_home_path=args.dolphin_home,
             slippi_replay_dir=args.replay_dir,
+            headless=args.headless,
             # Live streaming for spectators
             arena_url=server,
             match_id=match_id,
@@ -1907,6 +1908,7 @@ def main():
     mm_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 3)")
     mm_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
     mm_parser.add_argument("--replay-dir", default=None, help="Directory to save Slippi replays")
+    mm_parser.add_argument("--headless", action="store_true", help="Run without display (faster, for servers)")
     mm_parser.set_defaults(func=cmd_matchmake)
 
     # arena command
