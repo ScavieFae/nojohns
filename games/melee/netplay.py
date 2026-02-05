@@ -196,23 +196,24 @@ def extract_player_frame(player: "melee.PlayerState", port: int) -> dict:
     """Extract frame data from a libmelee PlayerState.
 
     Returns a dict matching the arena's PlayerFrameData schema.
+    All values cast to Python native types (not numpy) for JSON serialization.
     """
     # Shield states: 178=ShieldStart, 179=Shield, 180=ShieldRelease, 182=ShieldStun
     shield_states = {178, 179, 180, 182}
-    action_value = player.action.value if player.action else 0
+    action_value = int(player.action.value) if player.action else 0
 
     return {
-        "port": port,
-        "x": player.position.x if player.position else 0,
-        "y": player.position.y if player.position else 0,
+        "port": int(port),
+        "x": float(player.position.x) if player.position else 0.0,
+        "y": float(player.position.y) if player.position else 0.0,
         "action_state_id": action_value,
-        "action_frame": player.action_frame,
+        "action_frame": float(player.action_frame) if player.action_frame else 0.0,
         "facing_direction": 1 if player.facing else -1,
-        "percent": player.percent,
-        "stocks": player.stock,
-        "shield_health": player.shield_strength if action_value in shield_states else None,
-        "is_invincible": player.invulnerable,
-        "is_in_hitstun": player.hitstun_frames_left > 0,
+        "percent": float(player.percent) if player.percent else 0.0,
+        "stocks": int(player.stock) if player.stock else 0,
+        "shield_health": float(player.shield_strength) if action_value in shield_states else None,
+        "is_invincible": bool(player.invulnerable),
+        "is_in_hitstun": bool(player.hitstun_frames_left > 0),
     }
 
 
@@ -534,17 +535,18 @@ class NetplayRunner:
                         # Stream match start (for live spectating)
                         if self._streamer and game_number == 1:
                             # Build player info from game state
+                            # Cast to int to avoid numpy types (not JSON serializable)
                             players = []
                             for port, player in state.players.items():
                                 if player:
                                     players.append({
-                                        "port": port,
-                                        "character_id": player.character.value if player.character else 0,
-                                        "connect_code": getattr(player, "connectCode", ""),
+                                        "port": int(port),
+                                        "character_id": int(player.character.value) if player.character else 0,
+                                        "connect_code": getattr(player, "connectCode", "") or "",
                                         "display_name": getattr(player, "nametag", None),
                                     })
                             self._streamer.send_match_start(
-                                stage_id=state.stage.value if state.stage else 0,
+                                stage_id=int(state.stage.value) if state.stage else 0,
                                 players=players,
                             )
 
