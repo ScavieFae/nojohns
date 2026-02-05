@@ -52,6 +52,7 @@ class NetplayConfig:
     dolphin_path: str
     iso_path: str
     opponent_code: str  # Slippi connect code, e.g. "ABCD#123"
+    connect_code: str | None = None  # Our own connect code (for port detection)
 
     # Match params (each side brings their own character)
     character: Character = Character.FOX
@@ -104,6 +105,7 @@ class NetplayRunner:
         self._controller: melee.Controller | None = None
         self._menu_navigator = SlippiMenuNavigator()
         self._menu_helper = melee.MenuHelper()
+        self._our_port = 1  # Updated by port detection when game starts
 
     def run_netplay(
         self,
@@ -161,6 +163,7 @@ class NetplayRunner:
                     on_game_end(game_result)
 
             result.winner_port = 1 if result.p1_games_won > result.p2_games_won else 2
+            result.our_port = self._our_port
             logger.info(f"Netplay complete! Winner: P{result.winner_port} ({result.score})")
 
         except NetplayDisconnectedError:
@@ -214,6 +217,34 @@ class NetplayRunner:
         if not self._controller.connect():
             raise RuntimeError("Failed to connect controller on port 1")
 
+    def _detect_port(self, state: melee.GameState) -> int:
+        """Detect our actual game port via connect code.
+
+        Slippi Online assigns a random port (P1-P4). We identify ourselves
+        by matching our connect code against player.connectCode, which is
+        populated from the GAME_START event (SLP version >= 3.9.0).
+
+        Returns the detected port, or 1 as fallback.
+        """
+        if self.config.connect_code:
+            for port, player in state.players.items():
+                code = getattr(player, "connectCode", None)
+                if code and code == self.config.connect_code:
+                    logger.info(f"Port detected via connect code: P{port} = {code}")
+                    return port
+            # Fallback: try case-insensitive match
+            for port, player in state.players.items():
+                code = getattr(player, "connectCode", None)
+                if code and code.upper() == self.config.connect_code.upper():
+                    logger.info(f"Port detected via connect code (case-insensitive): P{port} = {code}")
+                    return port
+            logger.warning(
+                f"Could not detect port for {self.config.connect_code} — "
+                f"available: {[(p, getattr(pl, 'connectCode', '?')) for p, pl in state.players.items()]}. "
+                f"Falling back to port 1."
+            )
+        return 1
+
     def _run_game(
         self,
         fighter: Fighter,
@@ -222,7 +253,7 @@ class NetplayRunner:
     ) -> GameResult:
         """Run a single game with one local fighter."""
 
-        # Set up fighter — local player is always port 1
+        # Initial fighter setup — port will be corrected after game starts
         match_config = MatchConfig(
             character=self.config.character,
             port=1,
@@ -238,6 +269,8 @@ class NetplayRunner:
         last_percent = {1: 0.0, 2: 0.0}
         start_frame = None
         game_started = False
+        our_port = 1
+        opp_port = 2
         consecutive_nones = 0
         game_result = None  # Store result when game ends, return after postgame
 
@@ -314,11 +347,29 @@ class NetplayRunner:
                     if not game_started:
                         game_started = True
                         start_frame = state.frame
-                        logger.info("Game started")
+
+                        # Detect our actual port via connect code
+                        our_port = self._detect_port(state)
+                        opp_port = 2 if our_port == 1 else 1
+                        self._our_port = our_port
+
+                        # Re-setup fighter with correct port
+                        if our_port != 1:
+                            match_config = MatchConfig(
+                                character=self.config.character,
+                                port=our_port,
+                                opponent_port=opp_port,
+                                stage=self.config.stage,
+                                stocks=self.config.stocks,
+                                time_minutes=self.config.time_minutes,
+                            )
+                            fighter.setup(match_config, fighter_config)
+
+                        logger.info(f"Game started (we are P{our_port})")
 
                         # Notify fighter that the game has started
                         if hasattr(fighter, 'on_game_start'):
-                            fighter.on_game_start(1, state)
+                            fighter.on_game_start(our_port, state)
 
                     # Track damage dealt
                     for port in [1, 2]:
@@ -335,8 +386,8 @@ class NetplayRunner:
                     if frames_since_input >= self.config.input_throttle:
                         frames_since_input = 0
                         # Get fresh input from AI
-                        p1 = state.players.get(1)
-                        if p1 and p1.stock > 0:
+                        us = state.players.get(our_port)
+                        if us and us.stock > 0:
                             try:
                                 last_action = fighter.act(state)
                             except Exception as e:
@@ -449,15 +500,25 @@ class NetplayRunner:
     def _to_fighter_result(self, game: GameResult) -> FighterMatchResult:
         """Convert GameResult to fighter's MatchResult format.
 
-        Local player is always port 1.
+        Uses detected port (self._our_port) to pick the correct side.
         """
-        won = game.winner_port == 1
+        won = game.winner_port == self._our_port
+        if self._our_port == 1:
+            our_stocks = game.p1_stocks
+            opp_stocks = game.p2_stocks
+            our_damage = game.p1_damage_dealt
+            opp_damage = game.p2_damage_dealt
+        else:
+            our_stocks = game.p2_stocks
+            opp_stocks = game.p1_stocks
+            our_damage = game.p2_damage_dealt
+            opp_damage = game.p1_damage_dealt
         return FighterMatchResult(
             won=won,
-            stocks_remaining=game.p1_stocks,
-            opponent_stocks=game.p2_stocks,
-            damage_dealt=game.p1_damage_dealt,
-            damage_taken=game.p2_damage_dealt,
+            stocks_remaining=our_stocks,
+            opponent_stocks=opp_stocks,
+            damage_dealt=our_damage,
+            damage_taken=opp_damage,
             duration_frames=game.duration_frames,
             replay_path=game.replay_path,
         )

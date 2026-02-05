@@ -893,6 +893,7 @@ def cmd_matchmake(args):
             dolphin_path=args.dolphin,
             iso_path=args.iso,
             opponent_code=opponent_code,
+            connect_code=args.code,  # Our own code, for port detection
             character=_resolve_character(args.char, Character),
             stage=Stage[args.stage.upper()],
             stocks=args.stocks,
@@ -912,13 +913,17 @@ def cmd_matchmake(args):
         try:
             match_result = runner.run_netplay(fighter, games=1)
             duration = time.time() - start_time
-            # We are always port 1 in netplay.
-            # MatchResult is series-level (no p1_stocks); get stocks from the last game.
+            # Slippi assigns random ports — use our_port to read correct side
+            port = getattr(match_result, "our_port", 1)
             if match_result.games:
                 last_game = match_result.games[-1]
-                our_stocks = int(last_game.p1_stocks)
-                their_stocks = int(last_game.p2_stocks)
-            we_won = hasattr(match_result, "winner_port") and match_result.winner_port == 1
+                if port == 1:
+                    our_stocks = int(last_game.p1_stocks)
+                    their_stocks = int(last_game.p2_stocks)
+                else:
+                    our_stocks = int(last_game.p2_stocks)
+                    their_stocks = int(last_game.p1_stocks)
+            we_won = hasattr(match_result, "winner_port") and match_result.winner_port == port
         except NetplayDisconnectedError:
             duration = time.time() - start_time
             outcome = "DISCONNECT"
@@ -1013,10 +1018,18 @@ def cmd_netplay(args):
     if fighter is None:
         return 1
 
+    # Load our own connect code for port detection
+    nj_cfg = load_config()
+    our_code = None
+    game_cfg = nj_cfg.games.get("melee")
+    if game_cfg and game_cfg.connect_code:
+        our_code = game_cfg.connect_code
+
     config = NetplayConfig(
         dolphin_path=args.dolphin,
         iso_path=args.iso,
         opponent_code=args.code,
+        connect_code=our_code,
         character=_resolve_character(args.char, Character),
         stage=Stage[args.stage.upper()],
         stocks=args.stocks,

@@ -79,14 +79,18 @@ class GameResult:
 @dataclass
 class MatchResult:
     """Result of an entire match (multiple games)."""
-    
+
     winner_port: int  # 1 or 2 (whoever won more games)
-    
+
     games: list[GameResult] = field(default_factory=list)
-    
+
     p1_games_won: int = 0
     p2_games_won: int = 0
-    
+
+    # Which game port the local player ended up on (detected via connect code).
+    # Defaults to 1 for local matches; set by NetplayRunner for online play.
+    our_port: int = 1
+
     @property
     def score(self) -> str:
         return f"{self.p1_games_won}-{self.p2_games_won}"
