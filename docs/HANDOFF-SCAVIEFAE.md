@@ -514,3 +514,85 @@ git diff 3506dc6^..e8e9b5b -- web/
 **Hero Section** (`web/src/components/landing/Hero.tsx`)
 - CRT scanline aesthetic
 - Live arena status from `/health` (queue size, active matches)
+
+---
+
+## Scav's M4 Implementation Status (updated day 5, evening)
+
+### Completed
+
+**1. `nojohns setup identity`** ✅
+- Registers agent on ERC-8004 IdentityRegistry
+- Builds registration JSON with name, description, games.melee.slippi_code
+- Encodes as data URI (fully onchain, no IPFS dependency)
+- Saves agentId to config
+- Tested: ScavBot registered as agent #9 on testnet
+
+**2. Arena-based Elo posting** ✅
+- Arena server posts Elo updates to ReputationRegistry (not players)
+- Triggered when both signatures received
+- Posts for winner (+Elo) and loser (-Elo) separately
+- Uses standard K=32 formula
+
+**Security model for arena wallet:**
+- Key loaded from `ARENA_PRIVATE_KEY` env var (not in config file)
+- Arena can only post reputation signals — cannot forge match results (those need player sigs)
+- Cannot access player funds
+- Keep minimal MON in arena wallet (just enough for gas)
+
+**3. agent_id tracking** ✅
+- CLI passes `agent_id` in queue join request
+- Matches track `p1_agent_id`, `p2_agent_id`
+- Arena maps winner/loser wallets to agent_ids for Elo posting
+
+### New files
+
+- `nojohns/reputation.py` — Elo calculation and ReputationRegistry interaction
+  - `get_current_elo(agent_id, rpc, registry)` → EloState
+  - `post_elo_update(agent_id, elo, peak, record, account, ...)` → tx_hash
+  - `calculate_new_elo(our_elo, opponent_elo, won)` → new_elo
+
+### Environment variables for arena
+
+```bash
+# Required for Elo posting (optional — arena works without these)
+export ARENA_PRIVATE_KEY="0x..."  # funded arena wallet
+export MONAD_RPC_URL="https://testnet-rpc.monad.xyz"
+export MONAD_CHAIN_ID="10143"
+export REPUTATION_REGISTRY="0x8004B663056A597Dffe9eCcC1965A193B7388713"
+```
+
+### What this means for website
+
+Once we run matches with the new arena config, Elo signals will appear in ReputationRegistry. Website can then:
+
+1. **Read from ReputationRegistry** instead of computing locally
+   - Filter by tag1="elo", tag2="melee"
+   - Take the latest value per agent
+   - Authoritative source: arena-attested ratings
+
+2. **Show agent identity from IdentityRegistry**
+   - `tokenURI(agentId)` → registration JSON
+   - Display agent name, description (instead of truncated wallet address)
+
+3. **Data source transition:**
+   - Current: compute Elo from MatchProof events (local)
+   - Future: read Elo from ReputationRegistry (onchain, arena-attested)
+
+### Not yet done
+
+- **Pre-match scouting UI** — query opponent Elo before accepting match
+- **Full e2e test with arena Elo posting** — need to fund arena wallet and test
+
+### ERC-8004 quirks discovered
+
+- `giveFeedback()` cannot be called by the agent owner (self-feedback not allowed)
+- This is why arena posts, not players
+- Makes sense: you shouldn't rate yourself
+
+### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `5eb2800` | Add nojohns setup identity command |
+| `923157a` | Add ERC-8004 ReputationRegistry integration for Elo tracking |

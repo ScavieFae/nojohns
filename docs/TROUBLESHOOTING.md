@@ -547,6 +547,50 @@ When sending ANY libmelee data over JSON:
 
 ---
 
+---
+
+## Secret Scanning Hooks
+
+The project has two layers of protection against accidentally publishing secrets:
+
+### 1. Git Pre-Commit Hook (`scripts/pre-commit`)
+
+Blocks commits containing:
+- Dangerous filenames (`.env`, `credentials.json`, `*.pem`, etc.)
+- Ethereum private keys (`0x` + 64 hex chars)
+- `private_key` / `secret_key` assignments
+
+**Install:**
+```bash
+git config core.hooksPath scripts
+```
+
+**Bypass (when intentional):**
+```bash
+git commit --no-verify
+```
+
+### 2. Claude Code GitHub Hook (`.claude/hooks/scan-gh-secrets.sh`)
+
+Blocks `gh issue create`, `gh pr comment`, etc. containing secrets before they're posted publicly.
+
+**Patterns checked:**
+- Ethereum private keys (`0x` + 64 hex chars)
+- `private_key` / `secret_key` assignments
+- AWS access keys (`AKIA...`)
+- GitHub personal access tokens (`ghp_...`)
+- Stripe live keys (`sk_live_...`)
+
+**Allowlisted (test fixtures):**
+- `0x4c0883a69102937d6231471b5dbb6204fe512961708279f3a3e6d8b4f8e2c7e1` (eth-account docs example)
+
+**If blocked:**
+The hook returns a JSON decision that Claude Code interprets as a block. Review the command and remove sensitive data.
+
+**Maintained by:** ScavBug (bugs/docs agent)
+
+---
+
 ## Issue #9: CSS Stuck - No Character Selected
 
 **Date:** 2026-02-05
