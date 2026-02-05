@@ -315,4 +315,105 @@ GET  /matches/{id}/wager           — get wager status
 - All 122 unit tests passing
 - E2E tested: matchmake → play → sign → MatchProof onchain
 - Wager CLI tested: propose/cancel round trip on testnet
-- Full wager e2e (with ScavieFae accepting) not yet tested
+- Full wager e2e tested and working (propose → accept → play → auto-settle)
+
+---
+
+## M4: ERC-8004 Integration (updated day 5)
+
+We're integrating with the deployed ERC-8004 registries on Monad mainnet for agent identity and reputation.
+
+### What Scav is building (Python side)
+
+1. **`nojohns setup identity`** — register agent on IdentityRegistry
+   - Mints agent NFT with registration JSON (name, description, games.melee.slippi_code)
+   - Stores agentId in config
+
+2. **Post-match Elo update** — after match recorded, call `giveFeedback()` on ReputationRegistry
+   - Signal schema (see below)
+
+3. **Pre-match scouting** — query opponent's Elo before accepting match
+
+### What you're building (website side)
+
+1. **Agent identity display**
+   - Read agent metadata from IdentityRegistry: `tokenURI(agentId)` → registration JSON
+   - Display agent name, description, image on leaderboard and match history
+   - Consider `/agent/{agentId}` profile pages showing full history
+
+2. **Elo from ReputationRegistry**
+   - Read latest `elo` signal for each agent (see schema below)
+   - Use for leaderboard ranking
+   - Display: Elo, peak Elo, record (W-L)
+
+3. **Match history stays as-is**
+   - Keep reading from MatchProof events for the match list
+   - The Elo signal has the win/loss count; full match details come from MatchProof
+
+### Elo Signal Schema
+
+Posted to ReputationRegistry after each match:
+
+```json
+{
+  "signal_type": "elo",
+  "game": "melee",
+  "elo": 1524,
+  "peak_elo": 1580,
+  "record": "10-5"
+}
+```
+
+This is the **current state**, not a delta. Query once to get current rating — no need to replay history.
+
+### Reading from IdentityRegistry
+
+```javascript
+// Get agent registration JSON
+const uri = await identityRegistry.tokenURI(agentId);
+// uri is either:
+// - "https://..." — fetch the URL
+// - "data:application/json;base64,..." — decode base64
+
+// Example registration JSON:
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "ScavBot",
+  "description": "Melee competitor running Phillip",
+  "image": "https://nojohns.gg/agents/scavbot.png",
+  "services": [
+    { "name": "nojohns-arena", "endpoint": "https://arena.nojohns.gg", "version": "v1" }
+  ],
+  "games": {
+    "melee": { "slippi_code": "SCAV#382" }
+  }
+}
+```
+
+### Reading from ReputationRegistry
+
+```javascript
+// Get all feedback for an agent
+const feedback = await reputationRegistry.readAllFeedback(agentId);
+// Filter for signal_type: "elo", game: "melee"
+// Take the most recent one for current Elo
+```
+
+### Contract Addresses (same as before)
+
+**Mainnet (chain 143):**
+- IdentityRegistry: `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
+- ReputationRegistry: `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63`
+
+**Testnet (chain 10143):**
+- IdentityRegistry: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
+- ReputationRegistry: `0x8004B663056A597Dffe9eCcC1965A193B7388713`
+
+### Data Source Summary
+
+| Data | Source | Notes |
+|------|--------|-------|
+| Agent name/image/metadata | IdentityRegistry | `tokenURI(agentId)` |
+| Current Elo + record | ReputationRegistry | Latest `elo` signal |
+| Match list | MatchProof | `MatchRecorded` events |
+| Match details | MatchProof + Arena API | Scores, characters, etc. |

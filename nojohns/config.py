@@ -68,6 +68,10 @@ class ChainConfig:
     rpc_url: str = "https://testnet-rpc.monad.xyz"
     match_proof: str | None = None  # MatchProof contract address
     wager: str | None = None  # Wager contract address
+    # ERC-8004 registries (deployed singletons)
+    identity_registry: str | None = None  # IdentityRegistry address
+    reputation_registry: str | None = None  # ReputationRegistry address
+    agent_id: int | None = None  # Our registered agent NFT token ID
 
 
 @dataclass
@@ -166,6 +170,9 @@ def load_config(path: Path | None = None) -> NojohnsConfig:
             rpc_url=chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz"),
             match_proof=chain_data.get("match_proof"),
             wager=chain_data.get("wager"),
+            identity_registry=chain_data.get("identity_registry"),
+            reputation_registry=chain_data.get("reputation_registry"),
+            agent_id=chain_data.get("agent_id"),
         )
 
     return NojohnsConfig(
