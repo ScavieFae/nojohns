@@ -715,6 +715,18 @@ def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
         print("  Onchain: waiting for opponent (will submit next time)")
         return
 
+    # Check again right before submitting (race condition: opponent may have submitted)
+    try:
+        if is_recorded(
+            match_result["matchId"],
+            rpc_url=nj_cfg.chain.rpc_url,
+            contract_address=nj_cfg.chain.match_proof,
+        ):
+            print("  Onchain: recorded (opponent submitted first)")
+            return
+    except Exception:
+        pass
+
     # Submit to contract
     try:
         print("  Submitting to MatchProof contract...", end="", flush=True)
@@ -729,6 +741,17 @@ def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
         print(f" confirmed!")
         print(f"  tx: 0x{tx_hash}")
     except Exception as e:
+        # Check if opponent beat us to it
+        try:
+            if is_recorded(
+                match_result["matchId"],
+                rpc_url=nj_cfg.chain.rpc_url,
+                contract_address=nj_cfg.chain.match_proof,
+            ):
+                print(f" already recorded (opponent submitted first)")
+                return
+        except Exception:
+            pass
         logger.warning(f"Failed to record match onchain: {e}")
         print(f" failed: {e}")
 
