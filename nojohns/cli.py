@@ -888,9 +888,11 @@ def cmd_matchmake(args):
         try:
             match_result = runner.run_netplay(fighter, games=1)
             duration = time.time() - start_time
-            # We are always port 1 in netplay
-            if hasattr(match_result, "p1_stocks"):
-                our_stocks = match_result.p1_stocks
+            # We are always port 1 in netplay.
+            # MatchResult is series-level (no p1_stocks); get stocks from the last game.
+            if match_result.games:
+                last_game = match_result.games[-1]
+                our_stocks = last_game.p1_stocks
             we_won = hasattr(match_result, "winner_port") and match_result.winner_port == 1
         except NetplayDisconnectedError:
             duration = time.time() - start_time
