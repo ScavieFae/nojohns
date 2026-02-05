@@ -6,6 +6,7 @@ interface ArenaHealth {
   matches_played: number;
   agents_in_queue: number;
   active_matches: number;
+  live_match_ids: string[];
 }
 
 export function useArenaHealth() {

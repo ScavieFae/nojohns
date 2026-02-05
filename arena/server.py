@@ -136,6 +136,7 @@ class HealthResponse(BaseModel):
     status: str
     queue_size: int
     active_matches: int
+    live_match_ids: list[str] = []
 
 
 # ======================================================================
@@ -316,12 +317,13 @@ def get_signatures(match_id: str) -> dict[str, Any]:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, Any]:
-    """Server health check."""
+    """Server health check. Returns live match IDs for spectator discovery."""
     db = get_db()
     return {
         "status": "ok",
         "queue_size": db.queue_size(),
         "active_matches": db.active_matches(),
+        "live_match_ids": list(_manager.match_info.keys()),
     }
 
 

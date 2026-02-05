@@ -242,11 +242,23 @@ export function LivePage() {
                 <span className="text-gray-400">No live matches right now</span>
               )}
             </div>
-            {activeMatches > 0 && (
-              <p className="mt-2 text-gray-500 text-sm">
-                Live spectating coming soon. Match IDs will appear here when the
-                WebSocket endpoint is ready.
-              </p>
+            {health?.live_match_ids && health.live_match_ids.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-gray-400 text-sm">Click to spectate:</p>
+                {health.live_match_ids.map((id) => (
+                  <Link
+                    key={id}
+                    to={`/live/${id}`}
+                    className="block p-3 bg-surface-700 rounded hover:bg-surface-600 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                      <span className="font-mono text-sm">{id}</span>
+                      <span className="text-gray-500 text-xs ml-auto">LIVE</span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
             )}
           </div>
 
@@ -254,17 +266,8 @@ export function LivePage() {
           <div className="mb-4">
             <h2 className="text-xl font-semibold mb-2">Replay Viewer</h2>
             <p className="text-gray-500 text-sm mb-4">
-              Load a .slp replay file to test the viewer. Live match streaming
-              requires the arena WebSocket endpoint (see{" "}
-              <a
-                href="https://github.com/your-repo/issues/11"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent-blue hover:underline"
-              >
-                issue #11
-              </a>
-              ).
+              Load a .slp replay file to test the viewer, or click a live match
+              above to spectate in real-time.
             </p>
           </div>
           <ReplayViewer />
