@@ -108,6 +108,11 @@ class MatchResponse(BaseModel):
     result_timestamp: int | None = None  # unix epoch, deterministic
     created_at: str | None = None
     completed_at: str | None = None
+    # Wager coordination fields
+    wager_status: str | None = None  # 'proposed', 'accepted', 'declined', 'settled'
+    wager_amount: int | None = None  # in wei
+    wager_id: int | None = None  # onchain wager ID
+    wager_proposer: str | None = None  # 'p1' or 'p2'
 
 
 class SignatureRequest(BaseModel):
@@ -311,4 +316,114 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "queue_size": db.queue_size(),
         "active_matches": db.active_matches(),
+    }
+
+
+# ======================================================================
+# Wager Coordination Endpoints
+# ======================================================================
+
+
+class WagerProposalRequest(BaseModel):
+    queue_id: str
+    amount_wei: int
+    wager_id: int  # onchain wager ID from proposeWager()
+
+
+class WagerAcceptRequest(BaseModel):
+    queue_id: str
+
+
+class WagerStatusResponse(BaseModel):
+    match_id: str
+    wager_status: str | None  # None, 'proposed', 'accepted', 'declined', 'settled'
+    wager_amount: int | None
+    wager_id: int | None
+    wager_proposer: str | None  # 'p1' or 'p2'
+
+
+@app.post("/matches/{match_id}/wager/propose", response_model=WagerStatusResponse)
+def propose_match_wager(match_id: str, req: WagerProposalRequest) -> dict[str, Any]:
+    """Propose a wager for a match (after matchmaking, before game starts)."""
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    success = db.propose_wager(match_id, req.queue_id, req.amount_wei, req.wager_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot propose wager")
+
+    match = db.get_match(match_id)
+    return {
+        "match_id": match_id,
+        "wager_status": match.get("wager_status"),
+        "wager_amount": match.get("wager_amount"),
+        "wager_id": match.get("wager_id"),
+        "wager_proposer": match.get("wager_proposer"),
+    }
+
+
+@app.post("/matches/{match_id}/wager/accept", response_model=WagerStatusResponse)
+def accept_match_wager(match_id: str, req: WagerAcceptRequest) -> dict[str, Any]:
+    """Accept a wager proposal."""
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    success = db.accept_wager(match_id, req.queue_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot accept wager")
+
+    match = db.get_match(match_id)
+    return {
+        "match_id": match_id,
+        "wager_status": match.get("wager_status"),
+        "wager_amount": match.get("wager_amount"),
+        "wager_id": match.get("wager_id"),
+        "wager_proposer": match.get("wager_proposer"),
+    }
+
+
+@app.post("/matches/{match_id}/wager/decline", response_model=WagerStatusResponse)
+def decline_match_wager(match_id: str, req: WagerAcceptRequest) -> dict[str, Any]:
+    """Decline a wager proposal (game proceeds without wager)."""
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    success = db.decline_wager(match_id, req.queue_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Cannot decline wager")
+
+    match = db.get_match(match_id)
+    return {
+        "match_id": match_id,
+        "wager_status": match.get("wager_status"),
+        "wager_amount": match.get("wager_amount"),
+        "wager_id": match.get("wager_id"),
+        "wager_proposer": match.get("wager_proposer"),
+    }
+
+
+@app.get("/matches/{match_id}/wager", response_model=WagerStatusResponse)
+def get_match_wager(match_id: str) -> dict[str, Any]:
+    """Get wager status for a match."""
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    return {
+        "match_id": match_id,
+        "wager_status": match.get("wager_status"),
+        "wager_amount": match.get("wager_amount"),
+        "wager_id": match.get("wager_id"),
+        "wager_proposer": match.get("wager_proposer"),
     }

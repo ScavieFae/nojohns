@@ -82,6 +82,19 @@ class ArenaDB:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+        # Wager coordination columns
+        wager_cols = [
+            ("wager_amount", "INTEGER"),  # in wei
+            ("wager_id", "INTEGER"),  # onchain wager ID
+            ("wager_proposer", "TEXT"),  # 'p1' or 'p2'
+            ("wager_status", "TEXT"),  # 'proposed', 'accepted', 'declined', 'settled'
+        ]
+        for col, typ in wager_cols:
+            try:
+                self._conn.execute(f"ALTER TABLE matches ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:
+                pass
+
     # ------------------------------------------------------------------
     # Queue
     # ------------------------------------------------------------------
@@ -331,6 +344,100 @@ class ArenaDB:
                 (match_id,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Wager Coordination
+    # ------------------------------------------------------------------
+
+    def propose_wager(
+        self, match_id: str, queue_id: str, amount_wei: int, wager_id: int
+    ) -> bool:
+        """Record a wager proposal for a match. Returns True if successful."""
+        with self._lock:
+            match = self.get_match(match_id)
+            if match is None:
+                return False
+
+            # Determine which player is proposing
+            if queue_id == match["p1_queue_id"]:
+                proposer = "p1"
+            elif queue_id == match["p2_queue_id"]:
+                proposer = "p2"
+            else:
+                return False
+
+            # Only allow proposal if no wager exists yet
+            if match.get("wager_status") is not None:
+                return False
+
+            self._conn.execute(
+                "UPDATE matches SET wager_amount = ?, wager_id = ?, "
+                "wager_proposer = ?, wager_status = 'proposed' WHERE id = ?",
+                (amount_wei, wager_id, proposer, match_id),
+            )
+            self._conn.commit()
+            return True
+
+    def accept_wager(self, match_id: str, queue_id: str) -> bool:
+        """Accept a wager proposal. Returns True if successful."""
+        with self._lock:
+            match = self.get_match(match_id)
+            if match is None:
+                return False
+
+            # Only the non-proposer can accept
+            if queue_id == match["p1_queue_id"]:
+                we_are = "p1"
+            elif queue_id == match["p2_queue_id"]:
+                we_are = "p2"
+            else:
+                return False
+
+            if match.get("wager_status") != "proposed":
+                return False
+            if match.get("wager_proposer") == we_are:
+                return False  # Can't accept your own proposal
+
+            self._conn.execute(
+                "UPDATE matches SET wager_status = 'accepted' WHERE id = ?",
+                (match_id,),
+            )
+            self._conn.commit()
+            return True
+
+    def decline_wager(self, match_id: str, queue_id: str) -> bool:
+        """Decline a wager proposal. Returns True if successful."""
+        with self._lock:
+            match = self.get_match(match_id)
+            if match is None:
+                return False
+
+            if match.get("wager_status") != "proposed":
+                return False
+
+            self._conn.execute(
+                "UPDATE matches SET wager_status = 'declined' WHERE id = ?",
+                (match_id,),
+            )
+            self._conn.commit()
+            return True
+
+    def settle_match_wager(self, match_id: str) -> bool:
+        """Mark a match's wager as settled. Returns True if successful."""
+        with self._lock:
+            match = self.get_match(match_id)
+            if match is None:
+                return False
+
+            if match.get("wager_status") != "accepted":
+                return False
+
+            self._conn.execute(
+                "UPDATE matches SET wager_status = 'settled' WHERE id = ?",
+                (match_id,),
+            )
+            self._conn.commit()
+            return True
 
     # ------------------------------------------------------------------
     # Stats

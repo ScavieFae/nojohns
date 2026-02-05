@@ -779,6 +779,228 @@ def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
         print(f" failed: {e}")
 
 
+def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, config):
+    """Auto-settle a wager after match completion."""
+    from nojohns.wallet import load_wallet, settle_wager
+
+    account = load_wallet(config)
+    if account is None:
+        return
+
+    if config.chain is None or config.chain.wager is None:
+        return
+
+    # Convert match_id (UUID string) to bytes32
+    # Strip hyphens and pad/truncate to 32 bytes
+    match_id_clean = match_id.replace("-", "")
+    match_id_bytes = bytes.fromhex(match_id_clean.ljust(64, '0')[:64])
+
+    pot_mon = (wager_amount or 0) * 2 / 10**18
+    print(f"  Settling wager {wager_id} ({pot_mon} MON pot)...", end="", flush=True)
+
+    try:
+        tx_hash = settle_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            wager_id=wager_id,
+            match_id=match_id_bytes,
+        )
+        print(f" settled! TX: {tx_hash[:16]}...")
+    except Exception as e:
+        # Settlement might fail if opponent already settled, or match not recorded yet
+        if "already" in str(e).lower():
+            print(" already settled.")
+        else:
+            print(f" failed: {e}")
+            print(f"  Settle manually: nojohns wager settle {wager_id} {match_id_clean}")
+
+
+def _negotiate_wager(
+    match_id: str,
+    queue_id: str,
+    opponent_wallet: str | None,
+    config,
+    server: str,
+    _get,
+    _post,
+) -> tuple[int | None, int | None]:
+    """
+    Handle wager negotiation after match is made, before game starts.
+
+    Returns (wager_id, wager_amount_wei) or (None, None) if no wager.
+    """
+    import time
+    import urllib.error
+
+    from nojohns.wallet import load_wallet, propose_wager, accept_wager
+
+    # Check if opponent has a wallet (required for wagers)
+    if not opponent_wallet:
+        return None, None
+
+    account = load_wallet(config)
+    if account is None:
+        return None, None
+
+    # Check current wager status
+    try:
+        wager_info = _get(f"/matches/{match_id}/wager")
+    except urllib.error.URLError:
+        return None, None
+
+    # If opponent already proposed, we respond
+    if wager_info.get("wager_status") == "proposed":
+        return _respond_to_wager(
+            match_id, queue_id, wager_info, account, config, _get, _post
+        )
+
+    # Otherwise, prompt user if they want to propose
+    print()
+    try:
+        amount_str = input("Add a wager? [MON amount, or Enter to skip]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        amount_str = ""
+
+    if not amount_str:
+        return None, None
+
+    try:
+        amount_mon = float(amount_str)
+        amount_wei = int(amount_mon * 10**18)
+    except ValueError:
+        print("Invalid amount, skipping wager.")
+        return None, None
+
+    if amount_wei <= 0:
+        return None, None
+
+    # Propose onchain
+    print(f"Proposing {amount_mon} MON wager...")
+    try:
+        tx_hash, wager_id = propose_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            opponent=opponent_wallet,
+            game_id="melee",
+            amount_wei=amount_wei,
+        )
+    except Exception as e:
+        print(f"Failed to propose wager: {e}")
+        return None, None
+
+    print(f"Wager proposed (ID: {wager_id})")
+
+    # Tell arena about the proposal
+    try:
+        _post(f"/matches/{match_id}/wager/propose", {
+            "queue_id": queue_id,
+            "amount_wei": amount_wei,
+            "wager_id": wager_id,
+        })
+    except urllib.error.URLError as e:
+        print(f"Warning: couldn't register wager with arena: {e}")
+
+    # Wait for opponent to accept (15s timeout)
+    print("Waiting for opponent to accept (15s)...", end="", flush=True)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        time.sleep(1)
+        print(".", end="", flush=True)
+        try:
+            wager_info = _get(f"/matches/{match_id}/wager")
+            status = wager_info.get("wager_status")
+            if status == "accepted":
+                print(" accepted!")
+                print(f"Wager locked! Pot: {amount_mon * 2} MON")
+                return wager_id, amount_wei
+            elif status == "declined":
+                print(" declined.")
+                # Cancel the onchain wager to get refund
+                try:
+                    from nojohns.wallet import cancel_wager
+                    cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
+                    print("Wager cancelled, MON refunded.")
+                except Exception:
+                    print(f"Warning: cancel wager {wager_id} manually to get refund.")
+                return None, None
+        except urllib.error.URLError:
+            continue
+
+    print(" timeout.")
+    # Cancel the onchain wager
+    try:
+        from nojohns.wallet import cancel_wager
+        cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
+        print("Wager cancelled, MON refunded.")
+    except Exception:
+        print(f"Warning: cancel wager {wager_id} manually to get refund.")
+    return None, None
+
+
+def _respond_to_wager(
+    match_id: str,
+    queue_id: str,
+    wager_info: dict,
+    account,
+    config,
+    _get,
+    _post,
+) -> tuple[int | None, int | None]:
+    """Respond to an opponent's wager proposal."""
+    import urllib.error
+
+    from nojohns.wallet import accept_wager
+
+    amount_wei = wager_info.get("wager_amount", 0)
+    wager_id = wager_info.get("wager_id")
+    amount_mon = amount_wei / 10**18
+
+    print()
+    print(f"Opponent proposed {amount_mon} MON wager.")
+    try:
+        response = input("Accept? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        response = "n"
+
+    if response != "y":
+        # Decline
+        try:
+            _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
+        except urllib.error.URLError:
+            pass
+        print("Wager declined, playing without stakes.")
+        return None, None
+
+    # Accept onchain
+    print(f"Accepting wager...")
+    try:
+        tx_hash = accept_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            wager_id=wager_id,
+            amount_wei=amount_wei,
+        )
+    except Exception as e:
+        print(f"Failed to accept wager: {e}")
+        try:
+            _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
+        except urllib.error.URLError:
+            pass
+        return None, None
+
+    # Tell arena we accepted
+    try:
+        _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
+    except urllib.error.URLError as e:
+        print(f"Warning: couldn't confirm acceptance with arena: {e}")
+
+    print(f"Wager accepted! Pot: {amount_mon * 2} MON")
+    return wager_id, amount_wei
+
+
 def cmd_matchmake(args):
     """Join the arena queue, wait for a match, play, and report results."""
     import json
@@ -886,6 +1108,22 @@ def cmd_matchmake(args):
                 _delete(f"/queue/{queue_id}")
                 return 1
 
+        # --- Step 2.5: Wager negotiation (optional, 15s window) ---
+        wager_id = None
+        wager_amount = None
+        opponent_wallet = result.get("opponent_wallet")
+
+        if nj_cfg.wallet and nj_cfg.wallet.private_key and nj_cfg.chain and nj_cfg.chain.wager:
+            wager_id, wager_amount = _negotiate_wager(
+                match_id=match_id,
+                queue_id=queue_id,
+                opponent_wallet=opponent_wallet,
+                config=nj_cfg,
+                server=server,
+                _get=_get,
+                _post=_post,
+            )
+
         # --- Step 3: Run netplay ---
         logger.info("Launching netplay...")
 
@@ -948,6 +1186,10 @@ def cmd_matchmake(args):
         # --- Step 5: Sign canonical match result from arena ---
         _sign_and_submit(match_id, outcome, _get, _post)
 
+        # --- Step 6: Auto-settle wager if we had one ---
+        if wager_id is not None and outcome == "COMPLETED":
+            _auto_settle_wager(match_id, wager_id, wager_amount, nj_cfg)
+
         # --- Match summary ---
         print()
         print("=" * 44)
@@ -963,6 +1205,9 @@ def cmd_matchmake(args):
         print(f"  Duration: {duration:.0f}s  |  Match: {match_id[:8]}...")
         if nj_cfg.wallet and nj_cfg.wallet.address:
             print(f"  Signed: yes  |  Wallet: {nj_cfg.wallet.address[:10]}...")
+        if wager_id is not None:
+            pot_mon = (wager_amount or 0) * 2 / 10**18
+            print(f"  Wager: {pot_mon} MON pot  |  ID: {wager_id}")
         print("=" * 44)
         print()
 
