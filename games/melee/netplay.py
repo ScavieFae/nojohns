@@ -175,6 +175,8 @@ class MatchStreamer:
 
     def _stream_loop(self):
         """Background thread that sends queued frames."""
+        logger.info(f"Stream loop started for {self.match_id}")
+        frames_sent = 0
         while not self._stop.is_set():
             frame_data = None
             with self._lock:
@@ -184,12 +186,16 @@ class MatchStreamer:
             if frame_data and self._client:
                 url = f"{self.arena_url}/matches/{self.match_id}/stream/frame"
                 try:
-                    self._client.post(url, json=frame_data)
-                except Exception:
-                    pass  # Don't spam logs for frame drops
+                    resp = self._client.post(url, json=frame_data)
+                    frames_sent += 1
+                    if frames_sent <= 3 or frames_sent % 100 == 0:
+                        logger.info(f"Stream frame {frame_data.get('frame')} sent ({resp.status_code})")
+                except Exception as e:
+                    logger.warning(f"Stream frame failed: {e}")
 
             # ~60fps max, but typically throttled by stream_throttle
             time.sleep(0.016)
+        logger.info(f"Stream loop ended for {self.match_id} ({frames_sent} frames sent)")
 
 
 def extract_player_frame(player: "melee.PlayerState", port: int) -> dict:
