@@ -17,6 +17,7 @@ Live streaming:
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -26,6 +27,138 @@ from pydantic import BaseModel
 from .db import ArenaDB
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Arena Wallet (for posting Elo updates to ReputationRegistry)
+# =============================================================================
+# SECURITY: Arena wallet key is loaded from env var, NOT config file.
+# This wallet is used only for posting Elo updates — it cannot access
+# player funds or forge match results (those need player signatures).
+# Keep minimal MON in this wallet, just enough for gas.
+
+_arena_account = None  # Loaded lazily
+
+
+def _get_arena_account():
+    """Load arena wallet from ARENA_PRIVATE_KEY env var. Returns None if not set."""
+    global _arena_account
+    if _arena_account is not None:
+        return _arena_account
+
+    key = os.environ.get("ARENA_PRIVATE_KEY")
+    if not key:
+        return None
+
+    try:
+        from eth_account import Account
+        _arena_account = Account.from_key(key)
+        logger.info(f"Arena wallet loaded: {_arena_account.address}")
+        return _arena_account
+    except ImportError:
+        logger.debug("eth-account not installed — Elo posting disabled")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to load arena wallet: {e}")
+        return None
+
+
+def _post_elo_updates(match: dict):
+    """Post Elo updates for both players after match completion.
+
+    Called when both signatures are received. Posts to ReputationRegistry
+    on behalf of both players (arena is the reputation authority).
+
+    Silently skips if:
+    - Arena wallet not configured
+    - Either player doesn't have an agent_id
+    - ReputationRegistry not reachable
+    """
+    account = _get_arena_account()
+    if account is None:
+        logger.debug("Arena wallet not configured — skipping Elo posting")
+        return
+
+    # Get chain config from env
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz")
+    chain_id = int(os.environ.get("MONAD_CHAIN_ID", "10143"))
+    reputation_registry = os.environ.get(
+        "REPUTATION_REGISTRY",
+        "0x8004B663056A597Dffe9eCcC1965A193B7388713"  # testnet default
+    )
+
+    winner_agent_id = None
+    loser_agent_id = None
+    winner_wallet = match.get("winner_wallet")
+    loser_wallet = match.get("loser_wallet")
+
+    # Determine agent_ids from match (p1/p2 mapping)
+    if winner_wallet and winner_wallet.lower() == (match.get("p1_wallet") or "").lower():
+        winner_agent_id = match.get("p1_agent_id")
+        loser_agent_id = match.get("p2_agent_id")
+    elif winner_wallet and winner_wallet.lower() == (match.get("p2_wallet") or "").lower():
+        winner_agent_id = match.get("p2_agent_id")
+        loser_agent_id = match.get("p1_agent_id")
+
+    if winner_agent_id is None and loser_agent_id is None:
+        logger.debug("Neither player has agent_id — skipping Elo posting")
+        return
+
+    try:
+        from nojohns.reputation import (
+            get_current_elo,
+            calculate_new_elo,
+            post_elo_update,
+            STARTING_ELO,
+        )
+    except ImportError:
+        logger.debug("reputation module not available")
+        return
+
+    # Post Elo for winner
+    if winner_agent_id is not None:
+        try:
+            current = get_current_elo(winner_agent_id, rpc_url, reputation_registry)
+            # Use loser's Elo if available, else default
+            loser_elo = STARTING_ELO
+            if loser_agent_id is not None:
+                loser_current = get_current_elo(loser_agent_id, rpc_url, reputation_registry)
+                loser_elo = loser_current.elo
+
+            new_elo = calculate_new_elo(current.elo, loser_elo, won=True)
+            peak_elo = max(current.peak_elo, new_elo)
+            record = f"{current.wins + 1}-{current.losses}"
+
+            tx = post_elo_update(
+                winner_agent_id, new_elo, peak_elo, record,
+                account, rpc_url, reputation_registry, chain_id
+            )
+            if tx:
+                logger.info(f"Posted Elo for winner agent {winner_agent_id}: {current.elo} → {new_elo}")
+        except Exception as e:
+            logger.warning(f"Failed to post winner Elo: {e}")
+
+    # Post Elo for loser
+    if loser_agent_id is not None:
+        try:
+            current = get_current_elo(loser_agent_id, rpc_url, reputation_registry)
+            # Use winner's Elo if available
+            winner_elo = STARTING_ELO
+            if winner_agent_id is not None:
+                winner_current = get_current_elo(winner_agent_id, rpc_url, reputation_registry)
+                winner_elo = winner_current.elo
+
+            new_elo = calculate_new_elo(current.elo, winner_elo, won=False)
+            peak_elo = current.peak_elo  # Don't update peak on loss
+            record = f"{current.wins}-{current.losses + 1}"
+
+            tx = post_elo_update(
+                loser_agent_id, new_elo, peak_elo, record,
+                account, rpc_url, reputation_registry, chain_id
+            )
+            if tx:
+                logger.info(f"Posted Elo for loser agent {loser_agent_id}: {current.elo} → {new_elo}")
+        except Exception as e:
+            logger.warning(f"Failed to post loser Elo: {e}")
 
 # Global DB instance — set during lifespan
 _db: ArenaDB | None = None
@@ -68,6 +201,7 @@ class JoinRequest(BaseModel):
     connect_code: str
     fighter_name: str | None = None
     wallet_address: str | None = None
+    agent_id: int | None = None  # ERC-8004 agent ID for Elo tracking
 
 
 class JoinResponse(BaseModel):
@@ -82,6 +216,7 @@ class QueueStatusResponse(BaseModel):
     match_id: str | None = None
     opponent_code: str | None = None
     opponent_wallet: str | None = None
+    opponent_agent_id: int | None = None  # ERC-8004 agent ID
 
 
 class ResultRequest(BaseModel):
@@ -152,8 +287,8 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
     # Sweep stale entries on each queue operation
     db.expire_stale_entries()
 
-    queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address)
-    logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) -> {queue_id}")
+    queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address, req.agent_id)
+    logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) agent_id={req.agent_id} -> {queue_id}")
 
     # Try to match immediately
     opponent = db.find_waiting_opponent(queue_id)
@@ -171,6 +306,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
             "match_id": match_id,
             "opponent_code": opponent["connect_code"],
             "opponent_wallet": opponent.get("wallet_address"),
+            "opponent_agent_id": opponent.get("agent_id"),
         }
 
     # No match yet
@@ -289,6 +425,13 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
     logger.info(
         f"Signature for {match_id} from {req.address} ({count}/2 received)"
     )
+
+    # When both signatures received, post Elo updates (async, non-blocking)
+    if count >= 2:
+        try:
+            _post_elo_updates(match)
+        except Exception as e:
+            logger.warning(f"Elo posting failed (non-critical): {e}")
 
     return {
         "match_id": match_id,
