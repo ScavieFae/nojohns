@@ -42,11 +42,14 @@ logger = logging.getLogger(__name__)
 
 # Characters suitable for random selection (excluding clones, glitch chars, and
 # characters that break menu navigation — see CLAUDE.md gotchas 20)
+# Excluded: Sheik (Zelda down-B transform, can't select from CSS),
+# Zelda (shares CSS slot with Sheik, breaks netplay char select),
+# ICs/Popo (doesn't exist in libmelee as ICECLIMBERS — see gotcha 20)
 _RANDOM_POOL = [
     "FOX", "FALCO", "MARTH", "CPTFALCON", "PEACH", "JIGGLYPUFF",
     "SAMUS", "DK", "PIKACHU", "LUIGI", "LINK", "YLINK", "DOC",
     "MARIO", "GANONDORF", "MEWTWO", "ROY", "GAMEANDWATCH", "NESS",
-    "YOSHI", "BOWSER", "KIRBY", "ZELDA", "PICHU",
+    "YOSHI", "BOWSER", "KIRBY", "PICHU",
 ]
 
 
