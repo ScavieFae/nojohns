@@ -19,3 +19,65 @@
     @apply bg-surface-600 rounded-full;
   }
 }
+
+/* CRT scanline overlay */
+.crt-scanlines {
+  position: relative;
+}
+
+.crt-scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.04) 3px,
+    rgba(0, 0, 0, 0.04) 6px
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Phosphor glow on green text */
+.phosphor-glow {
+  text-shadow:
+    0 0 8px rgba(74, 222, 128, 0.2),
+    0 0 25px rgba(74, 222, 128, 0.07);
+}
+
+/* Subtle flicker animation */
+@keyframes crt-flicker {
+  0%, 100% { opacity: 1; }
+  42% { opacity: 0.99; }
+  58% { opacity: 0.995; }
+}
+
+.crt-flicker {
+  animation: crt-flicker 7s ease-in-out infinite;
+}
+
+/* Signal-change burst — brief hard flicker then settle */
+@keyframes crt-burst {
+  0% { opacity: 1; }
+  8% { opacity: 0.7; }
+  16% { opacity: 0.95; }
+  24% { opacity: 0.8; }
+  40% { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+.crt-burst {
+  animation: crt-burst 0.3s ease-out forwards;
+}
+
+/* Pulsing dot for live indicator */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.live-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
