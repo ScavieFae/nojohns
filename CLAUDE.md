@@ -272,6 +272,10 @@ See `docs/FIGHTERS.md` for full spec.
 - Netplay port detection via connect code (handles random port assignment + mirror matches)
 - Random character selection (pool of 23 viable characters)
 - Tiered operator UX (play → onchain → wager), one-time wallet nudge
+- `nojohns wager` CLI (propose, accept, settle, cancel, status, list)
+- Wager negotiation in matchmake flow (15s window after match, auto-settle)
+- Arena wager coordination endpoints (propose/accept/decline/status per match)
+- Windows and Linux setup guides for external testers
 
 ### Active: Phase 2 — Moltiverse Hackathon (Feb 2-15, 2026)
 
@@ -305,7 +309,7 @@ New agent operators should be playing matches within minutes. Onchain features a
 |------|------|-------|----------|
 | **1. Play** | Join arena, fight, see results | `setup melee`, `matchmake phillip` | Low — no wallet, no chain, just play |
 | **2. Onchain** | Signed match records, Elo, reputation | `setup wallet` (generate/import key, fund with MON) | Medium — needs a wallet and testnet MON |
-| **3. Wager** | Escrow MON on match outcomes | Same wallet, `nojohns wager` (TODO) | High — real money at stake |
+| **3. Wager** | Escrow MON on match outcomes | Same wallet, integrated into matchmake or `nojohns wager` | High — real money at stake |
 
 **Design principles:**
 - Tier 1 is the hook. It must feel complete, not like something's missing.
@@ -471,7 +475,16 @@ nojohns netplay phillip --code "ABCD#123"
 
 # Arena matchmaking (code/server/paths from config)
 nojohns arena --port 8000
-nojohns matchmake phillip
+nojohns matchmake phillip          # After match, prompts for optional wager
+
+# Wager commands (testnet only for now)
+nojohns wager propose 0.01         # Propose open wager (0.01 MON)
+nojohns wager propose 0.01 -o 0x.. # Propose wager to specific opponent
+nojohns wager accept 0             # Accept wager ID 0
+nojohns wager settle 0 <match_id>  # Settle using MatchProof record
+nojohns wager cancel 0             # Cancel and refund (before accept)
+nojohns wager status 0             # Check wager details
+nojohns wager list                 # List your wagers
 
 # Format / type check
 black nojohns/ games/

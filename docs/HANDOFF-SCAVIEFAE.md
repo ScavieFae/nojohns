@@ -268,3 +268,51 @@ After deploy, addresses go in `contracts/deployments.json` for the client to wir
 ```
 
 **Boundary:** The `recordMatch()` call is the interface between protocol and client. The protocol doesn't know what language the client is written in, how matches are played, or what game it is. The client doesn't need to understand contract internals — just the ABI and EIP-712 domain.
+
+---
+
+## Client Implementation Status (updated day 4)
+
+### Wager Integration — DONE
+
+Full Wager contract integration is complete on the client side:
+
+**CLI commands (`nojohns wager`):**
+- `propose <amount> [-o opponent]` — create onchain wager, escrow MON
+- `accept <wager_id>` — match escrow to accept
+- `settle <wager_id> <match_id>` — pay winner using MatchProof record
+- `cancel <wager_id>` — refund before acceptance
+- `status <wager_id>` — show wager details
+- `list` — list agent's wagers
+
+**Integrated matchmake flow:**
+After arena matches two players, there's a 15-second window to negotiate a wager:
+1. Either player can propose a wager amount
+2. Opponent sees proposal, accepts or declines
+3. If accepted: both sides have MON locked onchain
+4. Game proceeds (with or without wager)
+5. After game: auto-settle pays winner
+
+**Arena endpoints for wager coordination:**
+```
+POST /matches/{id}/wager/propose   — record wager proposal
+POST /matches/{id}/wager/accept    — record acceptance
+POST /matches/{id}/wager/decline   — record decline
+GET  /matches/{id}/wager           — get wager status
+```
+
+**Gas limits:** Tuned for Monad (500k for propose, 300k for accept/settle).
+
+### Other Client Updates
+
+- **Port detection:** Fixed random Slippi port assignment using `player.connectCode`
+- **Score accuracy:** Both sides report `opponent_stocks` for cross-validation
+- **Thread safety:** ArenaDB uses RLock for concurrent requests
+- **Setup guides:** Added `docs/SETUP-WINDOWS.md` and `docs/SETUP-LINUX.md`
+
+### Testing Status
+
+- All 122 unit tests passing
+- E2E tested: matchmake → play → sign → MatchProof onchain
+- Wager CLI tested: propose/cancel round trip on testnet
+- Full wager e2e (with ScavieFae accepting) not yet tested
