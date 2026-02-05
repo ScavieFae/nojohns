@@ -866,6 +866,22 @@ def _negotiate_wager(
         amount_str = ""
 
     if not amount_str:
+        # User skipped — but check if opponent proposed while we were deciding
+        print("Checking for opponent wager...", end="", flush=True)
+        import time
+        for _ in range(5):  # Poll for 5 seconds
+            time.sleep(1)
+            print(".", end="", flush=True)
+            try:
+                wager_info = _get(f"/matches/{match_id}/wager")
+                if wager_info.get("wager_status") == "proposed":
+                    print(" found!")
+                    return _respond_to_wager(
+                        match_id, queue_id, wager_info, account, config, _get, _post
+                    )
+            except urllib.error.URLError:
+                continue
+        print(" none.")
         return None, None
 
     try:
