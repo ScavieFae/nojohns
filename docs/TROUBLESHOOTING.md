@@ -471,3 +471,76 @@ subprocess.run([
 2. Timing/cleanup delays dont solve state issues
 3. Process isolation (subprocess) is the robust solution
 4. Manual testing worked because each run was fresh process
+
+---
+
+## Issue #8: NumPy Types Not JSON Serializable (Live Streaming)
+
+**Date:** 2026-02-05
+**Status:** ✅ RESOLVED
+
+**Symptom:**
+Live match streaming to arena fails silently. WebSocket viewers connect and receive pings but never get frame data. Debug logging reveals:
+
+```
+Stream frame failed: Object of type int32 is not JSON serializable
+```
+
+**Root Cause:**
+libmelee returns NumPy types (`np.int32`, `np.float32`, `np.uint8`, `np.bool_`) for player state values. Python's `json` module cannot serialize these — it only handles native Python types.
+
+**Affected Code:**
+- `extract_player_frame()` in `games/melee/netplay.py`
+- Any code that sends libmelee data over HTTP/JSON
+
+**The Fix:**
+Wrap all numeric values in native Python type constructors:
+
+```python
+# Before (broken):
+return {
+    "port": port,                           # might be np.int32
+    "x": player.position.x,                 # np.float32
+    "stocks": player.stock,                 # np.uint8
+    "action_state_id": player.action.value, # np.int32
+}
+
+# After (works):
+return {
+    "port": int(port),
+    "x": float(player.position.x) if player.position else 0.0,
+    "stocks": int(player.stock) if player.stock else 0,
+    "action_state_id": int(player.action.value) if player.action else 0,
+}
+```
+
+**Key NumPy Types from libmelee:**
+- `player.stock` → `np.uint8`
+- `player.percent` → `np.float32`
+- `player.position.x/y` → `np.float32`
+- `player.action.value` → `np.int32`
+- `player.action_frame` → `np.int32`
+- `player.facing` → `np.bool_`
+- `gamestate.frame` → `np.int32`
+
+**Detection:**
+Add explicit logging when JSON serialization fails:
+
+```python
+try:
+    resp = self._client.post(url, json=data)
+except Exception as e:
+    logger.warning(f"Stream frame failed: {e}")
+```
+
+Without logging, `httpx.post()` raises `TypeError` which gets swallowed silently.
+
+**Prevention:**
+When sending ANY libmelee data over JSON:
+1. Wrap integers in `int()`
+2. Wrap floats in `float()`
+3. Wrap booleans in `bool()`
+4. Handle `None` cases with defaults
+
+**Commits:**
+- `081d851` - Fix numpy type JSON serialization in frame streaming
