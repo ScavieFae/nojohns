@@ -165,3 +165,368 @@ def recover_signer(
     )
 
     return eth_account.Account.recover_message(signable, signature=signature)
+
+
+# ============================================================================
+# Wager Contract Interaction
+# ============================================================================
+
+# Minimal ABI for Wager contract — only the functions we call
+WAGER_ABI = [
+    {
+        "name": "proposeWager",
+        "type": "function",
+        "inputs": [
+            {"name": "opponent", "type": "address"},
+            {"name": "gameId", "type": "string"},
+        ],
+        "outputs": [{"name": "wagerId", "type": "uint256"}],
+        "stateMutability": "payable",
+    },
+    {
+        "name": "acceptWager",
+        "type": "function",
+        "inputs": [{"name": "wagerId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "payable",
+    },
+    {
+        "name": "settleWager",
+        "type": "function",
+        "inputs": [
+            {"name": "wagerId", "type": "uint256"},
+            {"name": "matchId", "type": "bytes32"},
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "name": "cancelWager",
+        "type": "function",
+        "inputs": [{"name": "wagerId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "name": "claimTimeout",
+        "type": "function",
+        "inputs": [{"name": "wagerId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "name": "getWager",
+        "type": "function",
+        "inputs": [{"name": "wagerId", "type": "uint256"}],
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {"name": "proposer", "type": "address"},
+                    {"name": "opponent", "type": "address"},
+                    {"name": "gameId", "type": "string"},
+                    {"name": "amount", "type": "uint256"},
+                    {"name": "status", "type": "uint8"},
+                    {"name": "acceptedAt", "type": "uint256"},
+                    {"name": "matchId", "type": "bytes32"},
+                ],
+            }
+        ],
+        "stateMutability": "view",
+    },
+    {
+        "name": "getWagersByAgent",
+        "type": "function",
+        "inputs": [{"name": "agent", "type": "address"}],
+        "outputs": [{"name": "", "type": "uint256[]"}],
+        "stateMutability": "view",
+    },
+]
+
+# Wager status enum (matches Solidity)
+WAGER_STATUS = {
+    0: "Open",
+    1: "Accepted",
+    2: "Settled",
+    3: "Cancelled",
+    4: "Voided",
+}
+
+
+def _require_web3():
+    """Import and return web3, raising a clear error if not installed."""
+    try:
+        from web3 import Web3
+        return Web3
+    except ImportError:
+        raise ImportError(
+            "web3 is required for wager operations. "
+            "Install it with: pip install nojohns[wallet]"
+        )
+
+
+def get_wager_contract(rpc_url: str, contract_address: str):
+    """Get a web3 contract instance for the Wager contract.
+
+    Args:
+        rpc_url: RPC endpoint URL.
+        contract_address: Deployed Wager contract address.
+
+    Returns:
+        web3.eth.Contract instance.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    return w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+
+def propose_wager(
+    account,
+    rpc_url: str,
+    contract_address: str,
+    opponent: str | None,
+    game_id: str,
+    amount_wei: int,
+) -> tuple[str, int]:
+    """Propose a wager by escrowing MON.
+
+    Args:
+        account: eth_account LocalAccount.
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        opponent: Opponent address, or None for open wager.
+        game_id: Game identifier (e.g. "melee").
+        amount_wei: Amount to escrow in wei.
+
+    Returns:
+        (tx_hash, wager_id) tuple.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    opponent_addr = opponent if opponent else "0x0000000000000000000000000000000000000000"
+
+    tx = contract.functions.proposeWager(opponent_addr, game_id).build_transaction({
+        "from": account.address,
+        "value": amount_wei,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 500000,  # Higher gas limit for Monad
+        "gasPrice": w3.eth.gas_price,
+    })
+
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    # Parse wagerId from logs (WagerProposed event)
+    # Event signature: WagerProposed(uint256 indexed wagerId, ...)
+    wager_id = None
+    for log in receipt.logs:
+        if len(log.topics) >= 2:
+            # First topic is event signature, second is indexed wagerId
+            wager_id = int(log.topics[1].hex(), 16)
+            break
+
+    return (tx_hash.hex(), wager_id)
+
+
+def accept_wager(
+    account,
+    rpc_url: str,
+    contract_address: str,
+    wager_id: int,
+    amount_wei: int,
+) -> str:
+    """Accept a wager by escrowing matching MON.
+
+    Args:
+        account: eth_account LocalAccount.
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        wager_id: The wager ID to accept.
+        amount_wei: Amount to escrow (must match wager amount).
+
+    Returns:
+        Transaction hash.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    tx = contract.functions.acceptWager(wager_id).build_transaction({
+        "from": account.address,
+        "value": amount_wei,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 300000,  # Higher gas limit for Monad
+        "gasPrice": w3.eth.gas_price,
+    })
+
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    return tx_hash.hex()
+
+
+def settle_wager(
+    account,
+    rpc_url: str,
+    contract_address: str,
+    wager_id: int,
+    match_id: bytes,
+) -> str:
+    """Settle a wager using a recorded match result.
+
+    Args:
+        account: eth_account LocalAccount (or any account — settlement is permissionless).
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        wager_id: The wager ID to settle.
+        match_id: The bytes32 match ID from MatchProof.
+
+    Returns:
+        Transaction hash.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    tx = contract.functions.settleWager(wager_id, match_id).build_transaction({
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 300000,  # Higher gas limit for Monad
+        "gasPrice": w3.eth.gas_price,
+    })
+
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    return tx_hash.hex()
+
+
+def cancel_wager(
+    account,
+    rpc_url: str,
+    contract_address: str,
+    wager_id: int,
+) -> str:
+    """Cancel an open wager and get refund.
+
+    Args:
+        account: eth_account LocalAccount (must be the proposer).
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        wager_id: The wager ID to cancel.
+
+    Returns:
+        Transaction hash.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    tx = contract.functions.cancelWager(wager_id).build_transaction({
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 200000,  # Higher gas limit for Monad
+        "gasPrice": w3.eth.gas_price,
+    })
+
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    return tx_hash.hex()
+
+
+def claim_timeout(
+    account,
+    rpc_url: str,
+    contract_address: str,
+    wager_id: int,
+) -> str:
+    """Claim timeout on an accepted wager with no match result.
+
+    Args:
+        account: eth_account LocalAccount (anyone can call).
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        wager_id: The wager ID to void.
+
+    Returns:
+        Transaction hash.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    tx = contract.functions.claimTimeout(wager_id).build_transaction({
+        "from": account.address,
+        "nonce": w3.eth.get_transaction_count(account.address),
+        "gas": 300000,  # Higher gas limit for Monad
+        "gasPrice": w3.eth.gas_price,
+    })
+
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    return tx_hash.hex()
+
+
+def get_wager_info(
+    rpc_url: str,
+    contract_address: str,
+    wager_id: int,
+) -> dict[str, Any]:
+    """Get wager details.
+
+    Args:
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        wager_id: The wager ID to query.
+
+    Returns:
+        Dict with wager fields: proposer, opponent, gameId, amount, status, acceptedAt, matchId.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    result = contract.functions.getWager(wager_id).call()
+
+    return {
+        "proposer": result[0],
+        "opponent": result[1],
+        "gameId": result[2],
+        "amount": result[3],
+        "status": WAGER_STATUS.get(result[4], f"Unknown({result[4]})"),
+        "status_code": result[4],
+        "acceptedAt": result[5],
+        "matchId": result[6].hex() if result[6] else None,
+    }
+
+
+def get_agent_wagers(
+    rpc_url: str,
+    contract_address: str,
+    agent_address: str,
+) -> list[int]:
+    """Get all wager IDs for an agent.
+
+    Args:
+        rpc_url: RPC endpoint URL.
+        contract_address: Wager contract address.
+        agent_address: The agent's wallet address.
+
+    Returns:
+        List of wager IDs.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(address=contract_address, abi=WAGER_ABI)
+
+    return contract.functions.getWagersByAgent(agent_address).call()

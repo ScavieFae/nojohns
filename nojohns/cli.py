@@ -1175,6 +1175,335 @@ def cmd_info(args):
 
 
 # ============================================================================
+# Wager Commands
+# ============================================================================
+
+def cmd_wager(args):
+    """Handle `nojohns wager <subcommand>`."""
+    return args.wager_func(args)
+
+
+def cmd_wager_propose(args):
+    """Propose a wager by escrowing MON."""
+    from nojohns.config import load_config
+    from nojohns.wallet import load_wallet, propose_wager
+
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None or config.chain.wager is None:
+        logger.error("No wager contract configured in [chain] section.")
+        return 1
+
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    # Parse amount (support decimal MON, e.g. "0.01")
+    try:
+        amount_mon = float(args.amount)
+        amount_wei = int(amount_mon * 10**18)
+    except ValueError:
+        logger.error(f"Invalid amount: {args.amount}")
+        return 1
+
+    opponent = args.opponent if args.opponent else None
+    game_id = args.game or "melee"
+
+    print(f"Proposing wager: {amount_mon} MON")
+    print(f"  Game: {game_id}")
+    print(f"  Opponent: {opponent or 'open (anyone can accept)'}")
+    print(f"  From: {account.address}")
+    print()
+
+    try:
+        tx_hash, wager_id = propose_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            opponent=opponent,
+            game_id=game_id,
+            amount_wei=amount_wei,
+        )
+        print(f"Wager proposed!")
+        print(f"  Wager ID: {wager_id}")
+        print(f"  TX: {tx_hash}")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to propose wager: {e}")
+        return 1
+
+
+def cmd_wager_accept(args):
+    """Accept a wager by escrowing matching MON."""
+    from nojohns.config import load_config
+    from nojohns.wallet import load_wallet, accept_wager, get_wager_info
+
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None or config.chain.wager is None:
+        logger.error("No wager contract configured in [chain] section.")
+        return 1
+
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    wager_id = int(args.wager_id)
+
+    # Get wager info to show amount
+    try:
+        info = get_wager_info(config.chain.rpc_url, config.chain.wager, wager_id)
+    except Exception as e:
+        logger.error(f"Failed to get wager info: {e}")
+        return 1
+
+    if info["status"] != "Open":
+        logger.error(f"Wager {wager_id} is not open (status: {info['status']})")
+        return 1
+
+    amount_mon = info["amount"] / 10**18
+
+    print(f"Accepting wager {wager_id}")
+    print(f"  Amount: {amount_mon} MON")
+    print(f"  Game: {info['gameId']}")
+    print(f"  Proposer: {info['proposer']}")
+    print(f"  From: {account.address}")
+    print()
+
+    try:
+        tx_hash = accept_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            wager_id=wager_id,
+            amount_wei=info["amount"],
+        )
+        print(f"Wager accepted!")
+        print(f"  TX: {tx_hash}")
+        print()
+        print("Now play a match and settle with:")
+        print(f"  nojohns wager settle {wager_id} <match_id>")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to accept wager: {e}")
+        return 1
+
+
+def cmd_wager_settle(args):
+    """Settle a wager using a recorded match result."""
+    from nojohns.config import load_config
+    from nojohns.wallet import load_wallet, settle_wager, get_wager_info
+
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None or config.chain.wager is None:
+        logger.error("No wager contract configured in [chain] section.")
+        return 1
+
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    wager_id = int(args.wager_id)
+    match_id_hex = args.match_id
+
+    # Convert match_id to bytes32
+    if match_id_hex.startswith("0x"):
+        match_id_hex = match_id_hex[2:]
+    match_id = bytes.fromhex(match_id_hex.ljust(64, '0'))
+
+    # Get wager info
+    try:
+        info = get_wager_info(config.chain.rpc_url, config.chain.wager, wager_id)
+    except Exception as e:
+        logger.error(f"Failed to get wager info: {e}")
+        return 1
+
+    if info["status"] != "Accepted":
+        logger.error(f"Wager {wager_id} cannot be settled (status: {info['status']})")
+        return 1
+
+    amount_mon = info["amount"] / 10**18
+
+    print(f"Settling wager {wager_id}")
+    print(f"  Total pot: {amount_mon * 2} MON")
+    print(f"  Match ID: {match_id_hex[:16]}...")
+    print()
+
+    try:
+        tx_hash = settle_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            wager_id=wager_id,
+            match_id=match_id,
+        )
+        print(f"Wager settled!")
+        print(f"  TX: {tx_hash}")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to settle wager: {e}")
+        return 1
+
+
+def cmd_wager_cancel(args):
+    """Cancel an open wager and get refund."""
+    from nojohns.config import load_config
+    from nojohns.wallet import load_wallet, cancel_wager, get_wager_info
+
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None or config.chain.wager is None:
+        logger.error("No wager contract configured in [chain] section.")
+        return 1
+
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    wager_id = int(args.wager_id)
+
+    # Get wager info
+    try:
+        info = get_wager_info(config.chain.rpc_url, config.chain.wager, wager_id)
+    except Exception as e:
+        logger.error(f"Failed to get wager info: {e}")
+        return 1
+
+    if info["status"] != "Open":
+        logger.error(f"Wager {wager_id} cannot be cancelled (status: {info['status']})")
+        return 1
+
+    if info["proposer"].lower() != account.address.lower():
+        logger.error(f"Only the proposer can cancel. You: {account.address}, Proposer: {info['proposer']}")
+        return 1
+
+    amount_mon = info["amount"] / 10**18
+
+    print(f"Cancelling wager {wager_id}")
+    print(f"  Refund: {amount_mon} MON")
+    print()
+
+    try:
+        tx_hash = cancel_wager(
+            account=account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.wager,
+            wager_id=wager_id,
+        )
+        print(f"Wager cancelled!")
+        print(f"  TX: {tx_hash}")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to cancel wager: {e}")
+        return 1
+
+
+def cmd_wager_status(args):
+    """Show status of a wager."""
+    from nojohns.config import load_config
+    from nojohns.wallet import get_wager_info
+
+    config = load_config()
+
+    if config.chain is None or config.chain.wager is None:
+        logger.error("No wager contract configured in [chain] section.")
+        return 1
+
+    wager_id = int(args.wager_id)
+
+    try:
+        info = get_wager_info(config.chain.rpc_url, config.chain.wager, wager_id)
+    except Exception as e:
+        logger.error(f"Failed to get wager info: {e}")
+        return 1
+
+    amount_mon = info["amount"] / 10**18
+
+    print(f"\nWager {wager_id}")
+    print(f"  Status: {info['status']}")
+    print(f"  Amount: {amount_mon} MON (pot: {amount_mon * 2} MON)")
+    print(f"  Game: {info['gameId']}")
+    print(f"  Proposer: {info['proposer']}")
+    if info["opponent"] != "0x0000000000000000000000000000000000000000":
+        print(f"  Opponent: {info['opponent']}")
+    else:
+        print(f"  Opponent: open (anyone can accept)")
+    if info["matchId"] and info["matchId"] != "0" * 64:
+        print(f"  Match ID: {info['matchId']}")
+    print()
+    return 0
+
+
+def cmd_wager_list(args):
+    """List wagers for the configured wallet."""
+    from nojohns.config import load_config
+    from nojohns.wallet import get_agent_wagers, get_wager_info
+
+    config = load_config()
+
+    if config.wallet is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None or config.chain.wager is None:
+        logger.error("No wager contract configured in [chain] section.")
+        return 1
+
+    address = args.address or config.wallet.address
+
+    try:
+        wager_ids = get_agent_wagers(config.chain.rpc_url, config.chain.wager, address)
+    except Exception as e:
+        logger.error(f"Failed to get wagers: {e}")
+        return 1
+
+    if not wager_ids:
+        print(f"No wagers found for {address}")
+        return 0
+
+    print(f"\nWagers for {address}:\n")
+    print(f"{'ID':>6}  {'Status':<10}  {'Amount':>10}  {'Game':<10}  {'Opponent'}")
+    print("-" * 70)
+
+    for wid in wager_ids:
+        try:
+            info = get_wager_info(config.chain.rpc_url, config.chain.wager, wid)
+            amount_mon = info["amount"] / 10**18
+            opp = info["opponent"]
+            if opp == "0x0000000000000000000000000000000000000000":
+                opp = "open"
+            else:
+                opp = opp[:10] + "..."
+            print(f"{wid:>6}  {info['status']:<10}  {amount_mon:>10.4f}  {info['gameId']:<10}  {opp}")
+        except Exception:
+            print(f"{wid:>6}  (error fetching)")
+
+    print()
+    return 0
+
+
+# ============================================================================
 # Fighter Loading
 # ============================================================================
 
@@ -1294,6 +1623,44 @@ def main():
     info_parser = subparsers.add_parser("info", help="Show info about a fighter")
     info_parser.add_argument("fighter", help="Fighter name")
     info_parser.set_defaults(func=cmd_info)
+
+    # wager command with subcommands
+    wager_parser = subparsers.add_parser("wager", help="Manage onchain wagers")
+    wager_parser.set_defaults(func=cmd_wager)
+    wager_subparsers = wager_parser.add_subparsers(dest="wager_command", required=True)
+
+    # wager propose
+    wager_propose = wager_subparsers.add_parser("propose", help="Propose a wager by escrowing MON")
+    wager_propose.add_argument("amount", help="Amount of MON to wager (e.g. 0.01)")
+    wager_propose.add_argument("--opponent", "-o", help="Opponent wallet address (omit for open wager)")
+    wager_propose.add_argument("--game", "-g", default="melee", help="Game ID (default: melee)")
+    wager_propose.set_defaults(wager_func=cmd_wager_propose)
+
+    # wager accept
+    wager_accept = wager_subparsers.add_parser("accept", help="Accept a wager")
+    wager_accept.add_argument("wager_id", help="Wager ID to accept")
+    wager_accept.set_defaults(wager_func=cmd_wager_accept)
+
+    # wager settle
+    wager_settle = wager_subparsers.add_parser("settle", help="Settle a wager with a match result")
+    wager_settle.add_argument("wager_id", help="Wager ID to settle")
+    wager_settle.add_argument("match_id", help="Match ID from MatchProof (hex)")
+    wager_settle.set_defaults(wager_func=cmd_wager_settle)
+
+    # wager cancel
+    wager_cancel = wager_subparsers.add_parser("cancel", help="Cancel an open wager")
+    wager_cancel.add_argument("wager_id", help="Wager ID to cancel")
+    wager_cancel.set_defaults(wager_func=cmd_wager_cancel)
+
+    # wager status
+    wager_status = wager_subparsers.add_parser("status", help="Show wager status")
+    wager_status.add_argument("wager_id", help="Wager ID to check")
+    wager_status.set_defaults(wager_func=cmd_wager_status)
+
+    # wager list
+    wager_list = wager_subparsers.add_parser("list", help="List wagers for an address")
+    wager_list.add_argument("--address", "-a", help="Wallet address (default: configured wallet)")
+    wager_list.set_defaults(wager_func=cmd_wager_list)
 
     args = parser.parse_args()
 
