@@ -43,3 +43,4 @@ contracts/broadcast/
 # Web frontend
 web/node_modules/
 web/dist/
+web/.vite/

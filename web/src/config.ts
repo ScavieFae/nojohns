@@ -9,6 +9,12 @@ export const CONTRACTS = {
   wager: "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d" as const,
 };
 
+// Block where contracts were deployed — start scanning from here
+export const DEPLOY_BLOCK = 10710000n;
+
+// Monad testnet caps getLogs at 100 blocks per request
+export const MAX_LOG_RANGE = 100n;
+
 export const ERC8004 = {
   identity: "0x8004A818BFB912233c491871b3d84c89A494BD9e" as const,
   reputation: "0x8004B663056A597Dffe9eCcC1965A193B7388713" as const,
