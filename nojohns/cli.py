@@ -659,6 +659,78 @@ def _sign_and_submit(match_id: str, outcome: str, _get, _post):
         logger.info("Signature submitted to arena.")
     except Exception as e:
         logger.warning(f"Failed to sign/submit match result: {e}")
+        return
+
+    # --- Onchain submission: poll for both signatures, then recordMatch() ---
+    _try_record_onchain(match_id, match_result, nj_cfg, account, _get)
+
+
+def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
+    """Poll arena for both signatures, then submit recordMatch() onchain.
+
+    Waits up to 30 seconds for the opponent's signature. If both arrive,
+    calls recordMatch() on the MatchProof contract. If not, logs and moves on.
+    """
+    import time
+
+    try:
+        from nojohns.contract import record_match, is_recorded
+    except ImportError:
+        logger.debug("web3 not installed — skipping onchain submission")
+        return
+
+    # Check if already recorded (e.g. opponent submitted first)
+    try:
+        if is_recorded(
+            match_result["matchId"],
+            rpc_url=nj_cfg.chain.rpc_url,
+            contract_address=nj_cfg.chain.match_proof,
+        ):
+            logger.info("Match already recorded onchain.")
+            print("  Onchain: already recorded")
+            return
+    except Exception as e:
+        logger.debug(f"Failed to check recorded status: {e}")
+
+    # Poll for both signatures (opponent may not have signed yet)
+    print("  Waiting for opponent signature...", end="", flush=True)
+    sig_a = None
+    sig_b = None
+    for _ in range(15):
+        try:
+            sigs_data = _get(f"/matches/{match_id}/signatures")
+            sigs = sigs_data.get("signatures", [])
+            if len(sigs) >= 2:
+                sig_a = bytes.fromhex(sigs[0]["signature"])
+                sig_b = bytes.fromhex(sigs[1]["signature"])
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+        print(".", end="", flush=True)
+    print()
+
+    if sig_a is None or sig_b is None:
+        logger.info("Opponent hasn't signed yet — skipping onchain submission")
+        print("  Onchain: waiting for opponent (will submit next time)")
+        return
+
+    # Submit to contract
+    try:
+        print("  Submitting to MatchProof contract...", end="", flush=True)
+        tx_hash = record_match(
+            match_result,
+            sig_a,
+            sig_b,
+            account,
+            rpc_url=nj_cfg.chain.rpc_url,
+            contract_address=nj_cfg.chain.match_proof,
+        )
+        print(f" confirmed!")
+        print(f"  tx: 0x{tx_hash}")
+    except Exception as e:
+        logger.warning(f"Failed to record match onchain: {e}")
+        print(f" failed: {e}")
 
 
 def cmd_matchmake(args):

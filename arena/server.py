@@ -42,6 +42,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="No Johns Arena", lifespan=lifespan)
 
+# Allow the website (and other frontends) to call arena endpoints
+from starlette.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ======================================================================
 # Request/Response Models
