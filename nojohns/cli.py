@@ -40,6 +40,26 @@ logger = logging.getLogger(__name__)
 # Arg Resolution
 # ============================================================================
 
+# Characters suitable for random selection (excluding clones, glitch chars, and
+# characters that break menu navigation — see CLAUDE.md gotchas 20)
+_RANDOM_POOL = [
+    "FOX", "FALCO", "MARTH", "CPTFALCON", "PEACH", "JIGGLYPUFF",
+    "SAMUS", "DK", "PIKACHU", "LUIGI", "LINK", "YLINK", "DOC",
+    "MARIO", "GANONDORF", "MEWTWO", "ROY", "GAMEANDWATCH", "NESS",
+    "YOSHI", "BOWSER", "KIRBY", "ZELDA", "PICHU",
+]
+
+
+def _resolve_character(char_name: str, Character):
+    """Resolve a character name, with support for 'RANDOM'."""
+    import random
+    if char_name.upper() == "RANDOM":
+        picked = random.choice(_RANDOM_POOL)
+        logger.info(f"Random character: {picked}")
+        return Character[picked]
+    return Character[char_name.upper()]
+
+
 def _resolve_args(args, game_cfg: GameConfig | None, nj_cfg: NojohnsConfig):
     """Merge CLI args with config. CLI wins. Mutates args in place."""
     # dolphin: CLI > config
@@ -542,8 +562,8 @@ def cmd_fight(args):
         stocks=args.stocks,
         time_minutes=args.time,
         stage=Stage[args.stage.upper()],
-        p1_character=Character[args.p1_char.upper()],
-        p2_character=Character[args.p2_char.upper()],
+        p1_character=_resolve_character(args.p1_char, Character),
+        p2_character=_resolve_character(args.p2_char, Character),
     )
 
     logger.info(f"No Johns - Fight!")
@@ -870,7 +890,7 @@ def cmd_matchmake(args):
             dolphin_path=args.dolphin,
             iso_path=args.iso,
             opponent_code=opponent_code,
-            character=Character[args.char.upper()],
+            character=_resolve_character(args.char, Character),
             stage=Stage[args.stage.upper()],
             stocks=args.stocks,
             time_minutes=args.time,
@@ -991,7 +1011,7 @@ def cmd_netplay(args):
         dolphin_path=args.dolphin,
         iso_path=args.iso,
         opponent_code=args.code,
-        character=Character[args.char.upper()],
+        character=_resolve_character(args.char, Character),
         stage=Stage[args.stage.upper()],
         stocks=args.stocks,
         time_minutes=args.time,
@@ -1060,8 +1080,8 @@ def cmd_netplay_test(args):
             home1=args.home1,
             home2=args.home2,
             games=args.games,
-            character1=Character[args.p1_char.upper()],
-            character2=Character[args.p2_char.upper()],
+            character1=_resolve_character(args.p1_char, Character),
+            character2=_resolve_character(args.p2_char, Character),
             stage=Stage[args.stage.upper()],
         )
 
@@ -1188,8 +1208,8 @@ def main():
     fight_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game (default: 4)")
     fight_parser.add_argument("--time", "-t", type=int, default=8, help="Time limit in minutes (default: 8)")
     fight_parser.add_argument("--stage", default="FINAL_DESTINATION", help="Stage (default: FINAL_DESTINATION)")
-    fight_parser.add_argument("--p1-char", default="FOX", help="P1 character (default: FOX)")
-    fight_parser.add_argument("--p2-char", default="FOX", help="P2 character (default: FOX)")
+    fight_parser.add_argument("--p1-char", default="RANDOM", help="P1 character (default: RANDOM)")
+    fight_parser.add_argument("--p2-char", default="RANDOM", help="P2 character (default: RANDOM)")
     fight_parser.add_argument("--headless", action="store_true", help="Run without display (faster)")
     fight_parser.set_defaults(func=cmd_fight)
 
@@ -1199,7 +1219,7 @@ def main():
     netplay_parser.add_argument("--code", "-c", required=True, help="Opponent's Slippi connect code (e.g. ABCD#123)")
     netplay_parser.add_argument("--dolphin", "-d", default=None, help="Path to Slippi Dolphin")
     netplay_parser.add_argument("--iso", "-i", default=None, help="Path to Melee ISO")
-    netplay_parser.add_argument("--char", default="FOX", help="Character (default: FOX)")
+    netplay_parser.add_argument("--char", default="RANDOM", help="Character (default: RANDOM)")
     netplay_parser.add_argument("--stage", default="FINAL_DESTINATION", help="Stage (default: FINAL_DESTINATION)")
     netplay_parser.add_argument("--games", "-g", type=int, default=1, help="Number of games (default: 1)")
     netplay_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game (default: 4)")
@@ -1221,8 +1241,8 @@ def main():
     nptest_parser.add_argument("--iso", "-i", default=None, help="Path to Melee ISO")
     nptest_parser.add_argument("--games", "-g", type=int, default=1, help="Number of games (default: 1)")
     nptest_parser.add_argument("--stage", default="FINAL_DESTINATION", help="Stage (default: FINAL_DESTINATION)")
-    nptest_parser.add_argument("--p1-char", default="FOX", help="Side 1 character (default: FOX)")
-    nptest_parser.add_argument("--p2-char", default="FOX", help="Side 2 character (default: FOX)")
+    nptest_parser.add_argument("--p1-char", default="RANDOM", help="Side 1 character (default: RANDOM)")
+    nptest_parser.add_argument("--p2-char", default="RANDOM", help="Side 2 character (default: RANDOM)")
     nptest_parser.set_defaults(func=cmd_netplay_test)
 
     # matchmake command
@@ -1232,7 +1252,7 @@ def main():
     mm_parser.add_argument("--server", default=None, help="Arena server URL (e.g. http://localhost:8000)")
     mm_parser.add_argument("--dolphin", "-d", default=None, help="Path to Slippi Dolphin")
     mm_parser.add_argument("--iso", "-i", default=None, help="Path to Melee ISO")
-    mm_parser.add_argument("--char", default="FOX", help="Character (default: FOX)")
+    mm_parser.add_argument("--char", default="RANDOM", help="Character (default: RANDOM)")
     mm_parser.add_argument("--stage", default="FINAL_DESTINATION", help="Stage (default: FINAL_DESTINATION)")
     mm_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game (default: 4)")
     mm_parser.add_argument("--time", "-t", type=int, default=8, help="Time limit in minutes (default: 8)")
