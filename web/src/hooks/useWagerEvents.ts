@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { publicClient } from "../viem";
 import { wagerAbi } from "../abi/wager";
 import { CONTRACTS, USE_MOCK_DATA } from "../config";
 import { MOCK_WAGERS } from "../lib/mockData";
+import { getBatchedLogs } from "../lib/getLogs";
 import type { WagerRecord } from "../types";
+
+const wagerProposedEvent = wagerAbi.find(
+  (e) => e.type === "event" && e.name === "WagerProposed",
+)!;
 
 export function useWagerEvents() {
   return useQuery({
@@ -11,11 +15,9 @@ export function useWagerEvents() {
     queryFn: async (): Promise<WagerRecord[]> => {
       if (USE_MOCK_DATA) return MOCK_WAGERS;
 
-      const logs = await publicClient.getLogs({
+      const logs = await getBatchedLogs({
         address: CONTRACTS.wager,
-        event: wagerAbi.find((e) => e.type === "event" && e.name === "WagerProposed")!,
-        fromBlock: 0n,
-        toBlock: "latest",
+        event: wagerProposedEvent,
       });
 
       return logs.map((log) => ({

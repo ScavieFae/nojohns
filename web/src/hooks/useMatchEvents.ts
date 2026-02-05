@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { publicClient } from "../viem";
 import { matchProofAbi } from "../abi/matchProof";
 import { CONTRACTS, USE_MOCK_DATA } from "../config";
 import { MOCK_MATCHES } from "../lib/mockData";
+import { getBatchedLogs } from "../lib/getLogs";
 import type { MatchRecord } from "../types";
+
+const matchRecordedEvent = matchProofAbi.find(
+  (e) => e.type === "event" && e.name === "MatchRecorded",
+)!;
 
 export function useMatchEvents() {
   return useQuery({
@@ -11,11 +15,9 @@ export function useMatchEvents() {
     queryFn: async (): Promise<MatchRecord[]> => {
       if (USE_MOCK_DATA) return MOCK_MATCHES;
 
-      const logs = await publicClient.getLogs({
+      const logs = await getBatchedLogs({
         address: CONTRACTS.matchProof,
-        event: matchProofAbi.find((e) => e.type === "event" && e.name === "MatchRecorded")!,
-        fromBlock: 0n,
-        toBlock: "latest",
+        event: matchRecordedEvent,
       });
 
       return logs.map((log) => ({
