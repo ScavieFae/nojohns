@@ -86,6 +86,9 @@ def _resolve_args(args, game_cfg: GameConfig | None, nj_cfg: NojohnsConfig):
     # throttle: CLI > config > hardcoded default
     if hasattr(args, "throttle") and args.throttle is None:
         args.throttle = game_cfg.input_throttle if game_cfg and game_cfg.input_throttle is not None else 3
+    # replay_dir: CLI > config (default None = no replay saving)
+    if hasattr(args, "replay_dir") and args.replay_dir is None and game_cfg and game_cfg.replay_dir:
+        args.replay_dir = game_cfg.replay_dir
 
 
 def _require_melee_args(args) -> bool:
@@ -1139,6 +1142,7 @@ def cmd_matchmake(args):
             online_delay=args.delay,
             input_throttle=args.throttle,
             dolphin_home_path=args.dolphin_home,
+            slippi_replay_dir=args.replay_dir,
         )
 
         runner = NetplayRunner(config)
@@ -1282,6 +1286,7 @@ def cmd_netplay(args):
         online_delay=args.delay,
         input_throttle=args.throttle,
         dolphin_home_path=args.dolphin_home,
+        slippi_replay_dir=args.replay_dir,
     )
 
     logger.info(f"No Johns - Netplay!")
@@ -1820,6 +1825,7 @@ def main():
     netplay_parser.add_argument("--delay", type=int, default=None, help="Online input delay in frames (default: 6)")
     netplay_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 3)")
     netplay_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
+    netplay_parser.add_argument("--replay-dir", default=None, help="Directory to save Slippi replays")
     netplay_parser.set_defaults(func=cmd_netplay)
 
     # netplay-test command
@@ -1852,6 +1858,7 @@ def main():
     mm_parser.add_argument("--delay", type=int, default=None, help="Online input delay in frames (default: 6)")
     mm_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 3)")
     mm_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
+    mm_parser.add_argument("--replay-dir", default=None, help="Directory to save Slippi replays")
     mm_parser.set_defaults(func=cmd_matchmake)
 
     # arena command

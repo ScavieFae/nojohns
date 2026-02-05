@@ -49,6 +49,7 @@ class GameConfig:
     dolphin_home: str | None = None
     online_delay: int | None = None
     input_throttle: int | None = None
+    replay_dir: str | None = None  # Where to save Slippi replays
 
 
 @dataclass
@@ -111,6 +112,7 @@ def _parse_game_config(data: dict) -> GameConfig:
         dolphin_home=_expand(data.get("dolphin_home")),
         online_delay=data.get("online_delay"),
         input_throttle=data.get("input_throttle"),
+        replay_dir=_expand(data.get("replay_dir")),
     )
 
 
