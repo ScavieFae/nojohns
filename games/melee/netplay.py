@@ -599,7 +599,7 @@ class NetplayRunner:
                             for port, player in state.players.items():
                                 if player:
                                     players.append(extract_player_frame(player, port))
-                            self._streamer.send_frame(state.frame, players)
+                            self._streamer.send_frame(int(state.frame), players)
 
                     # Check for game end - detect when stocks hit 0 or timeout
                     if game_result is None:  # Only check once
