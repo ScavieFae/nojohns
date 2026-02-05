@@ -134,6 +134,7 @@ class MatchStreamer:
 
     def send_match_start(self, stage_id: int, players: list[dict]):
         """Send match_start message."""
+        logger.info(f"Sending match_start: stage={stage_id}, players={len(players)}")
         self._post("stream/start", {
             "stage_id": stage_id,
             "players": players,
@@ -163,12 +164,14 @@ class MatchStreamer:
     def _post(self, endpoint: str, data: dict):
         """POST to arena endpoint (blocking, for important messages)."""
         if not self._client:
+            logger.warning(f"Stream POST skipped (no client): {endpoint}")
             return
         url = f"{self.arena_url}/matches/{self.match_id}/{endpoint}"
         try:
-            self._client.post(url, json=data)
+            resp = self._client.post(url, json=data)
+            logger.info(f"Stream POST {endpoint}: {resp.status_code}")
         except Exception as e:
-            logger.debug(f"Stream POST failed: {e}")
+            logger.error(f"Stream POST failed ({endpoint}): {e}")
 
     def _stream_loop(self):
         """Background thread that sends queued frames."""
