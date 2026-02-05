@@ -19,6 +19,7 @@ class ArenaDB:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
+        self._migrate()
 
     def _create_tables(self) -> None:
         self._conn.executescript(
@@ -47,6 +48,8 @@ class ArenaDB:
                 p2_result TEXT,
                 p1_stocks INTEGER,
                 p2_stocks INTEGER,
+                p1_opponent_stocks INTEGER,
+                p2_opponent_stocks INTEGER,
                 p1_duration REAL,
                 p2_duration REAL,
                 winner_wallet TEXT,
@@ -68,6 +71,14 @@ class ArenaDB:
             );
             """
         )
+
+    def _migrate(self) -> None:
+        """Add columns that may be missing from older DBs."""
+        for col in ("p1_opponent_stocks", "p2_opponent_stocks"):
+            try:
+                self._conn.execute(f"ALTER TABLE matches ADD COLUMN {col} INTEGER")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     # ------------------------------------------------------------------
     # Queue
@@ -223,6 +234,7 @@ class ArenaDB:
         outcome: str,
         duration_seconds: float | None = None,
         stocks_remaining: int | None = None,
+        opponent_stocks: int | None = None,
     ) -> bool:
         """Report one side's result. Returns True if match is now complete."""
         match = self.get_match(match_id)
@@ -233,13 +245,15 @@ class ArenaDB:
 
         if queue_id == match["p1_queue_id"]:
             self._conn.execute(
-                "UPDATE matches SET p1_result = ?, p1_stocks = ?, p1_duration = ? WHERE id = ?",
-                (outcome, stocks_remaining, duration_seconds, match_id),
+                "UPDATE matches SET p1_result = ?, p1_stocks = ?, p1_opponent_stocks = ?, "
+                "p1_duration = ? WHERE id = ?",
+                (outcome, stocks_remaining, opponent_stocks, duration_seconds, match_id),
             )
         elif queue_id == match["p2_queue_id"]:
             self._conn.execute(
-                "UPDATE matches SET p2_result = ?, p2_stocks = ?, p2_duration = ? WHERE id = ?",
-                (outcome, stocks_remaining, duration_seconds, match_id),
+                "UPDATE matches SET p2_result = ?, p2_stocks = ?, p2_opponent_stocks = ?, "
+                "p2_duration = ? WHERE id = ?",
+                (outcome, stocks_remaining, opponent_stocks, duration_seconds, match_id),
             )
         else:
             return False
@@ -251,19 +265,25 @@ class ArenaDB:
             # Compute deterministic timestamp (unix epoch)
             ts = int(datetime.fromisoformat(now).timestamp())
 
-            # Determine winner/loser from stocks
+            # Determine winner/loser from stocks.
+            # Each side reports their own remaining stocks AND the opponent's.
+            # Use self-reported stocks to determine who won, then use the
+            # winner's view of opponent_stocks for the loser's score (handles
+            # netplay desyncs where both sides might report non-zero own stocks).
             p1_stocks = match["p1_stocks"] or 0
             p2_stocks = match["p2_stocks"] or 0
             if p1_stocks >= p2_stocks:
                 winner_wallet = match["p1_wallet"]
                 loser_wallet = match["p2_wallet"]
                 winner_score = p1_stocks
-                loser_score = p2_stocks
+                # Use winner's view of opponent's stocks (more accurate than
+                # loser's self-report in desyncs)
+                loser_score = match["p1_opponent_stocks"] if match["p1_opponent_stocks"] is not None else p2_stocks
             else:
                 winner_wallet = match["p2_wallet"]
                 loser_wallet = match["p1_wallet"]
                 winner_score = p2_stocks
-                loser_score = p1_stocks
+                loser_score = match["p2_opponent_stocks"] if match["p2_opponent_stocks"] is not None else p1_stocks
 
             self._conn.execute(
                 "UPDATE matches SET status = 'completed', completed_at = ?, "

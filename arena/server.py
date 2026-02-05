@@ -83,6 +83,7 @@ class ResultRequest(BaseModel):
     outcome: str
     duration_seconds: float | None = None
     stocks_remaining: int | None = None
+    opponent_stocks: int | None = None
 
 
 class SuccessResponse(BaseModel):
@@ -236,7 +237,8 @@ def report_result(match_id: str, req: ResultRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Match not found")
 
     completed = db.report_result(
-        match_id, req.queue_id, req.outcome, req.duration_seconds, req.stocks_remaining
+        match_id, req.queue_id, req.outcome, req.duration_seconds,
+        req.stocks_remaining, req.opponent_stocks,
     )
     logger.info(
         f"Result reported for {match_id} by {req.queue_id}: {req.outcome}"

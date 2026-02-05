@@ -907,6 +907,7 @@ def cmd_matchmake(args):
         outcome = "COMPLETED"
 
         our_stocks = 0
+        their_stocks = 0
 
         try:
             match_result = runner.run_netplay(fighter, games=1)
@@ -916,6 +917,7 @@ def cmd_matchmake(args):
             if match_result.games:
                 last_game = match_result.games[-1]
                 our_stocks = int(last_game.p1_stocks)
+                their_stocks = int(last_game.p2_stocks)
             we_won = hasattr(match_result, "winner_port") and match_result.winner_port == 1
         except NetplayDisconnectedError:
             duration = time.time() - start_time
@@ -933,6 +935,7 @@ def cmd_matchmake(args):
                 "outcome": outcome,
                 "duration_seconds": round(duration, 1),
                 "stocks_remaining": our_stocks,
+                "opponent_stocks": their_stocks,
             })
         except urllib.error.URLError as e:
             logger.warning(f"Failed to report result: {e}")
