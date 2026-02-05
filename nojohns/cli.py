@@ -1173,6 +1173,9 @@ def cmd_matchmake(args):
             )
 
         # --- Step 3: Run netplay ---
+        if args.headless:
+            logger.warning("--headless requires mainline Dolphin (not Slippi Dolphin)")
+            logger.warning("Slippi netplay needs a display. Use Xvfb on headless servers.")
         logger.info("Launching netplay...")
 
         config = NetplayConfig(
