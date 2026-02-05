@@ -39,13 +39,27 @@ function LiveMatchViewer({ matchId }: { matchId: string }) {
   }
 
   if (status === "ended") {
+    // Check if we actually watched the match (have matchInfo) or connected after it ended
+    const watchedMatch = matchInfo !== null;
     return (
       <div className="flex items-center justify-center h-96 bg-surface-800 rounded-lg">
         <div className="text-center">
           <p className="text-accent-green text-xl mb-2">Match Complete</p>
-          <p className="text-gray-400">
-            Final Score: {gameScore[0]} - {gameScore[1]}
-          </p>
+          {watchedMatch ? (
+            <p className="text-gray-400">
+              Final Score: {gameScore[0]} - {gameScore[1]}
+            </p>
+          ) : (
+            <p className="text-gray-500 text-sm">
+              {error || "This match has already ended"}
+            </p>
+          )}
+          <Link
+            to="/live"
+            className="mt-4 inline-block text-accent-green hover:underline text-sm"
+          >
+            ← Back to live matches
+          </Link>
         </div>
       </div>
     );

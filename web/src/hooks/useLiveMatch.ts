@@ -82,8 +82,26 @@ export function useLiveMatch(
       try {
         const msg: ArenaMessage = JSON.parse(event.data);
 
+        // Debug logging for all messages
+        if (msg.type === "frame") {
+          // Only log every 60th frame to avoid spam
+          if ((msg as { frame: number }).frame % 60 === 0) {
+            console.log(`[useLiveMatch] Frame ${(msg as { frame: number }).frame}`);
+          }
+        } else {
+          console.log(`[useLiveMatch] Received message:`, msg.type, msg);
+        }
+
         switch (msg.type) {
           case "match_start":
+            // Clear the connect timeout since we got match info
+            if (wsRef.current) {
+              const ws = wsRef.current as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> };
+              if (ws._connectTimeout) {
+                clearTimeout(ws._connectTimeout);
+                ws._connectTimeout = undefined;
+              }
+            }
             setState((prev) => ({
               ...prev,
               status: "connected",
@@ -175,6 +193,24 @@ export function useLiveMatch(
 
     ws.onopen = () => {
       console.log(`[useLiveMatch] Connected to ${wsUrl}`);
+
+      // Set a timeout - if we don't receive match_start within 5s, the match may have ended
+      const timeout = setTimeout(() => {
+        setState((prev) => {
+          if (prev.status === "connecting") {
+            console.log("[useLiveMatch] Timeout waiting for match_start - match may have ended");
+            return {
+              ...prev,
+              status: "ended",
+              error: "Match has already ended",
+            };
+          }
+          return prev;
+        });
+      }, 5000);
+
+      // Store timeout so we can clear it if we do receive match_start
+      (ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> })._connectTimeout = timeout;
     };
 
     ws.onmessage = handleMessage;
@@ -199,6 +235,11 @@ export function useLiveMatch(
     };
 
     return () => {
+      // Clear any pending timeout
+      const wsWithTimeout = ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> };
+      if (wsWithTimeout._connectTimeout) {
+        clearTimeout(wsWithTimeout._connectTimeout);
+      }
       ws.close();
       if (wsRef.current === ws) {
         wsRef.current = null;
