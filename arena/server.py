@@ -8,13 +8,19 @@ Endpoints:
     POST   /matches/{id}/result Report match result
     GET    /matches/{id}        Get match details
     GET    /health              Server health check
+
+Live streaming:
+    WS     /ws/match/{id}       WebSocket for live match viewing
+    POST   /matches/{id}/frame  Post frame data (client -> arena)
+    POST   /matches/{id}/start  Signal match start with player info
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .db import ArenaDB
@@ -316,6 +322,241 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "queue_size": db.queue_size(),
         "active_matches": db.active_matches(),
+    }
+
+
+# ======================================================================
+# Live Match Streaming
+# ======================================================================
+
+
+class ConnectionManager:
+    """Manages WebSocket connections for live match streaming."""
+
+    def __init__(self):
+        # match_id -> list of connected WebSockets
+        self.viewers: dict[str, list[WebSocket]] = {}
+        # match_id -> last match_start message (for late joiners)
+        self.match_info: dict[str, dict] = {}
+
+    async def connect(self, match_id: str, websocket: WebSocket):
+        await websocket.accept()
+        if match_id not in self.viewers:
+            self.viewers[match_id] = []
+        self.viewers[match_id].append(websocket)
+        logger.info(f"Viewer connected to {match_id} ({len(self.viewers[match_id])} total)")
+
+        # Send match_start if we have it (late joiner)
+        if match_id in self.match_info:
+            try:
+                await websocket.send_json(self.match_info[match_id])
+            except Exception:
+                pass
+
+    def disconnect(self, match_id: str, websocket: WebSocket):
+        if match_id in self.viewers:
+            if websocket in self.viewers[match_id]:
+                self.viewers[match_id].remove(websocket)
+            if not self.viewers[match_id]:
+                del self.viewers[match_id]
+            logger.info(f"Viewer disconnected from {match_id}")
+
+    async def broadcast(self, match_id: str, message: dict):
+        """Broadcast message to all viewers of a match."""
+        if match_id not in self.viewers:
+            return
+
+        # Store match_start for late joiners
+        if message.get("type") == "match_start":
+            self.match_info[match_id] = message
+
+        # Clean up match_info on match_end
+        if message.get("type") == "match_end":
+            self.match_info.pop(match_id, None)
+
+        dead = []
+        for ws in self.viewers[match_id]:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+
+        # Remove dead connections
+        for ws in dead:
+            self.disconnect(match_id, ws)
+
+    def viewer_count(self, match_id: str) -> int:
+        return len(self.viewers.get(match_id, []))
+
+    def cleanup_match(self, match_id: str):
+        """Clean up all state for a match."""
+        self.viewers.pop(match_id, None)
+        self.match_info.pop(match_id, None)
+
+
+# Global connection manager
+_manager = ConnectionManager()
+
+
+@app.websocket("/ws/match/{match_id}")
+async def websocket_match(websocket: WebSocket, match_id: str):
+    """WebSocket endpoint for live match viewing.
+
+    Spectators connect here to receive frame data in real-time.
+    """
+    db = get_db()
+    match = db.get_match(match_id)
+
+    if match is None:
+        await websocket.close(code=4004, reason="Match not found")
+        return
+
+    await _manager.connect(match_id, websocket)
+
+    try:
+        # Keep connection alive, wait for disconnect
+        while True:
+            # We don't expect messages from viewers, but need to handle disconnect
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Send ping to keep connection alive
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _manager.disconnect(match_id, websocket)
+
+
+class MatchStartRequest(BaseModel):
+    """Signal match start with player/stage info."""
+    stage_id: int
+    players: list[dict]  # [{port, character_id, connect_code, display_name?}, ...]
+
+
+class FrameRequest(BaseModel):
+    """Frame data from client."""
+    frame: int
+    players: list[dict]  # [{port, x, y, action_state_id, action_frame, facing_direction, percent, stocks}, ...]
+
+
+class GameEndRequest(BaseModel):
+    """Game end signal."""
+    game_number: int
+    winner_port: int
+    end_method: str  # "stocks", "timeout", "lras"
+
+
+class MatchEndRequest(BaseModel):
+    """Match end signal."""
+    winner_port: int
+    final_score: list[int]  # [p1_wins, p2_wins]
+
+
+@app.post("/matches/{match_id}/stream/start")
+async def stream_match_start(match_id: str, req: MatchStartRequest) -> dict[str, Any]:
+    """Signal match start — called by client when game begins."""
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    message = {
+        "type": "match_start",
+        "matchId": match_id,
+        "stageId": req.stage_id,
+        "players": [
+            {
+                "port": p.get("port"),
+                "characterId": p.get("character_id"),
+                "connectCode": p.get("connect_code"),
+                "displayName": p.get("display_name"),
+            }
+            for p in req.players
+        ],
+    }
+
+    await _manager.broadcast(match_id, message)
+    logger.info(f"Match {match_id} started streaming ({_manager.viewer_count(match_id)} viewers)")
+
+    return {"success": True, "viewers": _manager.viewer_count(match_id)}
+
+
+@app.post("/matches/{match_id}/stream/frame")
+async def stream_frame(match_id: str, req: FrameRequest) -> dict[str, Any]:
+    """Stream a frame — called by client every frame (~60fps)."""
+    message = {
+        "type": "frame",
+        "frame": req.frame,
+        "players": [
+            {
+                "port": p.get("port"),
+                "x": p.get("x"),
+                "y": p.get("y"),
+                "actionStateId": p.get("action_state_id"),
+                "actionFrame": p.get("action_frame"),
+                "facingDirection": p.get("facing_direction"),
+                "percent": p.get("percent"),
+                "stocks": p.get("stocks"),
+                "shieldHealth": p.get("shield_health"),
+                "isInvincible": p.get("is_invincible"),
+                "isInHitstun": p.get("is_in_hitstun"),
+            }
+            for p in req.players
+        ],
+    }
+
+    await _manager.broadcast(match_id, message)
+    return {"success": True}
+
+
+@app.post("/matches/{match_id}/stream/game_end")
+async def stream_game_end(match_id: str, req: GameEndRequest) -> dict[str, Any]:
+    """Signal game end — called when a game in the set ends."""
+    message = {
+        "type": "game_end",
+        "gameNumber": req.game_number,
+        "winnerPort": req.winner_port,
+        "endMethod": req.end_method,
+    }
+
+    await _manager.broadcast(match_id, message)
+    logger.info(f"Match {match_id} game {req.game_number} ended (winner: port {req.winner_port})")
+
+    return {"success": True}
+
+
+@app.post("/matches/{match_id}/stream/end")
+async def stream_match_end(match_id: str, req: MatchEndRequest) -> dict[str, Any]:
+    """Signal match end — called when the full set is complete."""
+    message = {
+        "type": "match_end",
+        "winnerPort": req.winner_port,
+        "finalScore": req.final_score,
+    }
+
+    await _manager.broadcast(match_id, message)
+    logger.info(f"Match {match_id} ended (score: {req.final_score})")
+
+    # Clean up after a short delay to let viewers receive the message
+    async def cleanup():
+        await asyncio.sleep(5.0)
+        _manager.cleanup_match(match_id)
+
+    asyncio.create_task(cleanup())
+
+    return {"success": True}
+
+
+@app.get("/matches/{match_id}/viewers")
+def get_viewer_count(match_id: str) -> dict[str, Any]:
+    """Get number of viewers for a match."""
+    return {
+        "match_id": match_id,
+        "viewers": _manager.viewer_count(match_id),
     }
 
 

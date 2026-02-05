@@ -1143,6 +1143,9 @@ def cmd_matchmake(args):
             input_throttle=args.throttle,
             dolphin_home_path=args.dolphin_home,
             slippi_replay_dir=args.replay_dir,
+            # Live streaming for spectators
+            arena_url=server,
+            match_id=match_id,
         )
 
         runner = NetplayRunner(config)

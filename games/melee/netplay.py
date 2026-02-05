@@ -11,12 +11,19 @@ with swapped connect codes.
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 import melee
 from melee import Character, Stage
+
+# Optional: httpx for streaming (not required for basic netplay)
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
 
 from nojohns.fighter import (
     Fighter,
@@ -76,10 +83,140 @@ class NetplayConfig:
     # instances run on the same machine and need different ports
     slippi_port: int = 51441
 
+    # Live streaming (optional) — stream frame data to arena for spectators
+    arena_url: str | None = None  # e.g. "http://localhost:8000"
+    match_id: str | None = None   # Arena match ID for streaming
+    stream_throttle: int = 2      # Stream every Nth frame (2 = 30fps, 1 = 60fps)
+
+
+# ============================================================================
+# Match Streamer (for live spectating)
+# ============================================================================
+
+
+class MatchStreamer:
+    """Streams match data to arena for live spectating.
+
+    Posts frame data to arena HTTP endpoints. Arena broadcasts to
+    connected WebSocket viewers.
+
+    This runs in a background thread to avoid blocking the game loop.
+    """
+
+    def __init__(self, arena_url: str, match_id: str):
+        self.arena_url = arena_url.rstrip("/")
+        self.match_id = match_id
+        self._client: "httpx.Client | None" = None
+        self._queue: list[dict] = []
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        """Start the background streaming thread."""
+        if not HTTPX_AVAILABLE:
+            logger.warning("httpx not installed — live streaming disabled")
+            return
+
+        self._client = httpx.Client(timeout=2.0)
+        self._thread = threading.Thread(target=self._stream_loop, daemon=True)
+        self._thread.start()
+        logger.info(f"Match streamer started for {self.match_id}")
+
+    def stop(self):
+        """Stop streaming and clean up."""
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        if self._client:
+            self._client.close()
+            self._client = None
+
+    def send_match_start(self, stage_id: int, players: list[dict]):
+        """Send match_start message."""
+        self._post("stream/start", {
+            "stage_id": stage_id,
+            "players": players,
+        })
+
+    def send_frame(self, frame: int, players: list[dict]):
+        """Queue a frame for streaming."""
+        with self._lock:
+            # Only keep latest frame to avoid queue buildup
+            self._queue = [{"frame": frame, "players": players}]
+
+    def send_game_end(self, game_number: int, winner_port: int, end_method: str = "stocks"):
+        """Send game_end message."""
+        self._post("stream/game_end", {
+            "game_number": game_number,
+            "winner_port": winner_port,
+            "end_method": end_method,
+        })
+
+    def send_match_end(self, winner_port: int, final_score: list[int]):
+        """Send match_end message."""
+        self._post("stream/end", {
+            "winner_port": winner_port,
+            "final_score": final_score,
+        })
+
+    def _post(self, endpoint: str, data: dict):
+        """POST to arena endpoint (blocking, for important messages)."""
+        if not self._client:
+            return
+        url = f"{self.arena_url}/matches/{self.match_id}/{endpoint}"
+        try:
+            self._client.post(url, json=data)
+        except Exception as e:
+            logger.debug(f"Stream POST failed: {e}")
+
+    def _stream_loop(self):
+        """Background thread that sends queued frames."""
+        while not self._stop.is_set():
+            frame_data = None
+            with self._lock:
+                if self._queue:
+                    frame_data = self._queue.pop(0)
+
+            if frame_data and self._client:
+                url = f"{self.arena_url}/matches/{self.match_id}/stream/frame"
+                try:
+                    self._client.post(url, json=frame_data)
+                except Exception:
+                    pass  # Don't spam logs for frame drops
+
+            # ~60fps max, but typically throttled by stream_throttle
+            time.sleep(0.016)
+
+
+def extract_player_frame(player: "melee.PlayerState", port: int) -> dict:
+    """Extract frame data from a libmelee PlayerState.
+
+    Returns a dict matching the arena's PlayerFrameData schema.
+    """
+    # Shield states: 178=ShieldStart, 179=Shield, 180=ShieldRelease, 182=ShieldStun
+    shield_states = {178, 179, 180, 182}
+    action_value = player.action.value if player.action else 0
+
+    return {
+        "port": port,
+        "x": player.position.x if player.position else 0,
+        "y": player.position.y if player.position else 0,
+        "action_state_id": action_value,
+        "action_frame": player.action_frame,
+        "facing_direction": 1 if player.facing else -1,
+        "percent": player.percent,
+        "stocks": player.stock,
+        "shield_health": player.shield_strength if action_value in shield_states else None,
+        "is_invincible": player.invulnerable,
+        "is_in_hitstun": player.hitstun_frames_left > 0,
+    }
+
 
 # ============================================================================
 # Netplay Runner
 # ============================================================================
+
 
 class NetplayRunner:
     """
@@ -106,6 +243,11 @@ class NetplayRunner:
         self._menu_navigator = SlippiMenuNavigator()
         self._menu_helper = melee.MenuHelper()
         self._our_port = 1  # Updated by port detection when game starts
+
+        # Live streaming setup
+        self._streamer: MatchStreamer | None = None
+        if config.arena_url and config.match_id:
+            self._streamer = MatchStreamer(config.arena_url, config.match_id)
 
     def run_netplay(
         self,
@@ -140,6 +282,10 @@ class NetplayRunner:
             self._setup_controller()
             self._launch_and_connect()
 
+            # Start live streaming if configured
+            if self._streamer:
+                self._streamer.start()
+
             game_num = 0
             while result.p1_games_won < games_to_win and result.p2_games_won < games_to_win:
                 game_num += 1
@@ -165,6 +311,13 @@ class NetplayRunner:
             result.winner_port = 1 if result.p1_games_won > result.p2_games_won else 2
             result.our_port = self._our_port
             logger.info(f"Netplay complete! Winner: P{result.winner_port} ({result.score})")
+
+            # Stream match end
+            if self._streamer:
+                self._streamer.send_match_end(
+                    winner_port=result.winner_port,
+                    final_score=[result.p1_games_won, result.p2_games_won],
+                )
 
         except NetplayDisconnectedError:
             logger.warning("Opponent disconnected")
@@ -278,6 +431,10 @@ class NetplayRunner:
         last_action = ControllerState()
         frames_since_input = 0
 
+        # Stream throttling - only send every Nth frame
+        frames_since_stream = 0
+        game_number = len(getattr(self, '_completed_games', [])) + 1
+
         # Freeze detection - track when frames stop advancing
         last_frame_number = None
         last_frame_time = time.time()
@@ -371,6 +528,23 @@ class NetplayRunner:
                         if hasattr(fighter, 'on_game_start'):
                             fighter.on_game_start(our_port, state)
 
+                        # Stream match start (for live spectating)
+                        if self._streamer and game_number == 1:
+                            # Build player info from game state
+                            players = []
+                            for port, player in state.players.items():
+                                if player:
+                                    players.append({
+                                        "port": port,
+                                        "character_id": player.character.value if player.character else 0,
+                                        "connect_code": getattr(player, "connectCode", ""),
+                                        "display_name": getattr(player, "nametag", None),
+                                    })
+                            self._streamer.send_match_start(
+                                stage_id=state.stage.value if state.stage else 0,
+                                players=players,
+                            )
+
                     # Track damage dealt
                     for port in [1, 2]:
                         player = state.players.get(port)
@@ -405,6 +579,17 @@ class NetplayRunner:
                     if on_frame:
                         on_frame(state)
 
+                    # Stream frame data (throttled)
+                    if self._streamer:
+                        frames_since_stream += 1
+                        if frames_since_stream >= self.config.stream_throttle:
+                            frames_since_stream = 0
+                            players = []
+                            for port, player in state.players.items():
+                                if player:
+                                    players.append(extract_player_frame(player, port))
+                            self._streamer.send_frame(state.frame, players)
+
                     # Check for game end - detect when stocks hit 0 or timeout
                     if game_result is None:  # Only check once
                         p1 = state.players.get(1)
@@ -425,6 +610,9 @@ class NetplayRunner:
                                 stage=self.config.stage,
                             )
                             fighter.on_game_end(self._to_fighter_result(game_result))
+                            # Stream game end
+                            if self._streamer:
+                                self._streamer.send_game_end(game_number, 1, "timeout")
                             return game_result
 
                         # Check if someone ran out of stocks
@@ -445,6 +633,10 @@ class NetplayRunner:
                             # Notify fighter
                             fighter.on_game_end(self._to_fighter_result(game_result))
                             logger.info(f"Game end detected: P{winner} wins ({game_result.p1_stocks}-{game_result.p2_stocks})")
+
+                            # Stream game end
+                            if self._streamer:
+                                self._streamer.send_game_end(game_number, winner, "stocks")
 
                     # If game ended but stocks reset (new match starting), return immediately
                     elif game_result is not None:
@@ -528,6 +720,11 @@ class NetplayRunner:
         import shutil
 
         logger.debug("Cleaning up netplay session")
+
+        # Stop live streaming
+        if self._streamer:
+            self._streamer.stop()
+            self._streamer = None
 
         # Track temp directory for cleanup
         temp_dir = None

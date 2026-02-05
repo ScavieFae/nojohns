@@ -37,6 +37,7 @@ dev = [
 arena = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
+    "httpx>=0.25",  # For live match streaming from client to arena
 ]
 smashbot = [
     # SmashBot dependencies when available
