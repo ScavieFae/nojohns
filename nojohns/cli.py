@@ -905,9 +905,10 @@ def _negotiate_wager(
     except urllib.error.URLError as e:
         print(f"Warning: couldn't register wager with arena: {e}")
 
-    # Wait for opponent to accept (15s timeout)
-    print("Waiting for opponent to accept (15s)...", end="", flush=True)
-    deadline = time.time() + 15
+    # Wait for opponent to accept (30s timeout)
+    # Also check if opponent proposed same amount — auto-accept if so
+    print("Waiting for opponent to accept (30s)...", end="", flush=True)
+    deadline = time.time() + 30
     while time.time() < deadline:
         time.sleep(1)
         print(".", end="", flush=True)
@@ -928,6 +929,34 @@ def _negotiate_wager(
                 except Exception:
                     print(f"Warning: cancel wager {wager_id} manually to get refund.")
                 return None, None
+
+            # Check if opponent also proposed — auto-accept if same amount
+            opponent_amount = wager_info.get("wager_amount")
+            opponent_wager_id = wager_info.get("wager_id")
+            proposer = wager_info.get("wager_proposer")
+            # If opponent proposed (not us) with same amount, accept theirs
+            if (opponent_wager_id and opponent_wager_id != wager_id and
+                opponent_amount == amount_wei and proposer != account.address):
+                print(" opponent proposed same amount!")
+                print("Auto-accepting opponent's wager...")
+                try:
+                    from nojohns.wallet import accept_wager, cancel_wager
+                    # Accept opponent's wager
+                    accept_wager(
+                        account=account,
+                        rpc_url=config.chain.rpc_url,
+                        contract_address=config.chain.wager,
+                        wager_id=opponent_wager_id,
+                        amount_wei=amount_wei,
+                    )
+                    # Cancel our own wager to get refund
+                    cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
+                    print(f"Wager locked! Pot: {amount_mon * 2} MON")
+                    _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
+                    return opponent_wager_id, amount_wei
+                except Exception as e:
+                    print(f"Auto-accept failed: {e}")
+
         except urllib.error.URLError:
             continue
 

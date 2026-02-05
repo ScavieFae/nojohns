@@ -8,19 +8,33 @@ No Johns is agent competition infrastructure. Autonomous agents compete in skill
 
 **Key insight**: Moltbots are the *owners* (social layer, matchmaking, wagers, strategy), Fighters are the *players* (actual game AI). This separation is intentional — LLMs are too slow to play frame-by-frame, but perfect for the meta-game.
 
-## Two-Agent Development
+## Three-Agent Development
 
-This project is developed by two Claude Code agents on separate machines. **Check which agent you are before editing files.**
+This project is developed by three Claude Code agents. **Check which agent you are before editing files.**
+
+| Agent | Role | Owns | Branch prefix |
+|-------|------|------|---------------|
+| **Scav** | Python, arena, game integration | `nojohns/`, `games/`, `arena/`, `fighters/` | `scav/` |
+| **ScavieFae** | Contracts, website | `contracts/`, `web/` | `scaviefae/` |
+| **ScavBug** | Bugs, docs, GitHub meta-work | `docs/` (shared), issues, comments | `scavbug/` |
+
+### How to Know Which Agent You Are
+
+- **Scav**: Working on Python code, arena server, or game integration. Memory file is `memory/MEMORY.md`.
+- **ScavieFae**: Working on Solidity contracts or the website. On a separate machine.
+- **ScavBug**: User said "you're ScavBug" or context is about bugs/docs/issues. Memory file is `memory/SCAVBUG.md`.
+
+If unclear, ask Mattie.
 
 ### Directory Ownership
 
-| Directory | Owner | Branch prefix |
-|-----------|-------|---------------|
-| `nojohns/`, `games/`, `arena/`, `fighters/` | **Scav** | `scav/` |
-| `contracts/`, `web/` | **ScavieFae** | `scaviefae/` |
-| `docs/`, `tests/`, root files | **Shared** | either |
+| Directory | Owner | Notes |
+|-----------|-------|-------|
+| `nojohns/`, `games/`, `arena/`, `fighters/` | **Scav** | Python code |
+| `contracts/`, `web/` | **ScavieFae** | Solidity + frontend |
+| `docs/`, `tests/`, root files | **Shared** | ScavBug can edit docs |
 
-**Do not edit files in the other agent's directories.** If you need a change in their code, describe what you need in a PR comment or the handoff doc.
+**Do not edit files in another agent's directories.** If you need a change in their code, open a GitHub issue or describe what you need in a PR comment.
 
 ### Coordination
 
@@ -48,6 +62,16 @@ You own Python, arena, and game integration. Your workstream:
 2. Arena server enhancements (onchain result submission post-match)
 3. CLI additions (`nojohns setup wallet`, `nojohns wager`)
 4. End-to-end testing on both machines
+
+### For ScavBug
+
+You handle bugs, documentation, and GitHub meta-work. Your scope:
+- **Create/edit:** GitHub issues, PR comments, `docs/` files (TROUBLESHOOTING.md, SETUP guides, etc.)
+- **Read-only:** All code (need to understand it to document it)
+- **Do not edit:** Code in `nojohns/`, `games/`, `contracts/`, `web/`, `arena/`, `fighters/`
+- **Check in with Mattie** before changing CLAUDE.md sections that affect Scav or ScavieFae's behavior
+
+You can propose improvements: GitHub Actions, Claude Code hooks, skills, better CI. File issues for bugs you spot. Document gotchas. Keep TROUBLESHOOTING.md current.
 
 ## Local Dev Setup
 
