@@ -48,6 +48,7 @@ phillip = [
 ]
 wallet = [
     "eth-account>=0.10.0",
+    "web3>=6.0",
 ]
 
 [project.urls]
