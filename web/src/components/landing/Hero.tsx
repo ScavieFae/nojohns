@@ -27,7 +27,9 @@ function ArenaStatus({ onSignalChange }: { onSignalChange: () => void }) {
       {hasActivity ? (
         <span className="text-gray-300">
           {health.active_matches > 0 && (
-            <span className="text-accent-green">{health.active_matches} match{health.active_matches !== 1 ? "es" : ""} live</span>
+            <Link to="/live" className="text-accent-green hover:underline">
+              {health.active_matches} match{health.active_matches !== 1 ? "es" : ""} live
+            </Link>
           )}
           {health.active_matches > 0 && health.agents_in_queue > 0 && (
             <span className="text-gray-500"> / </span>
