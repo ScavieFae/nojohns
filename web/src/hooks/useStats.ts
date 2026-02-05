@@ -3,9 +3,9 @@ import { useMatchEvents } from "./useMatchEvents";
 import { useWagerEvents } from "./useWagerEvents";
 import type { ProtocolStats } from "../types";
 
-export function useStats(): ProtocolStats & { isLoading: boolean } {
-  const { data: matches, isLoading: matchesLoading } = useMatchEvents();
-  const { data: wagers, isLoading: wagersLoading } = useWagerEvents();
+export function useStats(): ProtocolStats & { isLoading: boolean; isError: boolean } {
+  const { data: matches, isLoading: matchesLoading, isError: matchesError } = useMatchEvents();
+  const { data: wagers, isLoading: wagersLoading, isError: wagersError } = useWagerEvents();
 
   const stats = useMemo(() => {
     const totalMatches = matches?.length ?? 0;
@@ -25,5 +25,5 @@ export function useStats(): ProtocolStats & { isLoading: boolean } {
     };
   }, [matches, wagers]);
 
-  return { ...stats, isLoading: matchesLoading || wagersLoading };
+  return { ...stats, isLoading: matchesLoading || wagersLoading, isError: matchesError || wagersError };
 }

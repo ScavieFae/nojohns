@@ -11,7 +11,7 @@ export function MatchFilter({ filterAddress, onFilterChange }: MatchFilterProps)
         placeholder="Filter by agent address..."
         value={filterAddress}
         onChange={(e) => onFilterChange(e.target.value)}
-        className="bg-surface-700 border border-surface-600 rounded-lg px-4 py-2 text-sm font-mono text-gray-300 placeholder-gray-500 focus:outline-none focus:border-accent-blue w-96"
+        className="bg-surface-700 border border-surface-600 rounded-lg px-4 py-2 text-sm font-mono text-gray-300 placeholder-gray-500 focus:outline-none focus:border-accent-blue w-full max-w-96"
       />
       {filterAddress && (
         <button

@@ -1,11 +1,11 @@
 import { useState, useMemo } from "react";
 import { useMatchEvents } from "../../hooks/useMatchEvents";
-import { MatchRow } from "./MatchRow";
+import { MatchRow, MatchCard } from "./MatchRow";
 import { MatchFilter } from "./MatchFilter";
 import { EmptyState } from "../shared/EmptyState";
 
 export function MatchList() {
-  const { data: matches, isLoading } = useMatchEvents();
+  const { data: matches, isLoading, isError, refetch } = useMatchEvents();
   const [filterAddress, setFilterAddress] = useState("");
 
   const filtered = useMemo(() => {
@@ -18,6 +18,20 @@ export function MatchList() {
         m.winner.toLowerCase().includes(lower) || m.loser.toLowerCase().includes(lower),
     );
   }, [matches, filterAddress]);
+
+  if (isError) {
+    return (
+      <div className="bg-accent-red/10 border border-accent-red/30 rounded-lg px-4 py-3 flex items-center justify-between">
+        <span className="text-accent-red text-sm">Failed to load match history</span>
+        <button
+          onClick={() => refetch()}
+          className="text-accent-red text-sm font-mono hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -46,7 +60,8 @@ export function MatchList() {
         />
       ) : (
         <div className="bg-surface-800 border border-surface-600 rounded-lg overflow-hidden">
-          <table className="w-full">
+          {/* Desktop: table */}
+          <table className="hidden md:table w-full">
             <thead>
               <tr className="border-b border-surface-600 text-left text-xs text-gray-500 uppercase tracking-wider">
                 <th className="py-3 px-4">When</th>
@@ -63,6 +78,13 @@ export function MatchList() {
               ))}
             </tbody>
           </table>
+
+          {/* Mobile: card list */}
+          <div className="md:hidden">
+            {filtered.map((match) => (
+              <MatchCard key={match.matchId} match={match} />
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -20,6 +20,20 @@ function formatTimestamp(timestamp: bigint): string {
   return date.toLocaleDateString();
 }
 
+function ProofLink({ hash }: { hash?: string }) {
+  if (!hash) return null;
+  return (
+    <a
+      href={explorerLink("tx", hash)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent-blue text-xs font-mono hover:underline"
+    >
+      proof
+    </a>
+  );
+}
+
 export function MatchRow({ match }: MatchRowProps) {
   return (
     <tr className="border-b border-surface-700 hover:bg-surface-700/50 transition-colors">
@@ -41,17 +55,35 @@ export function MatchRow({ match }: MatchRowProps) {
         </span>
       </td>
       <td className="py-3 px-4 text-right">
-        {match.transactionHash && (
-          <a
-            href={explorerLink("tx", match.transactionHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent-blue text-xs font-mono hover:underline"
-          >
-            proof
-          </a>
-        )}
+        <ProofLink hash={match.transactionHash} />
       </td>
     </tr>
+  );
+}
+
+export function MatchCard({ match }: MatchRowProps) {
+  return (
+    <div className="border-b border-surface-700 p-4 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-gray-500">{formatTimestamp(match.timestamp)}</span>
+        <div className="flex items-center gap-2">
+          <span className="bg-surface-700 text-gray-400 text-xs font-mono px-2 py-1 rounded">
+            {match.gameId}
+          </span>
+          <ProofLink hash={match.transactionHash} />
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-gray-500 mb-0.5">Winner</div>
+          <AddressDisplay address={match.winner} />
+        </div>
+        <ScoreDisplay winnerScore={match.winnerScore} loserScore={match.loserScore} />
+        <div className="flex-1 min-w-0 text-right">
+          <div className="text-xs text-gray-500 mb-0.5">Loser</div>
+          <AddressDisplay address={match.loser} />
+        </div>
+      </div>
+    </div>
   );
 }
