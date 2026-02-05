@@ -461,9 +461,11 @@ class MatchEndRequest(BaseModel):
 @app.post("/matches/{match_id}/stream/start")
 async def stream_match_start(match_id: str, req: MatchStartRequest) -> dict[str, Any]:
     """Signal match start — called by client when game begins."""
+    logger.info(f"[stream/start] Received for match {match_id}")
     db = get_db()
     match = db.get_match(match_id)
     if match is None:
+        logger.warning(f"[stream/start] Match {match_id} not found in DB")
         raise HTTPException(status_code=404, detail="Match not found")
 
     message = {
