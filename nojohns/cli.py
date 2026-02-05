@@ -7,6 +7,7 @@ Usage:
     nojohns setup melee            # Configure Melee paths
     nojohns setup melee phillip    # Install Phillip fighter
     nojohns setup wallet           # Configure wallet + chain (onchain features)
+    nojohns setup identity         # Register agent on ERC-8004 IdentityRegistry
     nojohns fight <f1> <f2>        # Run a local fight
     nojohns netplay <f> --code X   # Netplay against remote opponent
     nojohns matchmake <f>          # Arena matchmaking
@@ -108,7 +109,7 @@ def _require_melee_args(args) -> bool:
 # ============================================================================
 
 def cmd_setup(args):
-    """Handle `nojohns setup [melee [phillip] | wallet]`."""
+    """Handle `nojohns setup [melee [phillip] | wallet | identity]`."""
     target = args.setup_target
 
     if not target:
@@ -119,9 +120,11 @@ def cmd_setup(args):
         return _setup_melee_phillip()
     elif target in (["wallet"], ["monad"]):  # "monad" kept as alias
         return _setup_monad()
+    elif target == ["identity"]:
+        return _setup_identity()
     else:
         logger.error(f"Unknown setup target: {' '.join(target)}")
-        logger.error("Usage: nojohns setup [melee [phillip] | wallet]")
+        logger.error("Usage: nojohns setup [melee [phillip] | wallet | identity]")
         return 1
 
 
@@ -493,6 +496,240 @@ def _setup_monad():
     print("  1. Fund your agent wallet with testnet MON")
     print("  2. Contract addresses will be added after deploy")
     return 0
+
+
+def _setup_identity():
+    """Register agent on ERC-8004 IdentityRegistry."""
+    import base64
+    import json
+    import tomllib
+
+    # Load existing config
+    if not CONFIG_PATH.exists():
+        logger.error("No config found. Run: nojohns setup wallet")
+        return 1
+
+    with open(CONFIG_PATH, "rb") as f:
+        existing_raw = tomllib.load(f)
+
+    # Check wallet is configured
+    wallet_data = existing_raw.get("wallet", {})
+    if not wallet_data.get("private_key"):
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    chain_data = existing_raw.get("chain", {})
+    chain_id = chain_data.get("chain_id", 10143)
+
+    # Check if already registered
+    if chain_data.get("agent_id"):
+        print(f"Already registered as agent #{chain_data['agent_id']}")
+        print()
+        overwrite = input("Register a new agent? [y/N]: ").strip().lower()
+        if overwrite != "y":
+            return 0
+
+    # Get melee config for connect code
+    melee_data = existing_raw.get("games", {}).get("melee", {})
+    connect_code = melee_data.get("connect_code", "")
+
+    print("Identity Registration (ERC-8004)")
+    print("=" * 40)
+    print()
+
+    # Determine registry address based on chain
+    if chain_id == 143:
+        identity_registry = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+        print("Network: Monad mainnet")
+    else:
+        identity_registry = "0x8004A818BFB912233c491871b3d84c89A494BD9e"
+        print("Network: Monad testnet")
+    print()
+
+    # Prompt for agent details
+    default_name = "NoJohnsAgent"
+    name = input(f"Agent name [{default_name}]: ").strip() or default_name
+
+    default_desc = "Melee competitor on No Johns arena"
+    description = input(f"Description [{default_desc}]: ").strip() or default_desc
+
+    if not connect_code:
+        connect_code = input("Slippi connect code (e.g. SCAV#382): ").strip()
+
+    # Build registration JSON
+    registration = {
+        "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+        "name": name,
+        "description": description,
+        "image": "",
+        "services": [
+            {"name": "nojohns-arena", "version": "v1"}
+        ],
+        "active": True,
+        "games": {
+            "melee": {"slippi_code": connect_code}
+        }
+    }
+
+    # Encode as data URI
+    json_bytes = json.dumps(registration, separators=(",", ":")).encode("utf-8")
+    b64 = base64.b64encode(json_bytes).decode("ascii")
+    agent_uri = f"data:application/json;base64,{b64}"
+
+    print()
+    print("Registration JSON:")
+    print(json.dumps(registration, indent=2))
+    print()
+
+    confirm = input("Register this agent onchain? [Y/n]: ").strip().lower()
+    if confirm == "n":
+        print("Cancelled.")
+        return 0
+
+    # Call register() on IdentityRegistry
+    try:
+        from web3 import Web3
+        from eth_account import Account
+    except ImportError:
+        logger.error("web3 and eth-account required: pip install nojohns[wallet]")
+        return 1
+
+    rpc_url = chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz")
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+    if not w3.is_connected():
+        logger.error(f"Cannot connect to {rpc_url}")
+        return 1
+
+    private_key = wallet_data["private_key"]
+    account = Account.from_key(private_key)
+
+    print(f"Registering from {account.address}...")
+
+    # IdentityRegistry ABI (just register function)
+    abi = [
+        {
+            "inputs": [{"name": "agentURI", "type": "string"}],
+            "name": "register",
+            "outputs": [{"type": "uint256"}],
+            "stateMutability": "nonpayable",
+            "type": "function"
+        }
+    ]
+
+    contract = w3.eth.contract(address=identity_registry, abi=abi)
+
+    try:
+        # Estimate gas
+        gas_estimate = contract.functions.register(agent_uri).estimate_gas({
+            "from": account.address,
+        })
+        gas_limit = int(gas_estimate * 1.2)  # 20% buffer
+        print(f"Estimated gas: {gas_estimate} (using {gas_limit})")
+
+        # Build transaction
+        nonce = w3.eth.get_transaction_count(account.address)
+        tx = contract.functions.register(agent_uri).build_transaction({
+            "from": account.address,
+            "nonce": nonce,
+            "gas": gas_limit,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": chain_id,
+        })
+
+        # Sign and send
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        print(f"Transaction sent: {tx_hash.hex()}")
+
+        # Wait for receipt
+        print("Waiting for confirmation...")
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+
+        if receipt.status != 1:
+            logger.error("Transaction failed")
+            return 1
+
+        # Parse logs to get agentId (tokenId from Transfer event)
+        # Transfer(address from, address to, uint256 tokenId)
+        transfer_topic = w3.keccak(text="Transfer(address,address,uint256)")
+        for log in receipt.logs:
+            if log.topics[0] == transfer_topic:
+                agent_id = int(log.topics[3].hex(), 16)
+                print(f"Registered as agent #{agent_id}")
+                break
+        else:
+            logger.error("Could not parse agentId from logs")
+            return 1
+
+    except Exception as e:
+        logger.error(f"Registration failed: {e}")
+        return 1
+
+    # Update config with agent_id and registry addresses
+    _update_config_identity(existing_raw, agent_id, identity_registry, chain_id)
+
+    print()
+    print(f"Saved agent_id to {CONFIG_PATH}")
+    print()
+    print("Your agent is now registered on ERC-8004 IdentityRegistry!")
+    return 0
+
+
+def _update_config_identity(existing_raw: dict, agent_id: int, identity_registry: str, chain_id: int):
+    """Update config.toml with identity registration info."""
+    # Determine reputation registry
+    if chain_id == 143:
+        reputation_registry = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+    else:
+        reputation_registry = "0x8004B663056A597Dffe9eCcC1965A193B7388713"
+
+    lines = ["# No Johns configuration\n"]
+
+    # Preserve [games.*]
+    games_data = existing_raw.get("games", {})
+    for game_name, game_settings in games_data.items():
+        if isinstance(game_settings, dict):
+            lines.append(f"[games.{game_name}]")
+            for k, v in game_settings.items():
+                if isinstance(v, str):
+                    lines.append(f'{k} = "{v}"')
+                else:
+                    lines.append(f"{k} = {v}")
+            lines.append("")
+
+    # Preserve [arena]
+    arena_data = existing_raw.get("arena", {})
+    if arena_data.get("server"):
+        lines.append("[arena]")
+        lines.append(f'server = "{arena_data["server"]}"')
+    else:
+        lines.append("[arena]")
+        lines.append('# server = "http://localhost:8000"')
+    lines.append("")
+
+    # Preserve [wallet]
+    wallet_data = existing_raw.get("wallet", {})
+    lines.append("[wallet]")
+    lines.append(f'address = "{wallet_data.get("address", "")}"')
+    lines.append(f'private_key = "{wallet_data.get("private_key", "")}"')
+    lines.append("")
+
+    # [chain] with identity info
+    chain_data = existing_raw.get("chain", {})
+    lines.append("[chain]")
+    lines.append(f"chain_id = {chain_data.get('chain_id', chain_id)}")
+    lines.append(f'rpc_url = "{chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz")}"')
+    if chain_data.get("match_proof"):
+        lines.append(f'match_proof = "{chain_data["match_proof"]}"')
+    if chain_data.get("wager"):
+        lines.append(f'wager = "{chain_data["wager"]}"')
+    lines.append(f'identity_registry = "{identity_registry}"')
+    lines.append(f'reputation_registry = "{reputation_registry}"')
+    lines.append(f"agent_id = {agent_id}")
+    lines.append("")
+
+    CONFIG_PATH.write_text("\n".join(lines))
 
 
 def _monad_wallet_prompt() -> tuple[str, str]:
@@ -1840,11 +2077,11 @@ def main():
 
     # setup command
     setup_parser = subparsers.add_parser(
-        "setup", help="Configure No Johns (setup / setup melee / setup wallet)"
+        "setup", help="Configure No Johns (setup / setup melee / setup wallet / setup identity)"
     )
     setup_parser.add_argument(
         "setup_target", nargs="*", default=[],
-        help="What to set up: nothing=core, melee=game config, 'melee phillip'=install Phillip, wallet=onchain identity",
+        help="What to set up: melee=game, wallet=onchain, identity=ERC-8004 registration",
     )
     setup_parser.set_defaults(func=cmd_setup)
 
