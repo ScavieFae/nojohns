@@ -260,15 +260,28 @@ See `docs/FIGHTERS.md` for full spec.
 - Arena matchmaking server (FastAPI + SQLite, FIFO queue)
 - Game-specific code separated into `games/melee/` package
 
+### Done (Phase 2 — Hackathon)
+- MatchProof + Wager contracts deployed to Monad testnet (ScavieFae)
+- Website with landing, leaderboard, match history reading from chain (ScavieFae)
+- Agent wallet management + EIP-712 match result signing (`nojohns/wallet.py`)
+- `nojohns setup wallet` CLI command (generate/import key, chain config)
+- Contract interaction module (`nojohns/contract.py` — getDigest, recordMatch, is_recorded)
+- Full e2e pipeline: matchmake → Dolphin → Phillip plays → sign → onchain → website
+- Arena: CORS middleware, canonical MatchResult, signature collection endpoints
+- Arena: thread-safe SQLite (RLock), opponent_stocks for accurate scores
+- Netplay port detection via connect code (handles random port assignment + mirror matches)
+- Random character selection (pool of 23 viable characters)
+- Tiered operator UX (play → onchain → wager), one-time wallet nudge
+
 ### Active: Phase 2 — Moltiverse Hackathon (Feb 2-15, 2026)
 
 See `docs/SPEC.md` for full milestone plan. Summary:
 
 | Milestone | Owner | Status |
 |-----------|-------|--------|
-| M1: Contracts (MatchProof + Wager) | ScavieFae | TODO |
-| M2: Website | ScavieFae | TODO |
-| M3: Clean install + demo | Scav | TODO |
+| M1: Contracts (MatchProof + Wager) | ScavieFae | DONE — deployed to testnet |
+| M2: Website | ScavieFae | DONE — landing, leaderboard, match history live |
+| M3: Clean install + demo | Scav | In progress |
 | M4: Autonomous agent behavior | Scav | TODO |
 | M5: nad.fun token + social | Both | TODO |
 
@@ -278,9 +291,9 @@ See `docs/SPEC.md` for full milestone plan. Summary:
 - IdentityRegistry: `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432` (mainnet)
 - ReputationRegistry: `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63` (mainnet)
 
-**Our contracts (TODO — ScavieFae building):**
-- MatchProof.sol — dual-signed match results + replay hashes
-- Wager.sol — escrow + settlement reading from MatchProof
+**Our contracts (deployed to Monad testnet, chain 10143):**
+- MatchProof.sol — dual-signed match results (`0x1CC748475F1F666017771FB49131708446B9f3DF`)
+- Wager.sol — escrow + settlement (`0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d`)
 
 **Monad:** Chain 143, RPC `https://rpc.monad.xyz`, 0.4s blocks, 10K TPS
 
