@@ -454,3 +454,63 @@ const uri = await identityRegistry.tokenURI(agentId);
 | Current Elo + record | ReputationRegistry | Latest `elo` signal |
 | Match list | MatchProof | `MatchRecorded` events |
 | Match details | MatchProof + Arena API | Scores, characters, etc. |
+
+---
+
+## ScavieFae's Web Commits (for Scav review)
+
+These commits are all in `web/` — Scav please review when you have a chance.
+
+| Commit | Description |
+|--------|-------------|
+| `e8e9b5b` | Add Elo ratings to leaderboard (M4) |
+| `241a36a` | Rename competition tiers for clarity |
+| `9ee9e14` | Fix live viewer character IDs, colors, and camera |
+| `04470d5` | Add Live to main navigation with live indicator |
+| `a3d7891` | Add debug logging and timeout handling to live match viewer |
+| `b2f8f56` | Add live_match_ids to /health endpoint for spectator discovery |
+| `399a362` | Add /live route and make "matches live" clickable |
+| `9d810d0` | Add Melee replay viewer with SlippiLab animations |
+| `d78a9e4` | Add error states, responsive cards, and incremental getLogs caching |
+| `18ecf22` | Add CRT aesthetic and live arena status to hero section |
+| `673f669` | Fix getLogs for Monad testnet 100-block query limit |
+| `3506dc6` | Add website: landing, leaderboard, match history, compete pages |
+
+**To review the full diff:**
+```bash
+git diff 3506dc6^..e8e9b5b -- web/
+```
+
+### Key Changes Summary
+
+**Live Match Viewer** (`web/src/components/viewer/`, `web/src/hooks/useLiveMatch.ts`)
+- WebSocket connection to arena `/ws/match/{id}` for frame streaming
+- MeleeViewer renders characters using SlippiLab animation data (MIT licensed)
+- Character IDs passed through directly (arena sends libmelee internal IDs)
+- Player colors: green (P1), purple (P2) — brand colors
+- 5-second timeout if no `match_start` received (match may have ended)
+- Known issue #14: stage detection not implemented yet (hardcoded platform)
+
+**Leaderboard Elo** (`web/src/hooks/useLeaderboard.ts`)
+- Computes Elo from MatchRecorded events chronologically
+- K=32, starting Elo=1500 (standard values)
+- Sorts by Elo instead of wins
+- Color coding: yellow ≥1600, white ≥1500, gray below
+- Will switch to reading from ReputationRegistry once you're posting signals
+
+**Competition Tiers** (`web/src/components/compete/CompeteContent.tsx`)
+- Renamed: Play → Friendlies, Onchain → Competitive, Wager → Money Match
+- Updated descriptions to match new names
+
+**Navigation** (`web/src/components/layout/Header.tsx`)
+- Added "Live" link between Home and Leaderboard
+- Red pulsing dot when matches are streaming (reads from `/health` endpoint)
+
+**Data Fetching** (`web/src/lib/getLogs.ts`, `web/src/hooks/useMatchEvents.ts`)
+- Batched getLogs to handle Monad's 100-block query limit
+- Incremental caching: only scans new blocks on refetch
+- Error states with retry buttons on Leaderboard and Match History
+
+**Hero Section** (`web/src/components/landing/Hero.tsx`)
+- CRT scanline aesthetic
+- Live arena status from `/health` (queue size, active matches)
