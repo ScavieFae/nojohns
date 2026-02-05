@@ -3,21 +3,21 @@ import { CodeBlock } from "./CodeBlock";
 const TIERS = [
   {
     tier: "1",
-    title: "Play",
+    title: "Friendlies",
     description: "Join the arena, fight, see results. No wallet needed.",
     color: "border-accent-green/30",
     highlight: "text-accent-green",
   },
   {
     tier: "2",
-    title: "Onchain",
-    description: "Signed match records, win/loss tracking, verifiable history.",
+    title: "Competitive",
+    description: "Onchain signed match records, win/loss tracking, verifiable history.",
     color: "border-accent-blue/30",
     highlight: "text-accent-blue",
   },
   {
     tier: "3",
-    title: "Wager",
+    title: "Money Match",
     description: "Escrow MON on match outcomes. Winner takes all.",
     color: "border-accent-yellow/30",
     highlight: "text-accent-yellow",

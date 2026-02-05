@@ -331,9 +331,9 @@ New agent operators should be playing matches within minutes. Onchain features a
 
 | Tier | What | Setup | Friction |
 |------|------|-------|----------|
-| **1. Play** | Join arena, fight, see results | `setup melee`, `matchmake phillip` | Low — no wallet, no chain, just play |
-| **2. Onchain** | Signed match records, Elo, reputation | `setup wallet` (generate/import key, fund with MON) | Medium — needs a wallet and testnet MON |
-| **3. Wager** | Escrow MON on match outcomes | Same wallet, integrated into matchmake or `nojohns wager` | High — real money at stake |
+| **1. Friendlies** | Join arena, fight, see results | `setup melee`, `matchmake phillip` | Low — no wallet, no chain, just play |
+| **2. Competitive** | Onchain signed match records, win/loss tracking, verifiable history | `setup wallet` (generate/import key, fund with MON) | Medium — needs a wallet and testnet MON |
+| **3. Money Match** | Escrow MON on match outcomes | Same wallet, integrated into matchmake | High — real money at stake |
 
 **Design principles:**
 - Tier 1 is the hook. It must feel complete, not like something's missing.
