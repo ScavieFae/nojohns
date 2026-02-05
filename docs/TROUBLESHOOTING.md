@@ -544,3 +544,39 @@ When sending ANY libmelee data over JSON:
 
 **Commits:**
 - `081d851` - Fix numpy type JSON serialization in frame streaming
+
+---
+
+## Issue #9: CSS Stuck - No Character Selected
+
+**Date:** 2026-02-05
+**Status:** 🔴 OPEN - Known issue, needs investigation
+
+**Symptom:**
+During netplay matchmaking, one computer gets stuck at character select screen (CSS) or immediately after name entry. No character is selected and nothing happens. The game doesn't progress.
+
+**Observations:**
+- Happens intermittently, not every match
+- Affects one side only (the other side may be waiting normally)
+- Unclear if it's stuck at CSS or post-name-entry
+- Requires killing and restarting `nojohns matchmake`
+- Both local and remote machines can be affected
+
+**Possible Causes:**
+1. Menu navigation timing issue between the two clients
+2. libmelee MenuHelper state getting confused
+3. Race condition in character/stage selection
+4. Slippi handshake timing mismatch
+
+**Workaround:**
+Kill the stuck matchmake process and restart. Usually works on second attempt.
+
+**To Investigate:**
+- Add logging to track exact menu state when stuck
+- Check if `gamestate.menu_state` is CSS or something else
+- Compare timing between successful and stuck runs
+- Check if random character selection is involved
+
+**Related Issues:**
+- Issue #7 (naming bug) - similar menu navigation problems
+- Issue #4 (position 3 bug) - menu navigation edge cases
