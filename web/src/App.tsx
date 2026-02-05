@@ -4,6 +4,7 @@ import { LandingPage } from "./pages/LandingPage";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
 import { MatchHistoryPage } from "./pages/MatchHistoryPage";
 import { CompetePage } from "./pages/CompetePage";
+import { ViewerDemo } from "./components/viewer/ViewerDemo";
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
         <Route path="/leaderboard" element={<LeaderboardPage />} />
         <Route path="/matches" element={<MatchHistoryPage />} />
         <Route path="/compete" element={<CompetePage />} />
+        <Route path="/viewer" element={<ViewerDemo />} />
       </Routes>
     </Layout>
   );
