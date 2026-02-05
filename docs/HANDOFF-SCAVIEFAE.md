@@ -321,7 +321,7 @@ GET  /matches/{id}/wager           — get wager status
 
 ## M4: ERC-8004 Integration (updated day 5)
 
-We're integrating with the deployed ERC-8004 registries on Monad mainnet for agent identity and reputation.
+We're integrating with the deployed ERC-8004 registries on Monad for agent identity and reputation.
 
 ### What Scav is building (Python side)
 
@@ -334,21 +334,19 @@ We're integrating with the deployed ERC-8004 registries on Monad mainnet for age
 
 3. **Pre-match scouting** — query opponent's Elo before accepting match
 
-### What you're building (website side)
+### Website Changes — DONE
 
-1. **Agent identity display**
-   - Read agent metadata from IdentityRegistry: `tokenURI(agentId)` → registration JSON
-   - Display agent name, description, image on leaderboard and match history
-   - Consider `/agent/{agentId}` profile pages showing full history
+The website now computes Elo ratings from match history:
+- Standard Elo formula: K=32, starting Elo=1500
+- Sorted by Elo (highest first) instead of wins
+- Shows Elo in leaderboard table (desktop and mobile)
 
-2. **Elo from ReputationRegistry**
-   - Read latest `elo` signal for each agent (see schema below)
-   - Use for leaderboard ranking
-   - Display: Elo, peak Elo, record (W-L)
+**Files:**
+- `web/src/hooks/useLeaderboard.ts` — Elo computation from MatchRecorded events
+- `web/src/types/index.ts` — AgentStats now includes `elo: number`
+- `web/src/components/leaderboard/LeaderboardRow.tsx` — Elo display with color coding
 
-3. **Match history stays as-is**
-   - Keep reading from MatchProof events for the match list
-   - The Elo signal has the win/loss count; full match details come from MatchProof
+Future: Once Scav posts Elo signals to ReputationRegistry, website can switch from local computation to reading onchain data.
 
 ### Elo Signal Schema
 
@@ -365,6 +363,64 @@ Posted to ReputationRegistry after each match:
 ```
 
 This is the **current state**, not a delta. Query once to get current rating — no need to replay history.
+
+### ReputationRegistry Function Signatures
+
+**To post Elo (client calls this):**
+```solidity
+function giveFeedback(
+    uint256 agentId,        // agent's NFT ID from IdentityRegistry
+    int128 value,           // new Elo rating (e.g., 1532)
+    uint8 valueDecimals,    // 0 (Elo is an integer)
+    string calldata tag1,   // "elo"
+    string calldata tag2,   // game ID, e.g., "melee"
+    string calldata endpoint, // "" (not needed)
+    string calldata feedbackURI, // "" (not needed)
+    bytes32 feedbackHash    // keccak256 of match result for audit
+) external
+```
+
+**Suggested post-match flow:**
+1. After `recordMatch()` succeeds, compute new Elo for both players
+2. Call `giveFeedback(winnerId, newWinnerElo, 0, "elo", "melee", "", "", matchId)`
+3. Call `giveFeedback(loserId, newLoserElo, 0, "elo", "melee", "", "", matchId)`
+
+**Note:** `giveFeedback` cannot be called by the agent's owner. Use a separate "arena" account or have the opponent post each other's ratings.
+
+**To read Elo (for opponent scouting):**
+```solidity
+function getSummary(
+    uint256 agentId,
+    address[] calldata clientAddresses,  // who posted the ratings
+    string tag1,   // "elo"
+    string tag2    // "melee"
+) external view returns (
+    uint64 count,
+    int128 summaryValue,     // average Elo from specified clients
+    uint8 summaryValueDecimals
+)
+```
+
+**To read all feedback entries:**
+```solidity
+function readAllFeedback(
+    uint256 agentId,
+    address[] calldata clientAddresses,
+    string tag1,   // "elo"
+    string tag2,   // "melee"
+    bool includeRevoked
+) external view returns (
+    address[] memory clients,
+    uint64[] memory feedbackIndexes,
+    int128[] memory values,          // Elo ratings
+    uint8[] memory valueDecimals,
+    string[] memory tag1s,
+    string[] memory tag2s,
+    bool[] memory revokedStatuses
+)
+```
+
+The ABI is in `web/src/abi/reputationRegistry.ts` — copy to Python or use the function signatures above.
 
 ### Reading from IdentityRegistry
 
@@ -389,25 +445,6 @@ const uri = await identityRegistry.tokenURI(agentId);
   }
 }
 ```
-
-### Reading from ReputationRegistry
-
-```javascript
-// Get all feedback for an agent
-const feedback = await reputationRegistry.readAllFeedback(agentId);
-// Filter for signal_type: "elo", game: "melee"
-// Take the most recent one for current Elo
-```
-
-### Contract Addresses (same as before)
-
-**Mainnet (chain 143):**
-- IdentityRegistry: `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
-- ReputationRegistry: `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63`
-
-**Testnet (chain 10143):**
-- IdentityRegistry: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
-- ReputationRegistry: `0x8004B663056A597Dffe9eCcC1965A193B7388713`
 
 ### Data Source Summary
 

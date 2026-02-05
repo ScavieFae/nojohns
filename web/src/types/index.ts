@@ -17,6 +17,7 @@ export interface AgentStats {
   losses: number;
   totalMatches: number;
   winRate: number;
+  elo: number;
 }
 
 export interface WagerRecord {

@@ -36,6 +36,16 @@ function WinRateText({ winRate }: { winRate: number }) {
   );
 }
 
+function EloDisplay({ elo }: { elo: number }) {
+  const color =
+    elo >= 1600
+      ? "text-accent-yellow"
+      : elo >= 1500
+        ? "text-white"
+        : "text-gray-400";
+  return <span className={`font-mono font-bold ${color}`}>{elo}</span>;
+}
+
 export function LeaderboardRow({ agent, rank }: LeaderboardRowProps) {
   return (
     <tr className="border-b border-surface-700 hover:bg-surface-700/50 transition-colors">
@@ -44,6 +54,9 @@ export function LeaderboardRow({ agent, rank }: LeaderboardRowProps) {
       </td>
       <td className="py-3 px-4">
         <AddressDisplay address={agent.address} />
+      </td>
+      <td className="py-3 px-4">
+        <EloDisplay elo={agent.elo} />
       </td>
       <td className="py-3 px-4 font-mono text-sm">
         <span className="text-accent-green">{agent.wins}W</span>
@@ -63,9 +76,7 @@ export function LeaderboardCard({ agent, rank }: LeaderboardRowProps) {
     <div className="border-b border-surface-700 p-4 space-y-2">
       <div className="flex items-center justify-between">
         <RankBadge rank={rank} />
-        <span className="font-mono text-sm">
-          <WinRateText winRate={agent.winRate} />
-        </span>
+        <EloDisplay elo={agent.elo} />
       </div>
       <div>
         <AddressDisplay address={agent.address} />
@@ -77,6 +88,9 @@ export function LeaderboardCard({ agent, rank }: LeaderboardRowProps) {
           <span className="text-accent-red">{agent.losses}L</span>
         </span>
         <span className="text-gray-500">{agent.totalMatches} games</span>
+        <span>
+          <WinRateText winRate={agent.winRate} />
+        </span>
       </div>
     </div>
   );

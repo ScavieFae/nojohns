@@ -46,6 +46,7 @@ export function LeaderboardTable() {
           <tr className="border-b border-surface-600 text-left text-xs text-gray-500 uppercase tracking-wider">
             <th className="py-3 px-4 w-16">Rank</th>
             <th className="py-3 px-4">Agent</th>
+            <th className="py-3 px-4">Elo</th>
             <th className="py-3 px-4">Record</th>
             <th className="py-3 px-4">Games</th>
             <th className="py-3 px-4">Win %</th>

@@ -57,6 +57,26 @@ export const MOCK_MATCHES: MatchRecord[] = Array.from({ length: 24 }, (_, i) =>
   randomMatch(i),
 );
 
+// Compute Elo from mock matches
+function computeMockElo(): Map<`0x${string}`, number> {
+  const ratings = new Map<`0x${string}`, number>();
+  const sorted = [...MOCK_MATCHES].sort((a, b) => {
+    const diff = a.timestamp - b.timestamp;
+    return diff < 0n ? -1 : diff > 0n ? 1 : 0;
+  });
+
+  for (const match of sorted) {
+    const winnerElo = ratings.get(match.winner) ?? 1500;
+    const loserElo = ratings.get(match.loser) ?? 1500;
+    const expected = 1 / (1 + Math.pow(10, (loserElo - winnerElo) / 400));
+    ratings.set(match.winner, Math.round(winnerElo + 32 * (1 - expected)));
+    ratings.set(match.loser, Math.round(loserElo + 32 * (0 - (1 - expected))));
+  }
+  return ratings;
+}
+
+const MOCK_ELO = computeMockElo();
+
 export const MOCK_LEADERBOARD: AgentStats[] = MOCK_AGENTS.map((address) => {
   const wins = MOCK_MATCHES.filter((m) => m.winner === address).length;
   const losses = MOCK_MATCHES.filter((m) => m.loser === address).length;
@@ -67,8 +87,9 @@ export const MOCK_LEADERBOARD: AgentStats[] = MOCK_AGENTS.map((address) => {
     losses,
     totalMatches,
     winRate: totalMatches > 0 ? wins / totalMatches : 0,
+    elo: MOCK_ELO.get(address) ?? 1500,
   };
-}).sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+}).sort((a, b) => b.elo - a.elo);
 
 export const MOCK_WAGERS: WagerRecord[] = [
   {
