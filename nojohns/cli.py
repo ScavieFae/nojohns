@@ -86,7 +86,7 @@ def _resolve_args(args, game_cfg: GameConfig | None, nj_cfg: NojohnsConfig):
         args.delay = game_cfg.online_delay if game_cfg and game_cfg.online_delay is not None else 6
     # throttle: CLI > config > hardcoded default
     if hasattr(args, "throttle") and args.throttle is None:
-        args.throttle = game_cfg.input_throttle if game_cfg and game_cfg.input_throttle is not None else 3
+        args.throttle = game_cfg.input_throttle if game_cfg and game_cfg.input_throttle is not None else 1
     # replay_dir: CLI > config (default None = no replay saving)
     if hasattr(args, "replay_dir") and args.replay_dir is None and game_cfg and game_cfg.replay_dir:
         args.replay_dir = game_cfg.replay_dir
@@ -221,7 +221,7 @@ def _setup_melee():
 
     # Delay and throttle — keep existing or use defaults
     delay = current.get("online_delay", 6)
-    throttle = current.get("input_throttle", 3)
+    throttle = current.get("input_throttle", 1)
     melee_lines.append(f"online_delay = {delay}")
     melee_lines.append(f"input_throttle = {throttle}")
 

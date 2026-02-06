@@ -433,7 +433,7 @@ validation that requires "netplay" in the path.
 
 13. **`--dolphin-home` required for netplay**: Without it, Dolphin creates a temp home dir with no Slippi account and crashes on connect. The `nojohns setup melee` wizard stores this in config.
 
-14. **AI input throttle**: AI sends 60 inputs/sec vs humans ~1-5/sec. This overwhelms Slippi's rollback netcode and causes desyncs. Default `input_throttle=3` (20 inputs/sec). Configurable in `~/.nojohns/config.toml`.
+14. **AI input throttle**: Historically defaulted to 3 (20 inputs/sec) to reduce rollback pressure, but this degraded neural net fighters like Phillip whose models expect every-frame input. Now defaults to `input_throttle=1` (60 inputs/sec). Configurable in `~/.nojohns/config.toml`. Increase if you see desyncs on slow connections.
 
 15. **Game-end detection**: libmelee's `action.value` stability check is too strict for netplay. Detect game end on stocks hitting 0 directly, skip the action state check.
 

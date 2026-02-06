@@ -14,7 +14,7 @@ Example:
     connect_code = "SCAV#382"
     dolphin_home = "~/Library/Application Support/Slippi Dolphin"
     online_delay = 6
-    input_throttle = 3
+    input_throttle = 1
 
     [arena]
     server = "http://localhost:8000"

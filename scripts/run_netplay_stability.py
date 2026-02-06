@@ -55,7 +55,7 @@ CHARACTERS = [
 ]
 
 DELAY = 6
-INPUT_THROTTLE = 3  # Get new AI input every N frames (3 = 20 inputs/sec instead of 60)
+INPUT_THROTTLE = 1  # Get new AI input every frame (no throttle)
 MATCHES_TO_RUN = 10
 SUCCESS_THRESHOLD_SECONDS = 180  # Match is "successful" if it lasts 180+ seconds (3 min)
 
