@@ -841,57 +841,71 @@ def cmd_fight(args):
         return 1
 
 
-def _sign_and_submit(match_id: str, outcome: str, _get, _post):
+def _sign_and_submit(match_id: str, outcome: str, _get, _post) -> bool:
     """Sign a match result with EIP-712 and submit to the arena.
 
     Reads the canonical MatchResult from the arena (deterministic fields
     computed server-side) so both agents sign the exact same data.
 
+    Returns True if signing + submission succeeded, False otherwise.
     Skips silently if wallet or eth-account is not configured.
     """
     import hashlib
 
     if outcome != "COMPLETED":
         logger.debug(f"Outcome '{outcome}' — skipping match signing (match void)")
-        return
+        return False
 
     nj_cfg = load_config()
     if nj_cfg.wallet is None or nj_cfg.wallet.private_key is None:
         logger.debug("No wallet configured — skipping match signing")
-        return
+        return False
     if nj_cfg.chain is None:
         logger.debug("No chain configured — skipping match signing")
-        return
+        return False
     if nj_cfg.chain.match_proof is None:
         logger.debug("No MatchProof contract address — skipping match signing")
-        return
+        return False
 
     try:
         from nojohns.wallet import load_wallet, sign_match_result
     except ImportError:
         logger.warning("eth-account not installed — skipping match signing (pip install nojohns[wallet])")
-        return
+        return False
 
     account = load_wallet(nj_cfg)
     if account is None:
-        return
+        return False
 
-    # Read the canonical result from the arena — both agents get the same data
-    try:
-        match_data = _get(f"/matches/{match_id}")
-    except Exception as e:
-        logger.warning(f"Failed to fetch match data for signing: {e}")
-        return
+    # Read the canonical result from the arena — both agents get the same data.
+    # Poll briefly: our result may arrive before the opponent's, and the arena
+    # only marks the match "completed" once both sides report.
+    import time as _time
 
-    if match_data.get("status") != "completed":
-        logger.debug("Match not yet completed — skipping signing")
-        return
+    match_data = None
+    for attempt in range(10):
+        try:
+            match_data = _get(f"/matches/{match_id}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch match data for signing: {e}")
+            return False
+
+        if match_data.get("status") == "completed":
+            break
+
+        if attempt < 9:
+            logger.info(f"Waiting for match completion ({attempt + 1}/10)...")
+            _time.sleep(1)
+
+    if match_data is None or match_data.get("status") != "completed":
+        logger.warning("Match not completed after 10s — skipping signing")
+        return False
 
     winner_wallet = match_data.get("winner_wallet")
     loser_wallet = match_data.get("loser_wallet")
     if not winner_wallet or not loser_wallet:
         logger.debug("Match missing wallet addresses — skipping signing")
-        return
+        return False
 
     # Build MatchResult from the arena's canonical fields
     match_result = {
@@ -922,10 +936,11 @@ def _sign_and_submit(match_id: str, outcome: str, _get, _post):
         logger.info("Signature submitted to arena.")
     except Exception as e:
         logger.warning(f"Failed to sign/submit match result: {e}")
-        return
+        return False
 
     # --- Onchain submission: poll for both signatures, then recordMatch() ---
     _try_record_onchain(match_id, match_result, nj_cfg, account, _get)
+    return True
 
 
 def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
@@ -1553,7 +1568,7 @@ def cmd_matchmake(args):
             logger.warning(f"Failed to report result: {e}")
 
         # --- Step 5: Sign canonical match result from arena ---
-        _sign_and_submit(match_id, outcome, _get, _post)
+        signed = _sign_and_submit(match_id, outcome, _get, _post)
 
         # --- Step 6: Auto-settle wager if we had one ---
         if wager_id is not None and outcome == "COMPLETED":
@@ -1572,8 +1587,10 @@ def cmd_matchmake(args):
         else:
             print(f"  {args.fighter} vs {opponent_code}  —  ERROR")
         print(f"  Duration: {duration:.0f}s  |  Match: {match_id[:8]}...")
-        if nj_cfg.wallet and nj_cfg.wallet.address:
+        if signed:
             print(f"  Signed: yes  |  Wallet: {nj_cfg.wallet.address[:10]}...")
+        elif nj_cfg.wallet and nj_cfg.wallet.address:
+            print(f"  Signed: FAILED  |  Wallet: {nj_cfg.wallet.address[:10]}...")
         if wager_id is not None:
             pot_mon = (wager_amount or 0) * 2 / 10**18
             print(f"  Wager: {pot_mon} MON pot  |  ID: {wager_id}")
