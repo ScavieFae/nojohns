@@ -5,12 +5,12 @@
  * or allows loading replay files for testing.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { MeleeViewer } from "../components/viewer/MeleeViewer";
 import { useLiveMatch } from "../hooks/useLiveMatch";
 import { useArenaHealth } from "../hooks/useArenaHealth";
-import { loadReplayFile, type ParsedReplay } from "../lib/replayParser";
+import { loadReplayFile, parseReplay, type ParsedReplay } from "../lib/replayParser";
 import { useReplayPlayback } from "../hooks/useReplayPlayback";
 
 function LiveMatchViewer({ matchId }: { matchId: string }) {
@@ -96,6 +96,136 @@ function LiveMatchViewer({ matchId }: { matchId: string }) {
 
       {/* Viewer */}
       <MeleeViewer frame={currentFrame} />
+    </div>
+  );
+}
+
+function DemoReplayViewer() {
+  const [replay, setReplay] = useState<ParsedReplay | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [playbackState, controls] = useReplayPlayback(replay);
+
+  // Auto-load demo replay on mount
+  useEffect(() => {
+    async function loadDemo() {
+      try {
+        const response = await fetch("/sample.slp");
+        if (!response.ok) throw new Error("Failed to fetch demo replay");
+        const buffer = await response.arrayBuffer();
+        const parsed = parseReplay(buffer);
+        setReplay(parsed);
+        setLoading(false);
+        // Auto-play after a short delay
+        setTimeout(() => controls.play(), 500);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load demo");
+        setLoading(false);
+      }
+    }
+    loadDemo();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96 bg-surface-800 rounded-lg">
+        <div className="text-center">
+          <div className="animate-spin w-8 h-8 border-2 border-accent-green border-t-transparent rounded-full mx-auto mb-4" />
+          <p className="text-gray-400">Loading demo match...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !replay) {
+    return (
+      <div className="flex items-center justify-center h-96 bg-surface-800 rounded-lg">
+        <div className="text-center">
+          <p className="text-red-400 mb-2">Failed to load demo</p>
+          <p className="text-gray-500 text-sm">{error}</p>
+          <Link to="/live" className="mt-4 inline-block text-accent-green hover:underline">
+            ← Back to live matches
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Match info */}
+      <div className="flex justify-between items-center mb-4 px-4">
+        <div className="flex items-center gap-4">
+          {replay.settings.players.map((p, i) => (
+            <span key={p.port} className="font-mono text-gray-300">
+              {i > 0 && <span className="text-gray-600 mx-2">vs</span>}
+              {p.displayName}
+            </span>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-1 bg-accent-blue/20 text-accent-blue text-xs font-mono rounded">
+            DEMO
+          </span>
+          <span className="text-gray-500 text-sm">
+            Frame {playbackState.currentFrameIndex + 1} / {playbackState.totalFrames}
+          </span>
+        </div>
+      </div>
+
+      {/* Viewer */}
+      <MeleeViewer frame={playbackState.currentFrame} />
+
+      {/* Playback controls */}
+      <div className="mt-4 flex items-center justify-center gap-4">
+        <button
+          onClick={controls.stepBackward}
+          className="px-3 py-1 bg-surface-700 rounded hover:bg-surface-600"
+        >
+          ←
+        </button>
+        <button
+          onClick={controls.togglePlayPause}
+          className="px-4 py-2 bg-accent-green text-black rounded font-semibold hover:bg-green-400"
+        >
+          {playbackState.isPlaying ? "Pause" : "Play"}
+        </button>
+        <button
+          onClick={controls.stepForward}
+          className="px-3 py-1 bg-surface-700 rounded hover:bg-surface-600"
+        >
+          →
+        </button>
+        <select
+          value={playbackState.speed}
+          onChange={(e) => controls.setSpeed(parseFloat(e.target.value))}
+          className="px-2 py-1 bg-surface-700 rounded text-sm"
+        >
+          <option value="0.25">0.25x</option>
+          <option value="0.5">0.5x</option>
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+        </select>
+      </div>
+
+      {/* Seek bar */}
+      <div className="mt-4 px-4">
+        <input
+          type="range"
+          min={0}
+          max={playbackState.totalFrames - 1}
+          value={playbackState.currentFrameIndex}
+          onChange={(e) => controls.seek(parseInt(e.target.value, 10))}
+          className="w-full accent-accent-green"
+        />
+      </div>
+
+      {/* Back link */}
+      <div className="mt-6 text-center">
+        <Link to="/live" className="text-gray-500 hover:text-gray-400 text-sm">
+          ← Back to live matches
+        </Link>
+      </div>
     </div>
   );
 }
@@ -234,7 +364,10 @@ export function LivePage() {
         </Link>
       </div>
 
-      {matchId ? (
+      {matchId === "demo" ? (
+        // Demo replay
+        <DemoReplayViewer />
+      ) : matchId ? (
         // Viewing a specific live match
         <LiveMatchViewer matchId={matchId} />
       ) : (
@@ -256,24 +389,41 @@ export function LivePage() {
                 <span className="text-gray-400">No live matches right now</span>
               )}
             </div>
-            {health?.live_match_ids && health.live_match_ids.length > 0 && (
-              <div className="mt-4 space-y-2">
-                <p className="text-gray-400 text-sm">Click to spectate:</p>
-                {health.live_match_ids.map((id) => (
-                  <Link
-                    key={id}
-                    to={`/live/${id}`}
-                    className="block p-3 bg-surface-700 rounded hover:bg-surface-600 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                      <span className="font-mono text-sm">{id}</span>
-                      <span className="text-gray-500 text-xs ml-auto">LIVE</span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
+            <div className="mt-4 space-y-2">
+              {health?.live_match_ids && health.live_match_ids.length > 0 && (
+                <>
+                  <p className="text-gray-400 text-sm">Click to spectate:</p>
+                  {health.live_match_ids.map((id) => (
+                    <Link
+                      key={id}
+                      to={`/live/${id}`}
+                      className="block p-3 bg-surface-700 rounded hover:bg-surface-600 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                        <span className="font-mono text-sm">{id}</span>
+                        <span className="text-gray-500 text-xs ml-auto">LIVE</span>
+                      </div>
+                    </Link>
+                  ))}
+                </>
+              )}
+
+              {/* Demo match - always available */}
+              <Link
+                to="/live/demo"
+                className="block p-3 bg-surface-700 rounded hover:bg-surface-600 transition-colors border border-accent-blue/30"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-accent-blue rounded-full" />
+                  <span className="font-mono text-sm">Demo Match</span>
+                  <span className="text-accent-blue text-xs ml-auto">REPLAY</span>
+                </div>
+                <p className="text-gray-500 text-xs mt-1">
+                  Watch a sample match to see the viewer in action
+                </p>
+              </Link>
+            </div>
           </div>
 
           {/* Replay viewer */}
