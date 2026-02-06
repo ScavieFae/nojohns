@@ -94,7 +94,7 @@ export function ViewerDemo() {
       )}
 
       {/* Viewer */}
-      <MeleeViewer frame={playback.currentFrame} width={730} height={500} />
+      <MeleeViewer frame={playback.currentFrame} />
 
       {/* Playback controls */}
       {replay && (

@@ -30,8 +30,6 @@ export interface MatchFrame {
 
 interface MeleeViewerProps {
   frame: MatchFrame | null;
-  width?: number;
-  height?: number;
 }
 
 // Player colors (port 1-4) - brand colors
@@ -99,7 +97,7 @@ function PlayerRenderer({
   );
 }
 
-export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerProps) {
+export function MeleeViewer({ frame }: MeleeViewerProps) {
   const [loadedChars, setLoadedChars] = useState<Set<number>>(new Set());
 
   // Load animations for characters in the frame
@@ -138,8 +136,7 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
   if (!frame) {
     return (
       <div
-        className="bg-surface-800 rounded-lg flex items-center justify-center"
-        style={{ width, height }}
+        className="bg-surface-800 rounded-lg flex items-center justify-center w-full aspect-[73/60]"
       >
         <span className="text-gray-500">Waiting for match data...</span>
       </div>
@@ -147,12 +144,10 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
   }
 
   return (
-    <div className="bg-surface-800 rounded-lg overflow-hidden" style={{ width, height }}>
+    <div className="bg-surface-800 rounded-lg overflow-hidden w-full">
       <svg
         viewBox="-140 -120 280 200"
-        width={width}
-        height={height}
-        className="bg-surface-900"
+        className="w-full h-auto bg-surface-900"
         preserveAspectRatio="xMidYMid meet"
       >
         {/* Coordinate system: Y-axis inverted (positive = up) */}
