@@ -171,7 +171,7 @@ When prompted:
 - **ISO path**: wherever you placed your Melee ISO
 - **Connect code**: your Slippi code (e.g. `ABCD#123`)
 
-Config is stored in `%USERPROFILE%\.nojohns\config.toml`.
+Config is stored in `%APPDATA%\nojohns\config.toml`.
 
 ## Step 6: Install Phillip (Neural Net Fighter)
 
@@ -189,7 +189,8 @@ git clone https://github.com/vladfi1/slippi-ai.git fighters\phillip\slippi-ai
 
 mkdir fighters\phillip\models
 # Download model weights (~40 MB)
-curl -L -o fighters\phillip\models\all_d21_imitation_v3.pkl ^
+# curl.exe is included in Windows 10+
+curl.exe -L -o fighters\phillip\models\all_d21_imitation_v3.pkl `
   "https://dl.dropbox.com/scl/fi/bppnln3rfktxfdocottuw/all_d21_imitation_v3?rlkey=46yqbsp7vi5222x04qt4npbkq&st=6knz106y&dl=1"
 ```
 

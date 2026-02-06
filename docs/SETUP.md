@@ -280,7 +280,9 @@ or directly via Slippi connect codes.
 
 ### Via Arena (Recommended)
 
-One machine starts the server, both sides matchmake:
+One machine starts the server, both sides matchmake. If you've run
+`nojohns setup melee`, paths/code/server are in config and these
+commands get much shorter.
 
 ```bash
 # Machine 1: Start the arena server
@@ -291,7 +293,6 @@ One machine starts the server, both sides matchmake:
 .venv/bin/python -m nojohns.cli matchmake phillip \
   --code YOUR_CODE --server http://localhost:8000 \
   --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  --delay 6 --throttle 3 \
   -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/melee.iso
 
@@ -306,7 +307,7 @@ One machine starts the server, both sides matchmake:
 
 ```bash
 .venv/bin/python -m nojohns.cli netplay phillip \
-  --code "OPPONENT_CODE" --delay 6 --throttle 3 \
+  --code "OPPONENT_CODE" \
   --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
   -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
   -i ~/games/melee/melee.iso
@@ -314,8 +315,8 @@ One machine starts the server, both sides matchmake:
 
 **Key flags:**
 - `--dolphin-home`: Points to Slippi's config dir (has your login). Required for netplay.
-- `--delay 6`: Online delay frames. Lower values cause desyncs under AI input load.
-- `--throttle 3`: AI sends input every 3rd frame (20/sec instead of 60). Prevents desync.
+- `--delay N`: Online delay frames (default: 6). Lower values cause desyncs under AI input load.
+- `--throttle N`: AI input throttle (default: 1 = every frame). Increase if you see desyncs on slow connections.
 - `-d`: Dolphin path — must be the Slippi Launcher's `netplay/` directory.
 
 ## Troubleshooting

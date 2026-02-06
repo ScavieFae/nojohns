@@ -1,11 +1,13 @@
 """
 nojohns/config.py - Local configuration management
 
-Reads user config from ~/.nojohns/config.toml. Game-specific settings
-live under [games.<game>] sections. Currently only melee exists; when
-a second game arrives, it gets [games.rivals] or similar — no refactor needed.
+Reads user config from a platform-appropriate config directory:
+  - macOS/Linux: ~/.nojohns/config.toml
+  - Windows: %APPDATA%\\nojohns\\config.toml
 
-Config file location: ~/.nojohns/config.toml
+Game-specific settings live under [games.<game>] sections. Currently only
+melee exists; when a second game arrives, it gets [games.rivals] or similar
+— no refactor needed.
 
 Example:
     [games.melee]
@@ -21,6 +23,8 @@ Example:
 """
 
 import logging
+import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,7 +35,30 @@ logger = logging.getLogger(__name__)
 # Constants
 # ============================================================================
 
-CONFIG_DIR = Path.home() / ".nojohns"
+
+def _get_config_dir() -> Path:
+    """Get platform-appropriate config directory."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "nojohns"
+    return Path.home() / ".nojohns"
+
+
+def default_dolphin_path() -> str:
+    """Platform-appropriate default Dolphin path for setup prompts."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return str(Path(appdata) / "Slippi Launcher" / "netplay")
+        return ""
+    elif sys.platform == "darwin":
+        return "~/Library/Application Support/Slippi Launcher/netplay"
+    else:
+        return "~/.config/Slippi Launcher/netplay"
+
+
+CONFIG_DIR = _get_config_dir()
 CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 

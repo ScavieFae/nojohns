@@ -25,6 +25,7 @@ from nojohns.config import (
     CONFIG_PATH,
     GameConfig,
     NojohnsConfig,
+    default_dolphin_path,
     load_config,
 )
 
@@ -174,9 +175,7 @@ def _setup_melee():
     print()
 
     # Dolphin path
-    default_dolphin = current.get(
-        "dolphin", "~/Library/Application Support/Slippi Launcher/netplay"
-    )
+    default_dolphin = current.get("dolphin", default_dolphin_path())
     dolphin = input(f"Dolphin path [{default_dolphin}]: ").strip() or default_dolphin
 
     # Validate
@@ -317,16 +316,12 @@ def _setup_melee_phillip():
     if not model_path.exists():
         print("Downloading model weights (~40 MB)...")
         models_dir.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            [
-                "curl", "-L", "-o", str(model_path),
-                "https://dl.dropbox.com/scl/fi/bppnln3rfktxfdocottuw/all_d21_imitation_v3?rlkey=46yqbsp7vi5222x04qt4npbkq&st=6knz106y&dl=1",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            logger.error(f"Model download failed:\n{result.stderr}")
+        import urllib.request
+        model_url = "https://dl.dropbox.com/scl/fi/bppnln3rfktxfdocottuw/all_d21_imitation_v3?rlkey=46yqbsp7vi5222x04qt4npbkq&st=6knz106y&dl=1"
+        try:
+            urllib.request.urlretrieve(model_url, str(model_path))
+        except Exception as e:
+            logger.error(f"Model download failed: {e}")
             return 1
         print("  Model downloaded")
     else:
@@ -2205,7 +2200,7 @@ def main():
     netplay_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game (default: 4)")
     netplay_parser.add_argument("--time", "-t", type=int, default=8, help="Time limit in minutes (default: 8)")
     netplay_parser.add_argument("--delay", type=int, default=None, help="Online input delay in frames (default: 6)")
-    netplay_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 3)")
+    netplay_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 1)")
     netplay_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
     netplay_parser.add_argument("--replay-dir", default=None, help="Directory to save Slippi replays")
     netplay_parser.set_defaults(func=cmd_netplay)
@@ -2238,7 +2233,7 @@ def main():
     mm_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game (default: 4)")
     mm_parser.add_argument("--time", "-t", type=int, default=8, help="Time limit in minutes (default: 8)")
     mm_parser.add_argument("--delay", type=int, default=None, help="Online input delay in frames (default: 6)")
-    mm_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 3)")
+    mm_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle (default: 1)")
     mm_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
     mm_parser.add_argument("--replay-dir", default=None, help="Directory to save Slippi replays")
     mm_parser.add_argument("--headless", action="store_true", help="Run without display (faster, for servers)")
