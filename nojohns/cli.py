@@ -91,6 +91,9 @@ def _resolve_args(args, game_cfg: GameConfig | None, nj_cfg: NojohnsConfig):
     # replay_dir: CLI > config (default None = no replay saving)
     if hasattr(args, "replay_dir") and args.replay_dir is None and game_cfg and game_cfg.replay_dir:
         args.replay_dir = game_cfg.replay_dir
+    # wager: CLI > config (default None = no wager)
+    if hasattr(args, "wager") and args.wager is None and game_cfg and game_cfg.wager_amount is not None:
+        args.wager = game_cfg.wager_amount
 
 
 def _require_melee_args(args) -> bool:
@@ -1145,9 +1148,14 @@ def _negotiate_wager(
     server: str,
     _get,
     _post,
+    wager_amount: float | None = None,
 ) -> tuple[int | None, int | None]:
     """
     Handle wager negotiation after match is made, before game starts.
+
+    Fully autonomous — no interactive prompts. Behavior driven by wager_amount:
+      - None → skip wagering entirely
+      - float → auto-propose that amount, auto-accept opponent proposals ≤ that amount
 
     Returns (wager_id, wager_amount_wei) or (None, None) if no wager.
     """
@@ -1156,13 +1164,20 @@ def _negotiate_wager(
 
     from nojohns.wallet import load_wallet, propose_wager, accept_wager
 
+    # No wager amount configured → skip entirely
+    if wager_amount is None:
+        return None, None
+
     # Check if opponent has a wallet (required for wagers)
     if not opponent_wallet:
+        logger.info("Opponent has no wallet — skipping wager.")
         return None, None
 
     account = load_wallet(config)
     if account is None:
         return None, None
+
+    max_amount_wei = int(wager_amount * 10**18)
 
     # Check current wager status
     try:
@@ -1170,49 +1185,17 @@ def _negotiate_wager(
     except urllib.error.URLError:
         return None, None
 
-    # If opponent already proposed, we respond
+    # If opponent already proposed, respond automatically
     if wager_info.get("wager_status") == "proposed":
         return _respond_to_wager(
-            match_id, queue_id, wager_info, account, config, _get, _post
+            match_id, queue_id, wager_info, account, config, _get, _post,
+            max_amount_wei=max_amount_wei,
         )
 
-    # Otherwise, prompt user if they want to propose
-    print()
-    try:
-        amount_str = input("Add a wager? [MON amount, or Enter to skip]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        amount_str = ""
+    # Propose our wager amount
+    amount_wei = max_amount_wei
+    amount_mon = wager_amount
 
-    if not amount_str:
-        # User skipped — but check if opponent proposed while we were deciding
-        print("Checking for opponent wager...", end="", flush=True)
-        import time
-        for _ in range(5):  # Poll for 5 seconds
-            time.sleep(1)
-            print(".", end="", flush=True)
-            try:
-                wager_info = _get(f"/matches/{match_id}/wager")
-                if wager_info.get("wager_status") == "proposed":
-                    print(" found!")
-                    return _respond_to_wager(
-                        match_id, queue_id, wager_info, account, config, _get, _post
-                    )
-            except urllib.error.URLError:
-                continue
-        print(" none.")
-        return None, None
-
-    try:
-        amount_mon = float(amount_str)
-        amount_wei = int(amount_mon * 10**18)
-    except ValueError:
-        print("Invalid amount, skipping wager.")
-        return None, None
-
-    if amount_wei <= 0:
-        return None, None
-
-    # Propose onchain
     print(f"Proposing {amount_mon} MON wager...")
     try:
         tx_hash, wager_id = propose_wager(
@@ -1240,7 +1223,6 @@ def _negotiate_wager(
         print(f"Warning: couldn't register wager with arena: {e}")
 
     # Wait for opponent to accept (30s timeout)
-    # Also check if opponent proposed same amount — auto-accept if so
     print("Waiting for opponent to accept (30s)...", end="", flush=True)
     deadline = time.time() + 30
     while time.time() < deadline:
@@ -1264,32 +1246,39 @@ def _negotiate_wager(
                     print(f"Warning: cancel wager {wager_id} manually to get refund.")
                 return None, None
 
-            # Check if opponent also proposed — auto-accept if same amount
+            # Check if opponent also proposed — auto-accept if within our max
             opponent_amount = wager_info.get("wager_amount")
             opponent_wager_id = wager_info.get("wager_id")
             proposer = wager_info.get("wager_proposer")
-            # If opponent proposed (not us) with same amount, accept theirs
             if (opponent_wager_id and opponent_wager_id != wager_id and
-                opponent_amount == amount_wei and proposer != account.address):
-                print(" opponent proposed same amount!")
-                print("Auto-accepting opponent's wager...")
-                try:
-                    from nojohns.wallet import accept_wager, cancel_wager
-                    # Accept opponent's wager
-                    accept_wager(
-                        account=account,
-                        rpc_url=config.chain.rpc_url,
-                        contract_address=config.chain.wager,
-                        wager_id=opponent_wager_id,
-                        amount_wei=amount_wei,
-                    )
-                    # Cancel our own wager to get refund
-                    cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
-                    print(f"Wager locked! Pot: {amount_mon * 2} MON")
-                    _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
-                    return opponent_wager_id, amount_wei
-                except Exception as e:
-                    print(f"Auto-accept failed: {e}")
+                proposer != account.address and opponent_amount is not None):
+                if opponent_amount <= max_amount_wei:
+                    print(f" opponent proposed {opponent_amount / 10**18} MON!")
+                    print("Auto-accepting opponent's wager...")
+                    try:
+                        from nojohns.wallet import accept_wager, cancel_wager
+                        accept_wager(
+                            account=account,
+                            rpc_url=config.chain.rpc_url,
+                            contract_address=config.chain.wager,
+                            wager_id=opponent_wager_id,
+                            amount_wei=opponent_amount,
+                        )
+                        # Cancel our own wager to get refund
+                        cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
+                        pot_mon = opponent_amount * 2 / 10**18
+                        print(f"Wager locked! Pot: {pot_mon} MON")
+                        _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
+                        return opponent_wager_id, opponent_amount
+                    except Exception as e:
+                        print(f"Auto-accept failed: {e}")
+                else:
+                    print(f" opponent wants {opponent_amount / 10**18} MON (> our max {wager_amount}).")
+                    print("Declining opponent's wager.")
+                    try:
+                        _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
+                    except urllib.error.URLError:
+                        pass
 
         except urllib.error.URLError:
             continue
@@ -1313,8 +1302,13 @@ def _respond_to_wager(
     config,
     _get,
     _post,
+    max_amount_wei: int | None = None,
 ) -> tuple[int | None, int | None]:
-    """Respond to an opponent's wager proposal."""
+    """
+    Respond to an opponent's wager proposal.
+
+    Fully autonomous — auto-accept if amount ≤ max_amount_wei, decline otherwise.
+    """
     import urllib.error
 
     from nojohns.wallet import accept_wager
@@ -1323,24 +1317,20 @@ def _respond_to_wager(
     wager_id = wager_info.get("wager_id")
     amount_mon = amount_wei / 10**18
 
-    print()
     print(f"Opponent proposed {amount_mon} MON wager.")
-    try:
-        response = input("Accept? [y/N]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        response = "n"
 
-    if response != "y":
-        # Decline
+    # Decline if over our max (or no max configured)
+    if max_amount_wei is None or amount_wei > max_amount_wei:
+        max_mon = max_amount_wei / 10**18 if max_amount_wei else 0
+        print(f"Declining — exceeds our max ({max_mon} MON).")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
         except urllib.error.URLError:
             pass
-        print("Wager declined, playing without stakes.")
         return None, None
 
     # Accept onchain
-    print(f"Accepting wager...")
+    print(f"Auto-accepting {amount_mon} MON wager...")
     try:
         tx_hash = accept_wager(
             account=account,
@@ -1479,12 +1469,12 @@ def cmd_matchmake(args):
                 _delete(f"/queue/{queue_id}")
                 return 1
 
-        # --- Step 2.5: Wager negotiation (optional, 15s window) ---
+        # --- Step 2.5: Wager negotiation (autonomous, driven by --wager flag) ---
         wager_id = None
         wager_amount = None
         opponent_wallet = result.get("opponent_wallet")
 
-        if nj_cfg.wallet and nj_cfg.wallet.private_key and nj_cfg.chain and nj_cfg.chain.wager:
+        if args.wager and nj_cfg.wallet and nj_cfg.wallet.private_key and nj_cfg.chain and nj_cfg.chain.wager:
             wager_id, wager_amount = _negotiate_wager(
                 match_id=match_id,
                 queue_id=queue_id,
@@ -1493,6 +1483,7 @@ def cmd_matchmake(args):
                 server=server,
                 _get=_get,
                 _post=_post,
+                wager_amount=args.wager,
             )
 
         # --- Step 3: Run netplay ---
@@ -2237,6 +2228,7 @@ def main():
     mm_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir (for Slippi account)")
     mm_parser.add_argument("--replay-dir", default=None, help="Directory to save Slippi replays")
     mm_parser.add_argument("--headless", action="store_true", help="Run without display (faster, for servers)")
+    mm_parser.add_argument("--wager", type=float, default=None, help="Auto-wager this amount of MON per match")
     mm_parser.set_defaults(func=cmd_matchmake)
 
     # arena command
