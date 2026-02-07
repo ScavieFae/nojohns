@@ -77,6 +77,7 @@ class GameConfig:
     online_delay: int | None = None
     input_throttle: int | None = None
     replay_dir: str | None = None  # Where to save Slippi replays
+    wager_amount: float | None = None  # MON per match (auto-wager)
 
 
 @dataclass
@@ -144,6 +145,7 @@ def _parse_game_config(data: dict) -> GameConfig:
         online_delay=data.get("online_delay"),
         input_throttle=data.get("input_throttle"),
         replay_dir=_expand(data.get("replay_dir")),
+        wager_amount=data.get("wager_amount"),
     )
 
 
