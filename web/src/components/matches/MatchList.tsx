@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
 import { useMatchEvents } from "../../hooks/useMatchEvents";
+import { useSettledWagers } from "../../hooks/useSettledWagers";
 import { MatchRow, MatchCard } from "./MatchRow";
 import { MatchFilter } from "./MatchFilter";
 import { EmptyState } from "../shared/EmptyState";
 
 export function MatchList() {
   const { data: matches, isLoading, isError, refetch } = useMatchEvents();
+  const { data: settledWagers } = useSettledWagers();
   const [filterAddress, setFilterAddress] = useState("");
 
   const filtered = useMemo(() => {
@@ -68,13 +70,18 @@ export function MatchList() {
                 <th className="py-3 px-4">Winner</th>
                 <th className="py-3 px-4 text-center">Score</th>
                 <th className="py-3 px-4">Loser</th>
+                <th className="py-3 px-4">Wager</th>
                 <th className="py-3 px-4">Game</th>
                 <th className="py-3 px-4 text-right">Proof</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((match) => (
-                <MatchRow key={match.matchId} match={match} />
+                <MatchRow
+                  key={match.matchId}
+                  match={match}
+                  wagerPayout={settledWagers?.get(match.matchId)?.payout}
+                />
               ))}
             </tbody>
           </table>
@@ -82,7 +89,11 @@ export function MatchList() {
           {/* Mobile: card list */}
           <div className="md:hidden">
             {filtered.map((match) => (
-              <MatchCard key={match.matchId} match={match} />
+              <MatchCard
+                key={match.matchId}
+                match={match}
+                wagerPayout={settledWagers?.get(match.matchId)?.payout}
+              />
             ))}
           </div>
         </div>

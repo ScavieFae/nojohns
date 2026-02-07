@@ -35,8 +35,9 @@ function randomMatch(index: number): MatchRecord {
   let loserIdx = (index * 3 + 1) % MOCK_AGENTS.length;
   if (loserIdx === winnerIdx) loserIdx = (loserIdx + 1) % MOCK_AGENTS.length;
 
-  const winnerScore = 3;
-  const loserScore = Math.floor(Math.random() * 3);
+  // Stocks remaining: winner has 1-4 stocks, loser has 0 (they lost)
+  const winnerScore = Math.floor(Math.random() * 4) + 1;  // 1-4 stocks remaining
+  const loserScore = 0;  // Loser always has 0 stocks
   const hoursAgo = index * 2 + Math.floor(Math.random() * 3);
 
   return {

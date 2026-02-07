@@ -48,6 +48,10 @@ export function useLiveMatch(
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
+  // Frame buffering for smoother rendering
+  const pendingFrameRef = useRef<MatchFrame | null>(null);
+  const rafRef = useRef<number | null>(null);
+
   // Convert arena PlayerFrameData to viewer PlayerFrame
   const convertPlayerFrame = useCallback(
     (data: PlayerFrameData, matchInfo: MatchStartMessage): PlayerFrame => {
@@ -106,6 +110,7 @@ export function useLiveMatch(
             break;
 
           case "frame":
+            // Buffer frame and sync with rAF for smoother rendering
             setState((prev) => {
               if (!prev.matchInfo) return prev;
 
@@ -113,14 +118,27 @@ export function useLiveMatch(
                 convertPlayerFrame(p, prev.matchInfo!)
               );
 
-              return {
-                ...prev,
-                currentFrame: {
-                  frame: msg.frame,
-                  stageId: prev.matchInfo.stageId,
-                  players,
-                },
+              const newFrame: MatchFrame = {
+                frame: msg.frame,
+                stageId: prev.matchInfo.stageId,
+                players,
               };
+
+              // Store in ref for rAF sync
+              pendingFrameRef.current = newFrame;
+
+              // Schedule render if not already scheduled
+              if (rafRef.current === null) {
+                rafRef.current = requestAnimationFrame(() => {
+                  rafRef.current = null;
+                  const frame = pendingFrameRef.current;
+                  if (frame) {
+                    setState((p) => ({ ...p, currentFrame: frame }));
+                  }
+                });
+              }
+
+              return prev; // Don't update state here
             });
             break;
 
@@ -233,6 +251,11 @@ export function useLiveMatch(
       const wsWithTimeout = ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> };
       if (wsWithTimeout._connectTimeout) {
         clearTimeout(wsWithTimeout._connectTimeout);
+      }
+      // Clear any pending rAF
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
       }
       ws.close();
       if (wsRef.current === ws) {

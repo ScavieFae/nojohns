@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useMatchEvents } from "./useMatchEvents";
+import { useEloEvents } from "./useEloEvents";
 import type { AgentStats, MatchRecord } from "../types";
 
 const STARTING_ELO = 1500;
@@ -53,13 +54,14 @@ function computeEloRatings(
 }
 
 export function useLeaderboard() {
-  const { data: matches, ...rest } = useMatchEvents();
+  const { data: matches, ...matchRest } = useMatchEvents();
+  const { data: onchainElo } = useEloEvents();
 
   const leaderboard = useMemo((): AgentStats[] => {
     if (!matches) return [];
 
-    // Compute Elo ratings from match history
-    const eloRatings = computeEloRatings(matches);
+    // Compute Elo ratings from match history (fallback)
+    const computedElo = computeEloRatings(matches);
 
     // Aggregate W/L stats
     const stats = new Map<`0x${string}`, { wins: number; losses: number }>();
@@ -81,10 +83,11 @@ export function useLeaderboard() {
         losses,
         totalMatches: wins + losses,
         winRate: wins + losses > 0 ? wins / (wins + losses) : 0,
-        elo: eloRatings.get(address) ?? STARTING_ELO,
+        // Prefer onchain Elo from ReputationRegistry, fallback to computed
+        elo: onchainElo?.get(address) ?? computedElo.get(address) ?? STARTING_ELO,
       }))
       .sort((a, b) => b.elo - a.elo); // Sort by Elo (highest first)
-  }, [matches]);
+  }, [matches, onchainElo]);
 
-  return { data: leaderboard, ...rest };
+  return { data: leaderboard, ...matchRest };
 }
