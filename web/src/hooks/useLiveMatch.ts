@@ -92,25 +92,44 @@ export function useLiveMatch(
     if (playbackIntervalRef.current) return; // Already playing
 
     console.log(`[useLiveMatch] Starting playback, buffer has ${frameBufferRef.current.length} frames`);
-    playbackIntervalRef.current = setInterval(() => {
-      // If buffer is getting too large, we're falling behind - drop old frames
-      if (frameBufferRef.current.length > MAX_BUFFER_SIZE) {
-        const toDrop = frameBufferRef.current.length - BUFFER_TARGET;
-        frameBufferRef.current.splice(0, toDrop);
-        console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up`);
+
+    let lastFrameTime = performance.now();
+    const targetFrameTime = PLAYBACK_INTERVAL_MS;
+
+    const tick = (now: number) => {
+      if (!playbackIntervalRef.current) return; // Stopped
+
+      const elapsed = now - lastFrameTime;
+
+      // Only advance frame if enough time has passed
+      if (elapsed >= targetFrameTime) {
+        lastFrameTime = now - (elapsed % targetFrameTime); // Account for drift
+
+        // If buffer is getting too large, we're falling behind - drop old frames
+        if (frameBufferRef.current.length > MAX_BUFFER_SIZE) {
+          const toDrop = frameBufferRef.current.length - BUFFER_TARGET;
+          frameBufferRef.current.splice(0, toDrop);
+          console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up`);
+        }
+
+        // Simple FIFO - frames arrive in order from WebSocket
+        const frame = frameBufferRef.current.shift();
+
+        if (frame) {
+          setState((prev) => ({
+            ...prev,
+            currentFrame: frame,
+            bufferHealth: Math.min(1, frameBufferRef.current.length / BUFFER_TARGET),
+          }));
+        }
       }
 
-      // Simple FIFO - frames arrive in order from WebSocket
-      const frame = frameBufferRef.current.shift();
+      requestAnimationFrame(tick);
+    };
 
-      if (frame) {
-        setState((prev) => ({
-          ...prev,
-          currentFrame: frame,
-          bufferHealth: Math.min(1, frameBufferRef.current.length / BUFFER_TARGET),
-        }));
-      }
-    }, PLAYBACK_INTERVAL_MS);
+    // Use a dummy interval ref to track "playing" state, actual timing via rAF
+    playbackIntervalRef.current = 1 as unknown as ReturnType<typeof setInterval>;
+    requestAnimationFrame(tick);
   }, []);
 
   // Stop playback

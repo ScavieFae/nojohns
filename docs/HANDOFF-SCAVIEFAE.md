@@ -924,9 +924,99 @@ async def stream_frame(match_id: str, req: Request) -> dict[str, Any]:
 | Current (1 frame/req) | 60 | Each request adds ~50-100ms jitter |
 | Batched (4 frames/req) | 15 | 4x fewer requests, smoother delivery |
 
-### Future: WebSocket upload
+### NOW: WebSocket Upload (priority fix for jitter)
 
-Replace HTTP POST with bidirectional WebSocket for frame upload. Client connects once, streams frames continuously. More efficient but bigger change — defer to post-hackathon.
+The HTTP batching approach is fundamentally causing bursty frame delivery. Even with client-side buffering, the viewer experiences jitter. We need WebSocket for continuous frame streaming.
+
+**Current (bursty):**
+```
+Client ──HTTP POST (16 frames)──► Arena ──WebSocket──► Viewer
+        [4 req/sec, ~250ms gaps]        [bursts of 16]
+```
+
+**Target (smooth):**
+```
+Client ◄────────WebSocket────────► Arena ──WebSocket──► Viewer
+        [continuous 60fps stream]         [steady 60fps]
+```
+
+#### Changes needed in `arena/server.py`
+
+Add a new WebSocket endpoint for frame upload:
+
+```python
+@app.websocket("/ws/stream/{match_id}")
+async def stream_upload(websocket: WebSocket, match_id: str):
+    """WebSocket endpoint for frame upload from game client."""
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+
+            if data.get("type") == "frame":
+                # Broadcast to viewers immediately (no batching)
+                message = {
+                    "type": "frame",
+                    "frame": data.get("frame"),
+                    "players": data.get("players", []),
+                }
+                await _manager.broadcast(match_id, message)
+
+            elif data.get("type") == "game_end":
+                await _manager.broadcast(match_id, data)
+
+            elif data.get("type") == "match_end":
+                await _manager.broadcast(match_id, data)
+                break
+
+    except WebSocketDisconnect:
+        pass
+```
+
+#### Changes needed in `games/melee/netplay.py`
+
+Replace HTTP frame posting with WebSocket:
+
+```python
+import websockets
+import asyncio
+
+class FrameStreamer:
+    def __init__(self, arena_url: str, match_id: str):
+        self.ws_url = arena_url.replace("http", "ws") + f"/ws/stream/{match_id}"
+        self.ws = None
+        self._queue = asyncio.Queue()
+
+    async def connect(self):
+        self.ws = await websockets.connect(self.ws_url)
+
+    async def send_frame(self, frame_data: dict):
+        if self.ws:
+            await self.ws.send(json.dumps({"type": "frame", **frame_data}))
+
+    async def close(self):
+        if self.ws:
+            await self.ws.close()
+```
+
+In `_game_loop`, instead of queuing frames for HTTP batch:
+
+```python
+# Old: self._frame_queue.append(frame_data)
+# New: await self._streamer.send_frame(frame_data)
+```
+
+#### Why this fixes jitter
+
+| Aspect | HTTP Batch | WebSocket |
+|--------|------------|-----------|
+| Delivery pattern | 16 frames every ~250ms | 1 frame every ~16ms |
+| Network overhead | New connection per batch | Single persistent connection |
+| Latency variance | High (HTTP round-trip) | Low (streaming) |
+| Viewer experience | Choppy, requires large buffer | Smooth, minimal buffer needed |
+
+Once WebSocket upload is working, we can reduce the viewer buffer from 24 frames back to 8.
 
 ---
 
