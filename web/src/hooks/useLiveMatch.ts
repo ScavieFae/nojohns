@@ -16,10 +16,10 @@ import type { MatchFrame, PlayerFrame } from "../components/viewer/MeleeViewer";
 import { ARENA_URL } from "../config";
 
 // Buffer config: wait for this many frames before starting playback
-// Batches are 16 frames, so buffer 24 frames (~400ms) to handle batch delays
-const BUFFER_TARGET = 24;
+// WebSocket delivers frames continuously at 60fps, so smaller buffer is fine
+const BUFFER_TARGET = 8;  // ~133ms latency
 const PLAYBACK_INTERVAL_MS = 16; // ~60fps playback
-const MAX_BUFFER_SIZE = 60; // Drop frames if we fall this far behind
+const MAX_BUFFER_SIZE = 30; // Drop frames if we fall this far behind
 
 export interface LiveMatchState {
   status: "connecting" | "connected" | "ended" | "error" | "disconnected";
