@@ -19,7 +19,7 @@ Example:
     input_throttle = 1
 
     [arena]
-    server = "http://localhost:8000"
+    server = "http://localhost:8000"  # Omit to use the public arena
 """
 
 import logging
@@ -60,6 +60,10 @@ def default_dolphin_path() -> str:
 
 CONFIG_DIR = _get_config_dir()
 CONFIG_PATH = CONFIG_DIR / "config.toml"
+
+# Public arena server — new users connect here out of the box.
+# Operators who run their own arena override this in config.toml [arena] server.
+DEFAULT_ARENA_URL = "https://nojohns-arena-production.up.railway.app"
 
 
 # ============================================================================
@@ -103,13 +107,24 @@ class ChainConfig:
 
 
 @dataclass
+class MoltbotConfig:
+    """Configuration for autonomous agent mode (nojohns auto)."""
+
+    risk_profile: str = "moderate"  # conservative, moderate, aggressive
+    cooldown_seconds: int = 30
+    min_bankroll: float = 0.01  # MON — stop threshold
+    tilt_threshold: int = 3  # consecutive losses before refusing wagers
+
+
+@dataclass
 class NojohnsConfig:
     """Top-level configuration."""
 
     games: dict[str, GameConfig]
-    arena_server: str | None = None
+    arena_server: str = DEFAULT_ARENA_URL
     wallet: WalletConfig | None = None
     chain: ChainConfig | None = None
+    moltbot: MoltbotConfig | None = None
 
     def __init__(
         self,
@@ -117,11 +132,13 @@ class NojohnsConfig:
         arena_server: str | None = None,
         wallet: WalletConfig | None = None,
         chain: ChainConfig | None = None,
+        moltbot: MoltbotConfig | None = None,
     ):
         self.games = games or {}
-        self.arena_server = arena_server
+        self.arena_server = arena_server or DEFAULT_ARENA_URL
         self.wallet = wallet
         self.chain = chain
+        self.moltbot = moltbot
 
 
 # ============================================================================
@@ -204,8 +221,20 @@ def load_config(path: Path | None = None) -> NojohnsConfig:
             agent_id=chain_data.get("agent_id"),
         )
 
+    # Parse [moltbot] section
+    moltbot = None
+    if "moltbot" in raw and isinstance(raw["moltbot"], dict):
+        moltbot_data = raw["moltbot"]
+        moltbot = MoltbotConfig(
+            risk_profile=moltbot_data.get("risk_profile", "moderate"),
+            cooldown_seconds=moltbot_data.get("cooldown_seconds", 30),
+            min_bankroll=moltbot_data.get("min_bankroll", 0.01),
+            tilt_threshold=moltbot_data.get("tilt_threshold", 3),
+        )
+
     return NojohnsConfig(
-        games=games, arena_server=arena_server, wallet=wallet, chain=chain
+        games=games, arena_server=arena_server, wallet=wallet, chain=chain,
+        moltbot=moltbot,
     )
 
 

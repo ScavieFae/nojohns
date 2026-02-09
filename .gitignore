@@ -30,6 +30,10 @@ fighters/phillip/models/*.pkl
 phillip-research/
 docs/phillip-research/
 
+# Training data (large binary files, not committed)
+docs/phillip-training/replays/**/*.slp
+*.slp
+
 # Arena server database
 arena.db
 arena.db-shm

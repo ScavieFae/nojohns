@@ -63,7 +63,7 @@ nojohns = "nojohns.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nojohns*", "fighters*", "games*", "arena*"]
+include = ["nojohns*", "fighters*", "games*", "arena*", "agents*"]
 
 [tool.black]
 line-length = 100

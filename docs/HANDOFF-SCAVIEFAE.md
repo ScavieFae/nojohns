@@ -596,3 +596,242 @@ Once we run matches with the new arena config, Elo signals will appear in Reputa
 |--------|-------------|
 | `5eb2800` | Add nojohns setup identity command |
 | `923157a` | Add ERC-8004 ReputationRegistry integration for Elo tracking |
+
+---
+
+## M4 Continued: Autonomous Agent Toolkit (updated day 7)
+
+### What's New
+
+A full agent decision-making toolkit in `agents/` (new top-level package, parallel to `fighters/`, `games/`, `arena/`). This is the "agent autonomy" layer the Gaming Arena Agent bounty requires.
+
+**Key insight:** This is a *toolkit*, not a monolith. We provide building blocks and a strategy protocol that agent builders compose themselves. `KellyStrategy` is a reference implementation. `nojohns auto` is a reference agent that composes the tools.
+
+### New: `agents/` Package
+
+```
+agents/
+├── __init__.py          # Re-exports everything
+├── bankroll.py          # Balance queries + Kelly criterion math
+├── scouting.py          # Opponent lookup utilities
+├── strategy.py          # WagerStrategy protocol + KellyStrategy reference
+└── moltbook.py          # Optional Moltbook posting
+```
+
+#### `agents/bankroll.py`
+
+Pure utility functions for financial state:
+
+```python
+from agents.bankroll import get_bankroll_state, kelly_wager, win_probability_from_elo
+
+# Query balance + active wager exposure
+state = get_bankroll_state(address, rpc_url, wager_contract)
+# → BankrollState(balance_mon=2.5, active_exposure_wei=..., available_mon=2.3)
+
+# Elo → win probability (standard formula)
+p = win_probability_from_elo(1600, 1400)  # → 0.76
+
+# Kelly criterion wager sizing
+amount_wei = kelly_wager(win_prob=0.65, bankroll_wei=10**18, multiplier=1.0, max_pct=0.10)
+```
+
+#### `agents/scouting.py`
+
+Opponent lookup — wraps `reputation.get_current_elo()`:
+
+```python
+from agents.scouting import scout_opponent, scout_by_wallet
+
+report = scout_opponent(agent_id=12, rpc_url=rpc, reputation_registry=reg)
+# → ScoutReport(elo=1540, peak_elo=1580, record="10-5", is_unknown=False)
+
+# By wallet (returns unknown until reverse lookup is implemented)
+report = scout_by_wallet("0x...", rpc_url, registry)
+```
+
+#### `agents/strategy.py`
+
+`WagerStrategy` protocol (like the `Fighter` protocol) plus `KellyStrategy` reference:
+
+```python
+from agents.strategy import KellyStrategy, MatchContext, SessionStats, WagerDecision
+
+strategy = KellyStrategy(risk_profile="moderate", tilt_threshold=3)
+# risk profiles: conservative (0.5x Kelly, 5% cap), moderate (1.0x, 10%), aggressive (1.5x, 25%)
+
+context = MatchContext(
+    our_elo=1540,
+    opponent=scout_report,
+    bankroll_wei=available_wei,
+    session_stats=session,  # tracks wins, losses, consecutive losses, P&L
+)
+
+decision = strategy.decide(context)
+# → WagerDecision(should_wager=True, amount_wei=..., amount_mon=0.15,
+#     reasoning="Elo 1540 vs 1400, P(win)=0.68, moderate profile, wagering 0.15 MON")
+```
+
+**Strategy behaviors:**
+- Unknown opponent → no wager (play for experience)
+- Tilt protection: `consecutive_losses >= threshold` → no wager
+- Even or unfavorable matchup → no wager (no edge)
+- Kelly criterion with risk profile caps
+
+**Custom strategies:** Implement `decide(context: MatchContext) -> WagerDecision` — that's it. See `skill/references/wager-strategy.md` for examples (flat bet, percentage, confidence-based).
+
+### New: `nojohns auto` CLI Command
+
+Reference autonomous agent that composes the toolkit:
+
+```bash
+nojohns auto phillip --risk moderate --max-matches 10
+nojohns auto phillip --risk aggressive --cooldown 60 --min-bankroll 0.5
+nojohns auto phillip --no-wager  # play without wagering
+```
+
+**Loop per match:**
+1. Check bankroll (stop if below `--min-bankroll`)
+2. Join queue, get matched
+3. Scout opponent (Elo lookup)
+4. Strategy decides wager amount (with reasoning)
+5. Play match (existing netplay code)
+6. Report + sign + settle (existing code)
+7. Update session stats, cooldown, repeat
+
+**Session summary at end:**
+```
+  Session Summary
+  Matches: 10
+  Record: 7-3 (70%)
+  Unique opponents: 4
+  Total wagered: 0.8500 MON
+  Net P&L: +0.3200 MON
+```
+
+**Config from `[moltbot]` section (new):**
+```toml
+[moltbot]
+risk_profile = "moderate"
+cooldown_seconds = 30
+min_bankroll = 0.01
+tilt_threshold = 3
+```
+
+### New: OpenClaw Skill Updates
+
+`skill/SKILL.md` rewritten with real capabilities. New shell scripts for Moltbot integration:
+
+- `skill/scripts/bankroll.sh --status` — JSON bankroll snapshot
+- `skill/scripts/bankroll.sh --kelly --opponent-elo 1400` — wager recommendation
+- `skill/scripts/scout.sh --agent-id 12` — opponent lookup
+- `skill/scripts/matchmake.sh --fighter phillip` — matchmake wrapper
+- `skill/references/wager-strategy.md` — documentation on writing custom strategies
+
+### Refactored: `cmd_matchmake`
+
+The matchmake command was refactored to extract reusable pieces:
+
+- `_run_single_match()` — core match loop (queue → play → report → sign → settle)
+- `_make_arena_helpers()` — HTTP helper factory
+- `_print_match_summary()` — summary box printer
+- `MatchOutcome` dataclass — structured return value
+
+Both `cmd_matchmake` and `cmd_auto` call `_run_single_match()`. Same behavior as before, less code.
+
+### Tests
+
+44 new tests (all pure math, no RPC):
+- `tests/test_bankroll.py` — win probability symmetry, Kelly fraction edge cases, cap enforcement, floor
+- `tests/test_strategy.py` — unknown opponent handling, tilt protection, edge detection, risk profiles, reasoning strings, SessionStats
+
+**166 total tests passing** (zero regressions).
+
+### What This Means for Website
+
+The `agents/` package is Python-side only — no direct website changes needed. But for the hackathon pitch:
+
+1. **Strategy reasoning is visible** in session output — great for demo recordings
+2. **Session stats** (matches, W-L, P&L) could be shown on website if we add a session endpoint to arena
+3. **Risk profiles** are a nice talking point: "agents choose their own risk tolerance"
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `agents/__init__.py` | NEW — re-exports |
+| `agents/bankroll.py` | NEW — balance + Kelly math |
+| `agents/scouting.py` | NEW — opponent lookup |
+| `agents/strategy.py` | NEW — protocol + KellyStrategy |
+| `agents/moltbook.py` | NEW — optional Moltbook posting |
+| `nojohns/cli.py` | MODIFIED — refactored matchmake, added `nojohns auto` |
+| `nojohns/config.py` | MODIFIED — added `MoltbotConfig`, `[moltbot]` parsing |
+| `pyproject.toml` | MODIFIED — added `agents*` to package discovery |
+| `skill/SKILL.md` | REWRITTEN — real capabilities |
+| `skill/scripts/*.sh` | NEW — Moltbot shell wrappers |
+| `skill/references/wager-strategy.md` | NEW — custom strategy guide |
+| `tests/test_bankroll.py` | NEW — 23 tests |
+| `tests/test_strategy.py` | NEW — 21 tests |
+
+---
+
+## Playtest Infrastructure (updated day 8)
+
+### Arena is going public
+
+The arena is deploying to Railway so external playtesters can connect. The public URL will be:
+
+```
+https://nojohns-arena-production.up.railway.app
+```
+
+New users who don't configure `[arena] server` in their config will connect to this URL by default.
+
+### Your machine as auto-opponent
+
+We need your machine running an always-on opponent so there's someone to fight when external testers connect. Here's how:
+
+**1. Update your arena config:**
+
+Either remove the `[arena] server` line from `~/.nojohns/config.toml` (defaults to the public Railway arena), or set it explicitly:
+
+```toml
+[arena]
+server = "https://nojohns-arena-production.up.railway.app"
+```
+
+**2. Run the auto-opponent in tmux:**
+
+```bash
+tmux new -s opponent './scripts/auto-opponent.sh phillip'
+```
+
+Or directly:
+
+```bash
+nojohns auto phillip --no-wager --cooldown 15
+```
+
+This joins the public queue, waits for an opponent, plays a match with Phillip, and re-queues. `--no-wager` means it plays for experience only (no MON at stake). `--cooldown 15` gives 15 seconds between matches.
+
+Detach tmux with `Ctrl-B D`. Reattach with `tmux attach -t opponent`.
+
+**3. Verify it's working:**
+
+```bash
+curl https://nojohns-arena-production.up.railway.app/health
+```
+
+You should see `queue_size: 1` (your auto-opponent waiting).
+
+### SRE monitoring
+
+An SRE agent in `nojohns-community` monitors the arena health. It writes `status/arena.json` which other fleet agents can read. You don't need to do anything for this — it runs on its own.
+
+### Website update needed
+
+The website currently connects to a hardcoded arena URL. It should point at the Railway URL for:
+- Live match viewer WebSocket: `wss://nojohns-arena-production.up.railway.app/ws/match/{id}`
+- Health check for hero section: `https://nojohns-arena-production.up.railway.app/health`
+
+Check `web/` for where the arena URL is configured and update it.
