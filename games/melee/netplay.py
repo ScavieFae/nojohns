@@ -142,10 +142,9 @@ class MatchStreamer:
         })
 
     def send_frame(self, frame: int, players: list[dict]):
-        """Queue a frame for streaming."""
+        """Queue a frame for streaming (batched)."""
         with self._lock:
-            # Only keep latest frame to avoid queue buildup
-            self._queue = [{"frame": frame, "players": players}]
+            self._queue.append({"frame": frame, "players": players})
 
     def send_game_end(self, game_number: int, winner_port: int, end_method: str = "stocks"):
         """Send game_end message."""
@@ -175,28 +174,31 @@ class MatchStreamer:
             logger.error(f"Stream POST failed ({endpoint}): {e}")
 
     def _stream_loop(self):
-        """Background thread that sends queued frames."""
+        """Background thread that sends queued frames in batches."""
         logger.info(f"Stream loop started for {self.match_id}")
         frames_sent = 0
+        batches_sent = 0
         while not self._stop.is_set():
-            frame_data = None
+            batch = None
             with self._lock:
                 if self._queue:
-                    frame_data = self._queue.pop(0)
+                    batch = self._queue[:]
+                    self._queue.clear()
 
-            if frame_data and self._client:
-                url = f"{self.arena_url}/matches/{self.match_id}/stream/frame"
+            if batch and self._client:
+                url = f"{self.arena_url}/matches/{self.match_id}/stream/frames"
                 try:
-                    resp = self._client.post(url, json=frame_data)
-                    frames_sent += 1
-                    if frames_sent <= 3 or frames_sent % 100 == 0:
-                        logger.info(f"Stream frame {frame_data.get('frame')} sent ({resp.status_code})")
+                    resp = self._client.post(url, json={"frames": batch})
+                    frames_sent += len(batch)
+                    batches_sent += 1
+                    if batches_sent <= 3 or batches_sent % 50 == 0:
+                        logger.info(f"Stream batch #{batches_sent}: {len(batch)} frames sent ({resp.status_code})")
                 except Exception as e:
-                    logger.warning(f"Stream frame failed: {e}")
+                    logger.warning(f"Stream batch failed: {e}")
 
-            # ~60fps max, but typically throttled by stream_throttle
-            time.sleep(0.016)
-        logger.info(f"Stream loop ended for {self.match_id} ({frames_sent} frames sent)")
+            # Flush every ~100ms — batches ~6 frames per request at 60fps
+            time.sleep(0.1)
+        logger.info(f"Stream loop ended for {self.match_id} ({frames_sent} frames in {batches_sent} batches)")
 
 
 def extract_player_frame(player: "melee.PlayerState", port: int) -> dict:

@@ -589,6 +589,11 @@ class FrameRequest(BaseModel):
     players: list[dict]  # [{port, x, y, action_state_id, action_frame, facing_direction, percent, stocks}, ...]
 
 
+class FrameBatchRequest(BaseModel):
+    """Batch of frames from client — reduces HTTP round trips over internet."""
+    frames: list[FrameRequest]
+
+
 class GameEndRequest(BaseModel):
     """Game end signal."""
     game_number: int
@@ -659,6 +664,34 @@ async def stream_frame(match_id: str, req: FrameRequest) -> dict[str, Any]:
 
     await _manager.broadcast(match_id, message)
     return {"success": True}
+
+
+@app.post("/matches/{match_id}/stream/frames")
+async def stream_frames_batch(match_id: str, req: FrameBatchRequest) -> dict[str, Any]:
+    """Stream a batch of frames — reduces HTTP round trips over internet."""
+    for frame_req in req.frames:
+        message = {
+            "type": "frame",
+            "frame": frame_req.frame,
+            "players": [
+                {
+                    "port": p.get("port"),
+                    "x": p.get("x"),
+                    "y": p.get("y"),
+                    "actionStateId": p.get("action_state_id"),
+                    "actionFrame": p.get("action_frame"),
+                    "facingDirection": p.get("facing_direction"),
+                    "percent": p.get("percent"),
+                    "stocks": p.get("stocks"),
+                    "shieldHealth": p.get("shield_health"),
+                    "isInvincible": p.get("is_invincible"),
+                    "isInHitstun": p.get("is_in_hitstun"),
+                }
+                for p in frame_req.players
+            ],
+        }
+        await _manager.broadcast(match_id, message)
+    return {"success": True, "frames": len(req.frames)}
 
 
 @app.post("/matches/{match_id}/stream/game_end")
