@@ -17,7 +17,7 @@ export const characterDataByExternalId: Record<number, CharacterData> = {
   2:  { scale: 0.96, shieldOffset: [2.7, 9], shieldSize: 13.8 }, // Fox
   3:  { scale: 0.85, shieldOffset: [0, 7], shieldSize: 11.0 },  // Mr. Game & Watch
   4:  { scale: 0.82, shieldOffset: [0, 6], shieldSize: 10.0 },  // Kirby
-  5:  { scale: 1.50, shieldOffset: [0, 12], shieldSize: 18.0 }, // Bowser
+  5:  { scale: 0.90, shieldOffset: [0, 12], shieldSize: 18.0 }, // Bowser (big but not GIANT)
   6:  { scale: 1.05, shieldOffset: [0, 9], shieldSize: 13.0 },  // Link
   7:  { scale: 0.95, shieldOffset: [0, 8], shieldSize: 12.5 },  // Luigi
   8:  { scale: 0.95, shieldOffset: [0, 8], shieldSize: 12.5 },  // Mario

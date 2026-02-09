@@ -25,14 +25,14 @@ export interface StageData {
   backgroundColor?: string;
 }
 
-// Stage IDs from libmelee (internal stage IDs)
+// Stage IDs from libmelee (vladfi1 fork) - these match gamestate.stage.value
 export const STAGE_IDS = {
   FOUNTAIN_OF_DREAMS: 2,
-  POKEMON_STADIUM: 3,
-  YOSHIS_STORY: 8,
-  DREAMLAND: 28,
-  BATTLEFIELD: 31,
-  FINAL_DESTINATION: 32,
+  YOSHIS_STORY: 6,          // Was wrong (had 8)
+  POKEMON_STADIUM: 18,       // Was wrong (had 3)
+  BATTLEFIELD: 24,           // Was wrong (had 31)
+  FINAL_DESTINATION: 25,     // Was wrong (had 32)
+  DREAMLAND: 26,             // Was wrong (had 28)
 } as const;
 
 // Legal stage data (tournament legal stages)

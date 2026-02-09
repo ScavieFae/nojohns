@@ -105,7 +105,7 @@ export function LivePage() {
   const activeMatches = health?.active_matches ?? 0;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className={`mx-auto px-4 py-8 ${matchId ? "max-w-6xl" : "max-w-4xl"}`}>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">
           {matchId ? "Live Match" : "Match Viewer"}
@@ -116,8 +116,10 @@ export function LivePage() {
       </div>
 
       {matchId ? (
-        // Viewing a specific live match
-        <LiveMatchViewer matchId={matchId} />
+        // Full-width viewer
+        <div className="max-w-4xl mx-auto">
+          <LiveMatchViewer matchId={matchId} />
+        </div>
       ) : (
         // No match specified - show status and replay viewer
         <div>
