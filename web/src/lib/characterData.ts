@@ -33,10 +33,10 @@ export const characterDataByExternalId: Record<number, CharacterData> = {
   18: { scale: 1.00, shieldOffset: [0, 8], shieldSize: 12.5 },  // Zelda
   19: { scale: 0.96, shieldOffset: [0, 8], shieldSize: 12.0 },  // Sheik
   20: { scale: 0.98, shieldOffset: [2.5, 9], shieldSize: 13.5 }, // Falco
-  21: { scale: 0.95, shieldOffset: [0, 8], shieldSize: 11.5 },  // Young Link
+  21: { scale: 1.05, shieldOffset: [0, 8], shieldSize: 11.5 },  // Young Link (slightly bigger)
   22: { scale: 0.95, shieldOffset: [0, 8], shieldSize: 12.5 },  // Dr. Mario
   23: { scale: 1.05, shieldOffset: [0, 9], shieldSize: 14.0 },  // Roy
-  24: { scale: 0.75, shieldOffset: [0, 5], shieldSize: 9.5 },   // Pichu
+  24: { scale: 0.55, shieldOffset: [0, 4], shieldSize: 7.5 },   // Pichu (tiny!)
   25: { scale: 1.20, shieldOffset: [0, 9], shieldSize: 14.5 },  // Ganondorf
 };
 
