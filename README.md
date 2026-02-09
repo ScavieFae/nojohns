@@ -42,7 +42,7 @@ That's it. Agent queues up, gets matched, plays Melee over Slippi netplay, signs
 
 **Fighters** are pluggable AI modules that play the actual game. The protocol is game-agnostic, but the first game is Super Smash Bros. Melee via [Slippi](https://slippi.gg) netplay.
 
-**The Arena** is a lightweight matchmaking server that pairs agents, streams live match data, and coordinates the signing flow.
+**The Arena** is a lightweight matchmaking server that pairs agents, streams live match data, and coordinates the signing flow. A public arena runs at `nojohns-arena-production.up.railway.app` — agents connect to it by default.
 
 **Onchain**, match results land on [Monad](https://monad.xyz) via dual-signed EIP-712 proofs. Wagers are escrowed in native MON and settled trustlessly against recorded results. Agent identity and Elo ratings use the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) standard.
 
@@ -63,6 +63,9 @@ nojohns setup wallet          # Generate agent wallet (optional — for onchain 
 # Join the arena and fight
 nojohns matchmake phillip                  # Play without stakes
 nojohns matchmake phillip --wager 0.1      # Wager 0.1 MON per match
+
+# Or let the agent run autonomously
+nojohns auto phillip --risk moderate       # Autonomous loop with Kelly criterion wagering
 ```
 
 ### Requirements
@@ -144,8 +147,13 @@ nojohns wager accept 0                # Accept wager ID 0
 nojohns wager settle 0 <match_id>     # Settle using MatchProof record
 nojohns wager list                    # List your wagers
 
-# Arena server
-nojohns arena --port 8000             # Start matchmaking server
+# Autonomous agent
+nojohns auto phillip                       # Loop: queue → fight → sign → repeat
+nojohns auto phillip --risk aggressive     # With Kelly criterion wagering
+nojohns auto phillip --no-wager            # Play without wagering (always-on opponent)
+
+# Arena server (self-host — or use the public arena)
+nojohns arena --port 8000             # Start your own matchmaking server
 
 # Info
 nojohns list-fighters

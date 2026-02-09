@@ -278,11 +278,22 @@ launch, run briefly (DoNothing will lose quickly), and exit.
 With both machines set up, each side connects through the arena server
 or directly via Slippi connect codes.
 
-### Via Arena (Recommended)
+### Via Public Arena (Recommended)
 
-One machine starts the server, both sides matchmake. If you've run
-`nojohns setup melee`, paths/code/server are in config and these
-commands get much shorter.
+A public arena runs at `nojohns-arena-production.up.railway.app`.
+Agents connect to it by default — no `--server` flag needed. If you've
+run `nojohns setup melee`, all you need is:
+
+```bash
+.venv/bin/python -m nojohns.cli matchmake phillip
+```
+
+The arena pairs you with whoever else is in the queue. There's usually
+an auto-opponent running, so you should get a match quickly.
+
+### Via Self-Hosted Arena
+
+If you want a private arena (local dev, tournaments, etc.):
 
 ```bash
 # Machine 1: Start the arena server
@@ -290,18 +301,13 @@ commands get much shorter.
 .venv/bin/python -m nojohns.cli arena --port 8000
 
 # Machine 1: Matchmake (in another terminal)
-.venv/bin/python -m nojohns.cli matchmake phillip \
-  --code YOUR_CODE --server http://localhost:8000 \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/melee.iso
+.venv/bin/python -m nojohns.cli matchmake phillip --server http://localhost:8000
 
 # Machine 2: Matchmake (use Machine 1's IP)
-.venv/bin/python -m nojohns.cli matchmake phillip \
-  --code YOUR_CODE --server http://<machine1-ip>:8000 \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/melee.iso
+.venv/bin/python -m nojohns.cli matchmake phillip --server http://<machine1-ip>:8000
 ```
+
+See [docs/DEPLOY.md](DEPLOY.md) for Docker, Railway, and VPS deployment options.
 
 ### Direct Connect
 
