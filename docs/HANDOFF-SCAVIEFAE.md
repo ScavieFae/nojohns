@@ -927,3 +927,56 @@ async def stream_frame(match_id: str, req: Request) -> dict[str, Any]:
 ### Future: WebSocket upload
 
 Replace HTTP POST with bidirectional WebSocket for frame upload. Client connects once, streams frames continuously. More efficient but bigger change — defer to post-hackathon.
+
+---
+
+## Live Viewer Updates (day 9)
+
+### Stage Detection — DONE (issue #14 closed)
+
+The live viewer now renders actual stage platforms instead of a hardcoded single platform.
+
+**New file: `web/src/lib/stageData.ts`**
+- Platform positions for 6 legal stages: Battlefield, FD, Dreamland, Yoshi's Story, FoD, Pokemon Stadium
+- Hardcoded as SVG rects — no external assets needed
+- Stage name shown in HUD (top right)
+
+**How it works:**
+1. `match_start` message includes `stageId` (libmelee internal ID)
+2. `MeleeViewer` looks up stage data by ID
+3. Renders main platform + side/top platforms as colored rectangles
+
+**Stage IDs (libmelee):**
+| Stage | ID |
+|-------|-----|
+| Fountain of Dreams | 2 |
+| Pokemon Stadium | 3 |
+| Yoshi's Story | 8 |
+| Dreamland | 28 |
+| Battlefield | 31 |
+| Final Destination | 32 |
+
+Unknown stages fall back to a generic platform.
+
+### Frame Buffer Fix
+
+Fixed a bug where `startPlayback()` was called inside a `setState` callback, causing nested state updates. Moved outside to avoid React batching issues.
+
+Also added `startPlayback` to `handleMessage`'s dependency array to fix potential stale closure.
+
+### Debug Logging
+
+Added console logging to help diagnose stream issues:
+- `[useLiveMatch] Connected to wss://...`
+- `[useLiveMatch] match_start received: {...}`
+- `[useLiveMatch] Frame X, buffer: Y, buffering: true/false`
+- `[useLiveMatch] Starting playback, buffer has 8 frames`
+
+Check browser console if the viewer isn't working.
+
+### Commits
+
+| Commit | Description |
+|--------|-------------|
+| `934e9c8` | Add stage detection and rendering to live viewer |
+| `c4f5d72` | Fix live viewer frame buffer and add debug logging |
