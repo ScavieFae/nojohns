@@ -100,3 +100,97 @@ Both contracts are immutable. No proxy, no owner, no upgrade mechanism.
 - **Wager** — escrow in native MON. Settles by reading from MatchProof. Timeout refunds both sides after 1 hour.
 
 If the protocol needs changes, new contracts are deployed alongside old ones. Old match history is preserved in events.
+
+## Live Streaming Architecture
+
+Spectators can watch matches in real-time via the live viewer on the website.
+
+### Current Flow
+
+```
+Client (Dolphin)                Arena (Railway)              Viewers (Browser)
+      │                               │                            │
+      │── HTTP POST /stream/frame ───►│                            │
+      │   (60fps, or batched 4x)      │── WebSocket broadcast ────►│
+      │                               │   (fan-out to N viewers)   │
+```
+
+1. Client extracts frame data from Dolphin (positions, actions, stocks)
+2. Client POSTs frames to arena (batched: 4 frames per request)
+3. Arena broadcasts to all WebSocket viewers of that match
+4. Website buffers 8 frames (~133ms) then plays back at steady 60fps
+
+### Scaling Considerations
+
+**At hackathon scale (1-10 matches):** No problem. ~150 req/sec is trivial.
+
+**At production scale (100+ concurrent matches):** Needs optimization.
+
+#### Quick Wins (TODO)
+
+1. **Stream only when watched**
+   - Client asks arena "any viewers?" before streaming
+   - No viewers = no frames sent
+   - Probably drops load by 90%+ (most matches have 0 spectators)
+
+   ```python
+   # In netplay.py, before starting stream:
+   if arena.get(f"/matches/{match_id}/viewer_count")["count"] == 0:
+       skip_streaming = True
+   ```
+
+2. **Lower frame rate for spectators**
+   - 30fps is fine for watching, 60fps is overkill
+   - Arena can sample every 2nd frame before broadcasting
+
+3. **Adaptive streaming**
+   - Start at low rate, increase if viewers join
+   - Reduce if buffer health is good
+
+#### Medium-Term: WebSocket Upload
+
+Replace HTTP POST with bidirectional WebSocket for frame streaming.
+
+**Current (HTTP):**
+```
+Client ──POST──► Arena    (new connection per batch)
+```
+
+**Proposed (WebSocket):**
+```
+Client ◄──────► Arena     (persistent connection, frames flow continuously)
+```
+
+Benefits:
+- No connection overhead per frame/batch
+- Lower latency
+- Server can signal "pause streaming" instantly
+- Natural backpressure
+
+Implementation notes:
+- Client connects to `ws://arena/ws/stream/{match_id}` at match start
+- Sends frame messages: `{"type": "frame", "data": {...}}`
+- Arena broadcasts to viewer WebSockets (already implemented)
+- Same auth as HTTP endpoints (match_id + queue_id)
+
+#### Long-Term: Dedicated Streaming Service
+
+Separate frame ingestion from matchmaking/coordination:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Client    │────►│   Stream    │────►│   Viewers   │
+│  (Dolphin)  │     │   Service   │     │  (Browser)  │
+└─────────────┘     └─────────────┘     └─────────────┘
+                           │
+                    ┌──────┴──────┐
+                    │    Arena    │
+                    │ (matchmake, │
+                    │  results)   │
+                    └─────────────┘
+```
+
+- Stream service handles high-throughput frame data
+- Arena handles coordination (lower volume, higher importance)
+- Can scale independently
+- Could use specialized infra (WebRTC, Livepeer, etc.)
