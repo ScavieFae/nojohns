@@ -1,0 +1,122 @@
+# No Johns Agent — headless Dolphin + Phillip on any x86_64 Linux VPS
+#
+# Usage:
+#   docker build -f Dockerfile.agent -t nojohns-agent .
+#   docker run -v /path/to/melee.iso:/app/melee.iso \
+#     -e CONNECT_CODE=ABCD#123 \
+#     nojohns-agent
+#
+# The Melee ISO is NEVER baked into the image. Mount it at runtime.
+# x86_64 only — Dolphin does not run on ARM.
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# ── System dependencies ──────────────────────────────────────────────
+# xvfb: virtual display for headless Dolphin
+# libfuse2: needed to extract Slippi AppImage
+# libenet-dev: C library for pyenet (libmelee dependency)
+# wget/curl: downloads
+# Other libs: X11/GL deps that Dolphin links against even in headless mode
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    libfuse2 \
+    libenet-dev \
+    wget curl ca-certificates \
+    git \
+    python3.12 python3.12-venv python3.12-dev \
+    build-essential \
+    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender1 \
+    libx11-6 libxcb1 libxrandr2 libxi6 libxfixes3 libxcursor1 \
+    libasound2 libpulse0 \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python 3.12 (if not already provided by ubuntu:22.04) ───────────
+# Ubuntu 22.04 ships 3.10; deadsnakes PPA provides 3.12
+RUN add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3.12 python3.12-venv python3.12-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Slippi Dolphin ──────────────────────────────────────────────────
+# Download and extract the Slippi Launcher AppImage to get Dolphin.
+# We extract rather than run (no FUSE in Docker).
+ARG SLIPPI_VERSION=2.13.3
+RUN wget -q -O /tmp/slippi-launcher.AppImage \
+    "https://github.com/project-slippi/slippi-launcher/releases/download/v${SLIPPI_VERSION}/Slippi-Launcher-${SLIPPI_VERSION}-x86_64.AppImage" \
+    && chmod +x /tmp/slippi-launcher.AppImage \
+    && cd /tmp && /tmp/slippi-launcher.AppImage --appimage-extract \
+    && mkdir -p /opt/slippi-netplay \
+    && mv /tmp/squashfs-root /opt/slippi-launcher \
+    && rm -f /tmp/slippi-launcher.AppImage
+
+# The Dolphin binary lives inside the extracted launcher.
+# Exact path varies by version — the entrypoint script finds it.
+# Create a "netplay" symlink so libmelee path validation passes.
+RUN ln -sf /opt/slippi-launcher /opt/slippi-netplay/netplay
+
+# ── Install nojohns ─────────────────────────────────────────────────
+COPY . /app
+
+RUN python3.12 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --upgrade pip \
+    && /app/.venv/bin/pip install --no-cache-dir -e ".[phillip,arena,wallet]"
+
+# Install slippi-ai (Phillip runtime)
+RUN if [ -d /app/fighters/phillip/slippi-ai ]; then \
+      /app/.venv/bin/pip install --no-cache-dir -e /app/fighters/phillip/slippi-ai; \
+    fi
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+# ── Entrypoint ──────────────────────────────────────────────────────
+COPY <<'ENTRYPOINT' /app/entrypoint.sh
+#!/bin/bash
+set -e
+
+# Write config from env vars
+mkdir -p ~/.nojohns
+cat > ~/.nojohns/config.toml <<EOF
+[games.melee]
+dolphin_path = "/opt/slippi-netplay/netplay"
+iso_path = "/app/melee.iso"
+connect_code = "${CONNECT_CODE:-DOCK#001}"
+online_delay = ${ONLINE_DELAY:-6}
+input_throttle = ${INPUT_THROTTLE:-1}
+
+[arena]
+url = "${ARENA_URL:-https://nojohns-arena-production.up.railway.app}"
+EOF
+
+# Add wallet config if private key provided
+if [ -n "$PRIVATE_KEY" ]; then
+cat >> ~/.nojohns/config.toml <<EOF
+
+[wallet]
+private_key = "$PRIVATE_KEY"
+chain_id = ${CHAIN_ID:-10143}
+rpc_url = "${RPC_URL:-https://testnet-rpc.monad.xyz}"
+EOF
+fi
+
+# Verify ISO exists
+if [ ! -f /app/melee.iso ]; then
+    echo "ERROR: Melee ISO not found at /app/melee.iso"
+    echo "Mount it: docker run -v /path/to/melee.iso:/app/melee.iso ..."
+    exit 1
+fi
+
+# Run under Xvfb (virtual display)
+echo "Starting No Johns agent..."
+exec xvfb-run -a --server-args="-screen 0 1024x768x24" "$@"
+ENTRYPOINT
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["python", "-m", "nojohns.cli", "auto", "phillip", "--no-wager", "--cooldown", "15"]

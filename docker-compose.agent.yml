@@ -1,0 +1,38 @@
+# No Johns Agent — Docker Compose
+#
+# Usage:
+#   1. Place your Melee ISO somewhere on the host
+#   2. Copy .env.agent.example to .env.agent and fill in values
+#   3. docker compose -f docker-compose.agent.yml up
+#
+# See docs/SETUP-DOCKER.md for full guide.
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    volumes:
+      # Mount your Melee ISO — REQUIRED
+      - ${ISO_PATH:?Set ISO_PATH in .env.agent}:/app/melee.iso:ro
+      # Mount Phillip model weights if not included in repo
+      - ./fighters/phillip/models:/app/fighters/phillip/models:ro
+    environment:
+      # Your Slippi connect code (created via Slippi Launcher GUI)
+      - CONNECT_CODE=${CONNECT_CODE:?Set CONNECT_CODE in .env.agent}
+      # Arena server URL (default: public arena)
+      - ARENA_URL=${ARENA_URL:-https://nojohns-arena-production.up.railway.app}
+      # Netplay settings
+      - ONLINE_DELAY=${ONLINE_DELAY:-6}
+      - INPUT_THROTTLE=${INPUT_THROTTLE:-1}
+      # Wallet (optional — for onchain records)
+      - PRIVATE_KEY=${PRIVATE_KEY:-}
+      - CHAIN_ID=${CHAIN_ID:-10143}
+      - RPC_URL=${RPC_URL:-https://testnet-rpc.monad.xyz}
+    restart: unless-stopped
+    # Dolphin is CPU-intensive during matches
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
