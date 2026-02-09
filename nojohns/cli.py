@@ -11,6 +11,7 @@ Usage:
     nojohns fight <f1> <f2>        # Run a local fight
     nojohns netplay <f> --code X   # Netplay against remote opponent
     nojohns matchmake <f>          # Arena matchmaking
+    nojohns auto <f>               # Autonomous agent loop
     nojohns list-fighters
     nojohns info <fighter>
 """
@@ -18,6 +19,7 @@ Usage:
 import argparse
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from nojohns.config import (
@@ -1357,31 +1359,28 @@ def _respond_to_wager(
     return wager_id, amount_wei
 
 
-def cmd_matchmake(args):
-    """Join the arena queue, wait for a match, play, and report results."""
+@dataclass
+class MatchOutcome:
+    """Result of a single arena match. Returned by _run_single_match()."""
+
+    match_id: str
+    opponent_code: str
+    outcome: str  # COMPLETED, DISCONNECT, ERROR
+    we_won: bool
+    our_stocks: int
+    their_stocks: int
+    duration: float
+    signed: bool
+    wager_id: int | None
+    wager_amount_wei: int | None
+    opponent_wallet: str | None
+
+
+def _make_arena_helpers(server: str):
+    """Create HTTP helper functions for arena communication."""
     import json
-    import time
-    import urllib.error
     import urllib.request
 
-    from games.melee import NetplayConfig, NetplayRunner, NetplayDisconnectedError
-    from melee import Character, Stage
-
-    fighter = load_fighter(args.fighter)
-    if fighter is None:
-        return 1
-
-    # Validate matchmake-specific required args
-    if args.code is None:
-        logger.error("--code/-c required (run 'nojohns setup melee' or pass explicitly)")
-        return 1
-    if args.server is None:
-        logger.error("--server required (run 'nojohns setup melee' or pass explicitly)")
-        return 1
-
-    server = args.server.rstrip("/")
-
-    # --- Helper: HTTP calls via stdlib ---
     def _post(path: str, body: dict) -> dict:
         data = json.dumps(body).encode()
         req = urllib.request.Request(
@@ -1403,14 +1402,44 @@ def cmd_matchmake(args):
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
 
-    # Load wallet address and agent_id to include in queue join (if configured)
-    nj_cfg = load_config()
-    our_wallet = None
-    our_agent_id = None
-    if nj_cfg.wallet and nj_cfg.wallet.address:
-        our_wallet = nj_cfg.wallet.address
-    if nj_cfg.chain and nj_cfg.chain.agent_id:
-        our_agent_id = nj_cfg.chain.agent_id
+    return _post, _get, _delete
+
+
+def _run_single_match(
+    fighter_name: str,
+    fighter,
+    args,
+    nj_cfg,
+    server: str,
+    _post,
+    _get,
+    _delete,
+    wager_amount: float | None = None,
+) -> MatchOutcome | None:
+    """Run a single arena match: join queue → play → report → sign → settle.
+
+    This is the core match loop, shared by cmd_matchmake and cmd_auto.
+
+    Args:
+        fighter_name: Name of the fighter (for queue join).
+        fighter: Loaded fighter instance.
+        args: Parsed CLI args with melee config (dolphin, iso, code, etc).
+        nj_cfg: NojohnsConfig with wallet/chain.
+        server: Arena server URL (no trailing slash).
+        _post, _get, _delete: HTTP helpers from _make_arena_helpers().
+        wager_amount: MON to wager (None = no wager).
+
+    Returns:
+        MatchOutcome on completion, None if queue timed out or unreachable.
+    """
+    import time
+    import urllib.error
+
+    from games.melee import NetplayConfig, NetplayRunner, NetplayDisconnectedError
+    from melee import Character, Stage
+
+    our_wallet = nj_cfg.wallet.address if nj_cfg.wallet and nj_cfg.wallet.address else None
+    our_agent_id = nj_cfg.chain.agent_id if nj_cfg.chain and nj_cfg.chain.agent_id else None
 
     # --- Step 1: Join queue ---
     queue_id = None
@@ -1419,7 +1448,7 @@ def cmd_matchmake(args):
         try:
             join_body = {
                 "connect_code": args.code,
-                "fighter_name": args.fighter,
+                "fighter_name": fighter_name,
             }
             if our_wallet:
                 join_body["wallet_address"] = our_wallet
@@ -1428,7 +1457,7 @@ def cmd_matchmake(args):
             result = _post("/queue/join", join_body)
         except urllib.error.URLError as e:
             logger.error(f"Cannot reach arena server at {server}: {e}")
-            return 1
+            return None
 
         queue_id = result["queue_id"]
         status = result["status"]
@@ -1436,7 +1465,6 @@ def cmd_matchmake(args):
         if status == "matched":
             match_id = result["match_id"]
             opponent_code = result["opponent_code"]
-
             logger.info(f"Matched! Opponent: {opponent_code}")
         else:
             position = result.get("position", "?")
@@ -1456,26 +1484,24 @@ def cmd_matchmake(args):
                     continue
 
                 status = result["status"]
-
                 if status == "matched":
                     match_id = result["match_id"]
                     opponent_code = result["opponent_code"]
-        
                     logger.info(f"Matched! Opponent: {opponent_code}")
                     break
 
             if status != "matched":
                 logger.error("Queue timed out — no opponent found.")
                 _delete(f"/queue/{queue_id}")
-                return 1
+                return None
 
-        # --- Step 2.5: Wager negotiation (autonomous, driven by --wager flag) ---
+        # --- Step 2.5: Wager negotiation ---
         wager_id = None
-        wager_amount = None
+        wager_amount_wei = None
         opponent_wallet = result.get("opponent_wallet")
 
-        if args.wager and nj_cfg.wallet and nj_cfg.wallet.private_key and nj_cfg.chain and nj_cfg.chain.wager:
-            wager_id, wager_amount = _negotiate_wager(
+        if wager_amount and nj_cfg.wallet and nj_cfg.wallet.private_key and nj_cfg.chain and nj_cfg.chain.wager:
+            wager_id, wager_amount_wei = _negotiate_wager(
                 match_id=match_id,
                 queue_id=queue_id,
                 opponent_wallet=opponent_wallet,
@@ -1483,11 +1509,11 @@ def cmd_matchmake(args):
                 server=server,
                 _get=_get,
                 _post=_post,
-                wager_amount=args.wager,
+                wager_amount=wager_amount,
             )
 
         # --- Step 3: Run netplay ---
-        if args.headless:
+        if getattr(args, "headless", False):
             logger.warning("--headless requires mainline Dolphin (not Slippi Dolphin)")
             logger.warning("Slippi netplay needs a display. Use Xvfb on headless servers.")
         logger.info("Launching netplay...")
@@ -1496,7 +1522,7 @@ def cmd_matchmake(args):
             dolphin_path=args.dolphin,
             iso_path=args.iso,
             opponent_code=opponent_code,
-            connect_code=args.code,  # Our own code, for port detection
+            connect_code=args.code,
             character=_resolve_character(args.char, Character),
             stage=Stage[args.stage.upper()],
             stocks=args.stocks,
@@ -1504,9 +1530,8 @@ def cmd_matchmake(args):
             online_delay=args.delay,
             input_throttle=args.throttle,
             dolphin_home_path=args.dolphin_home,
-            slippi_replay_dir=args.replay_dir,
-            headless=args.headless,
-            # Live streaming for spectators
+            slippi_replay_dir=getattr(args, "replay_dir", None),
+            headless=getattr(args, "headless", False),
             arena_url=server,
             match_id=match_id,
         )
@@ -1514,14 +1539,13 @@ def cmd_matchmake(args):
         runner = NetplayRunner(config)
         start_time = time.time()
         outcome = "COMPLETED"
-
         our_stocks = 0
         their_stocks = 0
+        we_won = False
 
         try:
             match_result = runner.run_netplay(fighter, games=1)
             duration = time.time() - start_time
-            # Slippi assigns random ports — use our_port to read correct side
             port = getattr(match_result, "our_port", 1)
             if match_result.games:
                 last_game = match_result.games[-1]
@@ -1541,7 +1565,7 @@ def cmd_matchmake(args):
             outcome = "ERROR"
             logger.error(f"Match error: {e}")
 
-        # --- Step 4: Report result (with stocks so arena can determine winner) ---
+        # --- Step 4: Report result ---
         try:
             _post(f"/matches/{match_id}/result", {
                 "queue_id": queue_id,
@@ -1553,60 +1577,305 @@ def cmd_matchmake(args):
         except urllib.error.URLError as e:
             logger.warning(f"Failed to report result: {e}")
 
-        # --- Step 5: Sign canonical match result from arena ---
+        # --- Step 5: Sign canonical match result ---
         signed = _sign_and_submit(match_id, outcome, _get, _post)
 
-        # --- Step 6: Auto-settle wager if we had one ---
+        # --- Step 6: Auto-settle wager ---
         if wager_id is not None and outcome == "COMPLETED":
-            _auto_settle_wager(match_id, wager_id, wager_amount, nj_cfg)
+            _auto_settle_wager(match_id, wager_id, wager_amount_wei, nj_cfg)
 
-        # --- Match summary ---
-        print()
-        print("=" * 44)
-        if outcome == "COMPLETED":
-            result_line = "WIN" if we_won else "LOSS"
-            print(f"  {args.fighter} vs {opponent_code}  —  {result_line}")
-            if our_stocks > 0:
-                print(f"  Stocks remaining: {our_stocks}")
-        elif outcome == "DISCONNECT":
-            print(f"  {args.fighter} vs {opponent_code}  —  DISCONNECT")
-        else:
-            print(f"  {args.fighter} vs {opponent_code}  —  ERROR")
-        print(f"  Duration: {duration:.0f}s  |  Match: {match_id[:8]}...")
-        if signed:
-            print(f"  Signed: yes  |  Wallet: {nj_cfg.wallet.address[:10]}...")
-        elif nj_cfg.wallet and nj_cfg.wallet.address:
-            print(f"  Signed: FAILED  |  Wallet: {nj_cfg.wallet.address[:10]}...")
-        if wager_id is not None:
-            pot_mon = (wager_amount or 0) * 2 / 10**18
-            print(f"  Wager: {pot_mon} MON pot  |  ID: {wager_id}")
-        print("=" * 44)
-        print()
-
-        # One-time nudge for operators without a wallet
-        if not (nj_cfg.wallet and nj_cfg.wallet.address):
-            nudge_marker = CONFIG_DIR / ".wallet-nudged"
-            if not nudge_marker.exists():
-                print("Tip: Record matches onchain and build your agent's reputation.")
-                print("     Run: nojohns setup wallet")
-                print()
-                try:
-                    nudge_marker.touch()
-                except OSError:
-                    pass
-
-        return 0
+        return MatchOutcome(
+            match_id=match_id,
+            opponent_code=opponent_code,
+            outcome=outcome,
+            we_won=we_won,
+            our_stocks=our_stocks,
+            their_stocks=their_stocks,
+            duration=duration,
+            signed=signed,
+            wager_id=wager_id,
+            wager_amount_wei=wager_amount_wei,
+            opponent_wallet=opponent_wallet,
+        )
 
     except KeyboardInterrupt:
-        logger.info("\nCancelled.")
-        return 130
+        raise  # Let caller handle
     finally:
-        # Always clean up our queue entry so stale entries don't pile up
         if queue_id and match_id is None:
             try:
                 _delete(f"/queue/{queue_id}")
             except Exception:
                 pass
+
+
+def _print_match_summary(
+    fighter_name: str, result: MatchOutcome, nj_cfg, show_nudge: bool = True
+):
+    """Print the post-match summary box."""
+    print()
+    print("=" * 44)
+    if result.outcome == "COMPLETED":
+        result_line = "WIN" if result.we_won else "LOSS"
+        print(f"  {fighter_name} vs {result.opponent_code}  —  {result_line}")
+        if result.our_stocks > 0:
+            print(f"  Stocks remaining: {result.our_stocks}")
+    elif result.outcome == "DISCONNECT":
+        print(f"  {fighter_name} vs {result.opponent_code}  —  DISCONNECT")
+    else:
+        print(f"  {fighter_name} vs {result.opponent_code}  —  ERROR")
+    print(f"  Duration: {result.duration:.0f}s  |  Match: {result.match_id[:8]}...")
+    if result.signed:
+        print(f"  Signed: yes  |  Wallet: {nj_cfg.wallet.address[:10]}...")
+    elif nj_cfg.wallet and nj_cfg.wallet.address:
+        print(f"  Signed: FAILED  |  Wallet: {nj_cfg.wallet.address[:10]}...")
+    if result.wager_id is not None:
+        pot_mon = (result.wager_amount_wei or 0) * 2 / 10**18
+        print(f"  Wager: {pot_mon} MON pot  |  ID: {result.wager_id}")
+    print("=" * 44)
+    print()
+
+    if show_nudge and not (nj_cfg.wallet and nj_cfg.wallet.address):
+        nudge_marker = CONFIG_DIR / ".wallet-nudged"
+        if not nudge_marker.exists():
+            print("Tip: Record matches onchain and build your agent's reputation.")
+            print("     Run: nojohns setup wallet")
+            print()
+            try:
+                nudge_marker.touch()
+            except OSError:
+                pass
+
+
+def cmd_matchmake(args):
+    """Join the arena queue, wait for a match, play, and report results."""
+    fighter = load_fighter(args.fighter)
+    if fighter is None:
+        return 1
+
+    if args.code is None:
+        logger.error("--code/-c required (run 'nojohns setup melee' or pass explicitly)")
+        return 1
+    if args.server is None:
+        logger.error("--server required (run 'nojohns setup melee' or pass explicitly)")
+        return 1
+
+    server = args.server.rstrip("/")
+    _post, _get, _delete = _make_arena_helpers(server)
+    nj_cfg = load_config()
+
+    try:
+        result = _run_single_match(
+            fighter_name=args.fighter,
+            fighter=fighter,
+            args=args,
+            nj_cfg=nj_cfg,
+            server=server,
+            _post=_post,
+            _get=_get,
+            _delete=_delete,
+            wager_amount=args.wager,
+        )
+
+        if result is None:
+            return 1
+
+        _print_match_summary(args.fighter, result, nj_cfg)
+        return 0
+
+    except KeyboardInterrupt:
+        logger.info("\nCancelled.")
+        return 130
+
+
+def cmd_auto(args):
+    """Autonomous agent loop: scout, wager, play, repeat.
+
+    Composes the agent toolkit (agents/) as a reference implementation.
+    This is the "Phillip of agents" — a working demo, not the only way.
+    """
+    import time
+
+    from agents.bankroll import get_bankroll_state, win_probability_from_elo
+    from agents.scouting import scout_opponent, scout_by_wallet
+    from agents.strategy import KellyStrategy, MatchContext, SessionStats
+    from nojohns.config import MoltbotConfig
+
+    fighter = load_fighter(args.fighter)
+    if fighter is None:
+        return 1
+
+    if args.code is None:
+        logger.error("--code/-c required (run 'nojohns setup melee' or pass explicitly)")
+        return 1
+    if args.server is None:
+        logger.error("--server required (run 'nojohns setup melee' or pass explicitly)")
+        return 1
+
+    nj_cfg = load_config()
+
+    # Wallet required for auto mode (need to make strategic decisions about money)
+    if not args.no_wager:
+        if nj_cfg.wallet is None or nj_cfg.wallet.private_key is None:
+            logger.error("Wallet required for auto mode. Run: nojohns setup wallet")
+            logger.error("Or use --no-wager to play without wagering.")
+            return 1
+        if nj_cfg.chain is None or nj_cfg.chain.wager is None:
+            logger.error("Wager contract not configured. Check [chain] in config.toml")
+            logger.error("Or use --no-wager to play without wagering.")
+            return 1
+
+    # Merge config defaults with CLI overrides
+    moltbot_cfg = nj_cfg.moltbot or MoltbotConfig()
+    risk_profile = args.risk or moltbot_cfg.risk_profile
+    cooldown = args.cooldown if args.cooldown is not None else moltbot_cfg.cooldown_seconds
+    min_bankroll = args.min_bankroll if args.min_bankroll is not None else moltbot_cfg.min_bankroll
+    tilt_threshold = moltbot_cfg.tilt_threshold
+    max_matches = args.max_matches
+
+    # Set up strategy
+    strategy = KellyStrategy(risk_profile=risk_profile, tilt_threshold=tilt_threshold)
+
+    server = args.server.rstrip("/")
+    _post, _get, _delete = _make_arena_helpers(server)
+
+    # Session tracking
+    session = SessionStats()
+
+    # Get our Elo
+    our_elo = 1500
+    if nj_cfg.chain and nj_cfg.chain.reputation_registry and nj_cfg.chain.agent_id:
+        try:
+            from nojohns.reputation import get_current_elo
+            state = get_current_elo(
+                nj_cfg.chain.agent_id,
+                nj_cfg.chain.rpc_url,
+                nj_cfg.chain.reputation_registry,
+            )
+            our_elo = state.elo
+        except Exception:
+            pass
+
+    print()
+    print("=" * 52)
+    print(f"  No Johns — Autonomous Mode")
+    print(f"  Fighter: {args.fighter}")
+    print(f"  Strategy: {strategy}")
+    print(f"  Elo: {our_elo}")
+    if not args.no_wager:
+        print(f"  Min bankroll: {min_bankroll} MON")
+    else:
+        print(f"  Wagering: disabled")
+    if max_matches:
+        print(f"  Max matches: {max_matches}")
+    print(f"  Cooldown: {cooldown}s between matches")
+    print("=" * 52)
+    print()
+
+    match_num = 0
+
+    try:
+        while True:
+            match_num += 1
+
+            if max_matches and match_num > max_matches:
+                print(f"\nReached max matches ({max_matches}). Stopping.")
+                break
+
+            print(f"\n--- Match {match_num} ---")
+
+            # 1. Check bankroll
+            wager_amount = None
+            if not args.no_wager and nj_cfg.wallet and nj_cfg.chain and nj_cfg.chain.wager:
+                bankroll = get_bankroll_state(
+                    nj_cfg.wallet.address,
+                    nj_cfg.chain.rpc_url,
+                    nj_cfg.chain.wager,
+                )
+                print(f"Bankroll: {bankroll.available_mon:.4f} MON available")
+
+                if bankroll.available_mon < min_bankroll:
+                    print(f"Below min bankroll ({min_bankroll} MON). Stopping.")
+                    break
+
+            # 2. Join queue and get matched (wager decision happens after we know opponent)
+            # For now, run match without wager — we'll decide after scouting
+            result = _run_single_match(
+                fighter_name=args.fighter,
+                fighter=fighter,
+                args=args,
+                nj_cfg=nj_cfg,
+                server=server,
+                _post=_post,
+                _get=_get,
+                _delete=_delete,
+                wager_amount=None,  # Decided dynamically below
+            )
+
+            if result is None:
+                print("Failed to get a match. Waiting before retry...")
+                time.sleep(cooldown)
+                continue
+
+            # 3. Scout opponent (post-match for now — pre-match scouting needs queue refactor)
+            opponent_report = scout_by_wallet(
+                result.opponent_wallet or "",
+                nj_cfg.chain.rpc_url if nj_cfg.chain else "",
+                nj_cfg.chain.reputation_registry or "" if nj_cfg.chain else "",
+            ) if nj_cfg.chain else None
+
+            # 4. Strategy reasoning (even when not wagering — shows what *would* happen)
+            if not args.no_wager and nj_cfg.chain and opponent_report:
+                bankroll = get_bankroll_state(
+                    nj_cfg.wallet.address,
+                    nj_cfg.chain.rpc_url,
+                    nj_cfg.chain.wager,
+                )
+                context = MatchContext(
+                    our_elo=our_elo,
+                    opponent=opponent_report,
+                    bankroll_wei=bankroll.available_wei,
+                    session_stats=session,
+                )
+                decision = strategy.decide(context)
+                print(f"  Strategy: {decision.reasoning}")
+
+            # 5. Update session stats
+            if result.outcome == "COMPLETED":
+                wager_wei = result.wager_amount_wei or 0
+                if result.we_won:
+                    session.record_win(wager_wei)
+                else:
+                    session.record_loss(wager_wei)
+                if result.opponent_code:
+                    session.opponents_faced.add(result.opponent_code)
+
+            # 6. Print match summary
+            _print_match_summary(args.fighter, result, nj_cfg, show_nudge=False)
+
+            # 7. Cooldown
+            if max_matches is None or match_num < max_matches:
+                print(f"Cooling down ({cooldown}s)...")
+                time.sleep(cooldown)
+
+    except KeyboardInterrupt:
+        print("\n\nAuto mode interrupted.")
+
+    # --- Session Summary ---
+    print()
+    print("=" * 52)
+    print(f"  Session Summary")
+    print(f"  Matches: {session.matches_played}")
+    print(f"  Record: {session.wins}-{session.losses} ({session.win_rate:.0%})")
+    print(f"  Unique opponents: {len(session.opponents_faced)}")
+    if session.total_wagered_wei > 0:
+        net_mon = session.net_profit_wei / 10**18
+        total_mon = session.total_wagered_wei / 10**18
+        print(f"  Total wagered: {total_mon:.4f} MON")
+        print(f"  Net P&L: {'+' if net_mon >= 0 else ''}{net_mon:.4f} MON")
+    print("=" * 52)
+    print()
+
+    return 0
 
 
 def cmd_arena(args):
@@ -2231,6 +2500,30 @@ def main():
     mm_parser.add_argument("--wager", type=float, default=None, help="Auto-wager this amount of MON per match")
     mm_parser.set_defaults(func=cmd_matchmake)
 
+    # auto command (autonomous agent loop)
+    auto_parser = subparsers.add_parser(
+        "auto", help="Autonomous agent: scout, wager, play, repeat"
+    )
+    auto_parser.add_argument("fighter", help="Fighter to run")
+    auto_parser.add_argument("--code", "-c", default=None, help="Your Slippi connect code")
+    auto_parser.add_argument("--server", default=None, help="Arena server URL")
+    auto_parser.add_argument("--dolphin", "-d", default=None, help="Path to Slippi Dolphin")
+    auto_parser.add_argument("--iso", "-i", default=None, help="Path to Melee ISO")
+    auto_parser.add_argument("--char", default="RANDOM", help="Character (default: RANDOM)")
+    auto_parser.add_argument("--stage", default="FINAL_DESTINATION", help="Stage")
+    auto_parser.add_argument("--stocks", "-s", type=int, default=4, help="Stocks per game")
+    auto_parser.add_argument("--time", "-t", type=int, default=8, help="Time limit in minutes")
+    auto_parser.add_argument("--delay", type=int, default=None, help="Online input delay")
+    auto_parser.add_argument("--throttle", type=int, default=None, help="AI input throttle")
+    auto_parser.add_argument("--dolphin-home", default=None, help="Dolphin home dir")
+    auto_parser.add_argument("--risk", choices=["conservative", "moderate", "aggressive"],
+                             default=None, help="Risk profile (default: from config or moderate)")
+    auto_parser.add_argument("--max-matches", type=int, default=None, help="Stop after N matches")
+    auto_parser.add_argument("--min-bankroll", type=float, default=None, help="MON stop threshold")
+    auto_parser.add_argument("--cooldown", type=int, default=None, help="Seconds between matches")
+    auto_parser.add_argument("--no-wager", action="store_true", help="Play without wagering")
+    auto_parser.set_defaults(func=cmd_auto)
+
     # arena command
     arena_parser = subparsers.add_parser("arena", help="Start the matchmaking server")
     arena_parser.add_argument("--port", "-p", type=int, default=8000, help="Server port (default: 8000)")
@@ -2287,7 +2580,7 @@ def main():
     args = parser.parse_args()
 
     # Load config and resolve args for game commands
-    game_commands = {"fight", "netplay", "netplay-test", "matchmake"}
+    game_commands = {"fight", "netplay", "netplay-test", "matchmake", "auto"}
     if args.command in game_commands:
         nj_cfg = load_config()
         game_cfg = nj_cfg.games.get("melee")
