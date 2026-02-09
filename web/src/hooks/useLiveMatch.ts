@@ -1,5 +1,8 @@
 /**
  * Hook for connecting to live match WebSocket stream
+ *
+ * Uses a frame buffer to smooth playback over network jitter.
+ * Frames are buffered until we have enough, then played back at a steady rate.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -12,12 +15,18 @@ import type { MatchFrame, PlayerFrame } from "../components/viewer/MeleeViewer";
 // Character IDs from arena are already internal IDs (libmelee format)
 import { ARENA_URL } from "../config";
 
+// Buffer config: wait for this many frames before starting playback
+// At 60fps, 8 frames = ~133ms of buffer (adds latency but smooths jitter)
+const BUFFER_TARGET = 8;
+const PLAYBACK_INTERVAL_MS = 16; // ~60fps playback
+
 export interface LiveMatchState {
   status: "connecting" | "connected" | "ended" | "error" | "disconnected";
   matchInfo: MatchStartMessage | null;
   currentFrame: MatchFrame | null;
   error: string | null;
   gameScore: [number, number];
+  bufferHealth: number; // 0-1, how full the buffer is relative to target
 }
 
 interface UseLiveMatchOptions {
@@ -42,15 +51,17 @@ export function useLiveMatch(
     currentFrame: null,
     error: null,
     gameScore: [0, 0],
+    bufferHealth: 0,
   });
 
   const wsRef = useRef<WebSocket | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
-  // Frame buffering for smoother rendering
-  const pendingFrameRef = useRef<MatchFrame | null>(null);
-  const rafRef = useRef<number | null>(null);
+  // Frame buffer for smooth playback
+  const frameBufferRef = useRef<MatchFrame[]>([]);
+  const playbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bufferingRef = useRef(true); // Start in buffering mode
 
   // Convert arena PlayerFrameData to viewer PlayerFrame
   const convertPlayerFrame = useCallback(
@@ -73,6 +84,32 @@ export function useLiveMatch(
     },
     []
   );
+
+  // Start smooth playback from buffer
+  const startPlayback = useCallback(() => {
+    if (playbackIntervalRef.current) return; // Already playing
+
+    playbackIntervalRef.current = setInterval(() => {
+      const frame = frameBufferRef.current.shift();
+      if (frame) {
+        setState((prev) => ({
+          ...prev,
+          currentFrame: frame,
+          bufferHealth: Math.min(1, frameBufferRef.current.length / BUFFER_TARGET),
+        }));
+      }
+    }, PLAYBACK_INTERVAL_MS);
+  }, []);
+
+  // Stop playback
+  const stopPlayback = useCallback(() => {
+    if (playbackIntervalRef.current) {
+      clearInterval(playbackIntervalRef.current);
+      playbackIntervalRef.current = null;
+    }
+    frameBufferRef.current = [];
+    bufferingRef.current = true;
+  }, []);
 
   // Handle incoming messages
   const handleMessage = useCallback(
@@ -110,7 +147,7 @@ export function useLiveMatch(
             break;
 
           case "frame":
-            // Buffer frame and sync with rAF for smoother rendering
+            // Add frame to buffer
             setState((prev) => {
               if (!prev.matchInfo) return prev;
 
@@ -124,21 +161,19 @@ export function useLiveMatch(
                 players,
               };
 
-              // Store in ref for rAF sync
-              pendingFrameRef.current = newFrame;
+              // Add to buffer
+              frameBufferRef.current.push(newFrame);
 
-              // Schedule render if not already scheduled
-              if (rafRef.current === null) {
-                rafRef.current = requestAnimationFrame(() => {
-                  rafRef.current = null;
-                  const frame = pendingFrameRef.current;
-                  if (frame) {
-                    setState((p) => ({ ...p, currentFrame: frame }));
-                  }
-                });
+              // Update buffer health indicator
+              const health = Math.min(1, frameBufferRef.current.length / BUFFER_TARGET);
+
+              // Start playback once buffer is full enough
+              if (bufferingRef.current && frameBufferRef.current.length >= BUFFER_TARGET) {
+                bufferingRef.current = false;
+                startPlayback();
               }
 
-              return prev; // Don't update state here
+              return { ...prev, bufferHealth: health };
             });
             break;
 
@@ -181,6 +216,7 @@ export function useLiveMatch(
   useEffect(() => {
     if (!matchId) {
       // Disconnect
+      stopPlayback();
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -191,6 +227,7 @@ export function useLiveMatch(
         currentFrame: null,
         error: null,
         gameScore: [0, 0],
+        bufferHealth: 0,
       });
       return;
     }
@@ -252,17 +289,14 @@ export function useLiveMatch(
       if (wsWithTimeout._connectTimeout) {
         clearTimeout(wsWithTimeout._connectTimeout);
       }
-      // Clear any pending rAF
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      // Stop playback
+      stopPlayback();
       ws.close();
       if (wsRef.current === ws) {
         wsRef.current = null;
       }
     };
-  }, [matchId, handleMessage]);
+  }, [matchId, handleMessage, stopPlayback]);
 
   return state;
 }
