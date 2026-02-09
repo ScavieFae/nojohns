@@ -11,8 +11,9 @@ Endpoints:
 
 Live streaming:
     WS     /ws/match/{id}       WebSocket for live match viewing
-    POST   /matches/{id}/frame  Post frame data (client -> arena)
-    POST   /matches/{id}/start  Signal match start with player info
+    WS     /ws/stream/{id}      WebSocket for frame upload (client -> arena)
+    POST   /matches/{id}/frame  Post frame data (client -> arena, legacy)
+    POST   /matches/{id}/start  Signal match start with player info (legacy)
 """
 
 import asyncio
@@ -614,6 +615,56 @@ async def websocket_match(websocket: WebSocket, match_id: str):
         pass
     finally:
         _manager.disconnect(match_id, websocket)
+
+
+@app.websocket("/ws/stream/{match_id}")
+async def stream_upload(websocket: WebSocket, match_id: str):
+    """WebSocket endpoint for frame upload from game client.
+
+    Game clients connect here to stream frames continuously instead of
+    using HTTP POST. All messages are broadcast to viewers immediately.
+
+    Message types:
+        {"type": "match_start", "stageId": int, "players": [...]}
+        {"type": "frame", "frame": int, "players": [...]}
+        {"type": "game_end", "gameNumber": int, "winnerPort": int, "endMethod": str}
+        {"type": "match_end", "winnerPort": int, "finalScore": [int, int]}
+    """
+    await websocket.accept()
+    logger.info(f"Stream upload connected for match {match_id}")
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+
+            if msg_type == "match_start":
+                # Store for late joiners + broadcast
+                await _manager.broadcast(match_id, data)
+                logger.info(f"[ws/stream] match_start for {match_id}")
+
+            elif msg_type == "frame":
+                await _manager.broadcast(match_id, data)
+
+            elif msg_type == "game_end":
+                await _manager.broadcast(match_id, data)
+                logger.info(f"[ws/stream] game_end for {match_id}")
+
+            elif msg_type == "match_end":
+                await _manager.broadcast(match_id, data)
+                logger.info(f"[ws/stream] match_end for {match_id}")
+
+                # Clean up after a short delay
+                async def cleanup():
+                    await asyncio.sleep(5.0)
+                    _manager.cleanup_match(match_id)
+                asyncio.create_task(cleanup())
+                break
+
+    except WebSocketDisconnect:
+        logger.info(f"Stream upload disconnected for match {match_id}")
+    except Exception as e:
+        logger.error(f"Stream upload error for match {match_id}: {e}")
 
 
 class MatchStartRequest(BaseModel):

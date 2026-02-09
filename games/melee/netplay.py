@@ -18,12 +18,21 @@ from typing import Callable
 import melee
 from melee import Character, Stage
 
-# Optional: httpx for streaming (not required for basic netplay)
+# Optional: httpx for streaming (legacy HTTP fallback)
 try:
     import httpx
     HTTPX_AVAILABLE = True
 except ImportError:
     HTTPX_AVAILABLE = False
+
+# Optional: websockets for streaming (preferred over HTTP)
+try:
+    import websockets
+    import asyncio
+    import json as _json
+    WEBSOCKETS_AVAILABLE = True
+except ImportError:
+    WEBSOCKETS_AVAILABLE = False
 
 from nojohns.fighter import (
     Fighter,
@@ -98,68 +107,214 @@ class NetplayConfig:
 class MatchStreamer:
     """Streams match data to arena for live spectating.
 
-    Posts frame data to arena HTTP endpoints. Arena broadcasts to
-    connected WebSocket viewers.
+    Prefers WebSocket (continuous 60fps, low jitter) with HTTP fallback
+    (batched, higher jitter). The game loop is synchronous, so we run
+    an asyncio event loop in a background thread for the WebSocket.
 
-    This runs in a background thread to avoid blocking the game loop.
+    Usage is identical regardless of transport — call send_frame() etc.
     """
 
     def __init__(self, arena_url: str, match_id: str):
         self.arena_url = arena_url.rstrip("/")
         self.match_id = match_id
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._frames_sent = 0
+
+        # WebSocket state (preferred)
+        self._ws: "websockets.WebSocketClientProtocol | None" = None
+        self._loop: "asyncio.AbstractEventLoop | None" = None
+        self._ws_connected = False
+
+        # HTTP fallback state
         self._client: "httpx.Client | None" = None
         self._queue: list[dict] = []
         self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
 
     def start(self):
-        """Start the background streaming thread."""
-        if not HTTPX_AVAILABLE:
-            logger.warning("httpx not installed — live streaming disabled")
-            return
+        """Start streaming — try WebSocket, fall back to HTTP."""
+        if WEBSOCKETS_AVAILABLE:
+            self._thread = threading.Thread(target=self._ws_thread, daemon=True)
+            self._thread.start()
+            # Wait briefly for WebSocket to connect
+            for _ in range(20):  # Up to 2 seconds
+                if self._ws_connected or self._stop.is_set():
+                    break
+                time.sleep(0.1)
+            if self._ws_connected:
+                logger.info(f"Match streamer (WebSocket) started for {self.match_id}")
+                return
+            else:
+                logger.warning("WebSocket connect failed, falling back to HTTP")
+                self._stop.set()
+                if self._thread:
+                    self._thread.join(timeout=2.0)
+                self._stop.clear()
+                self._thread = None
 
-        self._client = httpx.Client(timeout=2.0)
-        self._thread = threading.Thread(target=self._stream_loop, daemon=True)
-        self._thread.start()
-        logger.info(f"Match streamer started for {self.match_id}")
+        # HTTP fallback
+        if HTTPX_AVAILABLE:
+            self._client = httpx.Client(timeout=2.0)
+            self._thread = threading.Thread(target=self._http_stream_loop, daemon=True)
+            self._thread.start()
+            logger.info(f"Match streamer (HTTP) started for {self.match_id}")
+        else:
+            logger.warning("Neither websockets nor httpx installed — streaming disabled")
 
     def stop(self):
         """Stop streaming and clean up."""
         self._stop.set()
+        # Close WebSocket from the event loop thread
+        if self._ws and self._loop and self._loop.is_running():
+            try:
+                future = asyncio.run_coroutine_threadsafe(self._ws.close(), self._loop)
+                future.result(timeout=2.0)
+            except Exception:
+                pass
         if self._thread:
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=3.0)
         if self._client:
             self._client.close()
             self._client = None
+        logger.info(f"Match streamer stopped ({self._frames_sent} frames sent)")
 
     def send_match_start(self, stage_id: int, players: list[dict]):
         """Send match_start message."""
         logger.info(f"Sending match_start: stage={stage_id}, players={len(players)}")
-        self._post("stream/start", {
-            "stage_id": stage_id,
-            "players": players,
-        })
+        msg = {
+            "type": "match_start",
+            "matchId": self.match_id,
+            "stageId": stage_id,
+            "players": [
+                {
+                    "port": p.get("port"),
+                    "characterId": p.get("character_id"),
+                    "connectCode": p.get("connect_code"),
+                    "displayName": p.get("display_name"),
+                }
+                for p in players
+            ],
+        }
+        if self._ws_connected:
+            self._ws_send(msg)
+        else:
+            self._post("stream/start", {
+                "stage_id": stage_id,
+                "players": players,
+            })
 
     def send_frame(self, frame: int, players: list[dict]):
-        """Queue a frame for streaming (batched)."""
-        with self._lock:
-            self._queue.append({"frame": frame, "players": players})
+        """Send a frame. Over WebSocket: immediate. Over HTTP: queued for batching."""
+        if self._ws_connected:
+            msg = {
+                "type": "frame",
+                "frame": frame,
+                "players": [
+                    {
+                        "port": p.get("port"),
+                        "x": p.get("x"),
+                        "y": p.get("y"),
+                        "actionStateId": p.get("action_state_id"),
+                        "actionFrame": p.get("action_frame"),
+                        "facingDirection": p.get("facing_direction"),
+                        "percent": p.get("percent"),
+                        "stocks": p.get("stocks"),
+                        "shieldHealth": p.get("shield_health"),
+                        "isInvincible": p.get("is_invincible"),
+                        "isInHitstun": p.get("is_in_hitstun"),
+                    }
+                    for p in players
+                ],
+            }
+            self._ws_send(msg)
+            self._frames_sent += 1
+        else:
+            with self._lock:
+                self._queue.append({"frame": frame, "players": players})
 
     def send_game_end(self, game_number: int, winner_port: int, end_method: str = "stocks"):
         """Send game_end message."""
-        self._post("stream/game_end", {
-            "game_number": game_number,
-            "winner_port": winner_port,
-            "end_method": end_method,
-        })
+        msg = {
+            "type": "game_end",
+            "gameNumber": game_number,
+            "winnerPort": winner_port,
+            "endMethod": end_method,
+        }
+        if self._ws_connected:
+            self._ws_send(msg)
+        else:
+            self._post("stream/game_end", {
+                "game_number": game_number,
+                "winner_port": winner_port,
+                "end_method": end_method,
+            })
 
     def send_match_end(self, winner_port: int, final_score: list[int]):
         """Send match_end message."""
-        self._post("stream/end", {
-            "winner_port": winner_port,
-            "final_score": final_score,
-        })
+        msg = {
+            "type": "match_end",
+            "winnerPort": winner_port,
+            "finalScore": final_score,
+        }
+        if self._ws_connected:
+            self._ws_send(msg)
+        else:
+            self._post("stream/end", {
+                "winner_port": winner_port,
+                "final_score": final_score,
+            })
+
+    # === WebSocket transport ===
+
+    def _ws_thread(self):
+        """Background thread running asyncio event loop for WebSocket."""
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._ws_connect())
+        except Exception as e:
+            logger.error(f"WebSocket thread error: {e}")
+        finally:
+            self._loop.close()
+            self._loop = None
+
+    async def _ws_connect(self):
+        """Connect to arena WebSocket upload endpoint."""
+        ws_url = self.arena_url.replace("https://", "wss://").replace("http://", "ws://")
+        ws_url = f"{ws_url}/ws/stream/{self.match_id}"
+        try:
+            self._ws = await websockets.connect(ws_url, close_timeout=2)
+            self._ws_connected = True
+            logger.info(f"WebSocket connected to {ws_url}")
+            # Keep alive until stopped
+            while not self._stop.is_set():
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.warning(f"WebSocket connect failed: {e}")
+            self._ws_connected = False
+        finally:
+            self._ws_connected = False
+            if self._ws:
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
+                self._ws = None
+
+    def _ws_send(self, msg: dict):
+        """Send a message over the WebSocket from the sync game loop."""
+        if not self._ws or not self._loop or not self._loop.is_running():
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._ws.send(_json.dumps(msg)), self._loop
+            )
+            # Don't block waiting — fire and forget for frames
+            # (match_start/game_end/match_end are infrequent enough to not matter)
+        except Exception as e:
+            logger.warning(f"WebSocket send failed: {e}")
+
+    # === HTTP fallback transport ===
 
     def _post(self, endpoint: str, data: dict):
         """POST to arena endpoint (blocking, for important messages)."""
@@ -173,10 +328,9 @@ class MatchStreamer:
         except Exception as e:
             logger.error(f"Stream POST failed ({endpoint}): {e}")
 
-    def _stream_loop(self):
-        """Background thread that sends queued frames in batches."""
-        logger.info(f"Stream loop started for {self.match_id}")
-        frames_sent = 0
+    def _http_stream_loop(self):
+        """Background thread that sends queued frames in HTTP batches (fallback)."""
+        logger.info(f"HTTP stream loop started for {self.match_id}")
         batches_sent = 0
         while not self._stop.is_set():
             batch = None
@@ -189,7 +343,7 @@ class MatchStreamer:
                 url = f"{self.arena_url}/matches/{self.match_id}/stream/frames"
                 try:
                     resp = self._client.post(url, json={"frames": batch})
-                    frames_sent += len(batch)
+                    self._frames_sent += len(batch)
                     batches_sent += 1
                     if batches_sent <= 3 or batches_sent % 50 == 0:
                         logger.info(f"Stream batch #{batches_sent}: {len(batch)} frames sent ({resp.status_code})")
@@ -198,7 +352,7 @@ class MatchStreamer:
 
             # Flush every ~100ms — batches ~6 frames per request at 60fps
             time.sleep(0.1)
-        logger.info(f"Stream loop ended for {self.match_id} ({frames_sent} frames in {batches_sent} batches)")
+        logger.info(f"HTTP stream loop ended for {self.match_id}")
 
 
 def extract_player_frame(player: "melee.PlayerState", port: int) -> dict:

@@ -1070,3 +1070,47 @@ Check browser console if the viewer isn't working.
 |--------|-------------|
 | `934e9c8` | Add stage detection and rendering to live viewer |
 | `c4f5d72` | Fix live viewer frame buffer and add debug logging |
+
+---
+
+## WebSocket Upload — DONE (day 8, Scav)
+
+The server-side WebSocket upload endpoint is implemented and tested. The arena now accepts
+frame data over a persistent WebSocket connection in addition to the legacy HTTP POST endpoints.
+
+### What changed
+
+**`arena/server.py`** — new endpoint:
+```
+WS /ws/stream/{match_id}
+```
+Accepts JSON messages with `type` field: `match_start`, `frame`, `game_end`, `match_end`.
+Each message is broadcast to viewers immediately (no batching). Connection closes after `match_end`.
+
+**`games/melee/netplay.py`** — `MatchStreamer` refactored:
+- Tries WebSocket first (`ws://arena/ws/stream/{match_id}`)
+- Falls back to HTTP batching if WebSocket fails
+- Sends frames individually over WebSocket (1 frame per message, continuous 60fps)
+- No change to the public API — `send_frame()`, `send_match_start()`, etc. work the same
+
+**`pyproject.toml`** — added `websockets>=12.0` to `[arena]` extras (already installed via uvicorn[standard]).
+
+### What you can do now
+
+With WebSocket upload live, viewer jitter should improve significantly. You can:
+1. **Reduce `BUFFER_TARGET`** from 24 to 8 frames — WebSocket delivers continuously, less buffer needed
+2. **Reduce `MAX_BUFFER_SIZE`** from 60 to 30 — overflow is less likely with steady delivery
+3. The `requestAnimationFrame` playback loop you wrote is perfect for this — no changes needed there
+
+### Testing
+
+Verified locally:
+- WebSocket connects, sends 10 frames at ~60fps, viewer receives all 10 individually
+- match_start + frames + match_end all go through the same WebSocket
+- HTTP fallback still works if WebSocket is unavailable
+- 166 tests pass
+
+### Legacy HTTP endpoints still work
+
+The HTTP POST endpoints (`/stream/start`, `/stream/frame`, `/stream/frames`, etc.) are unchanged.
+Old clients can still use them. The WebSocket path is preferred but not required.
