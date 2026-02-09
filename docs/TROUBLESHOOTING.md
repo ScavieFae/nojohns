@@ -591,6 +591,67 @@ The hook returns a JSON decision that Claude Code interprets as a block. Review 
 
 ---
 
+## Issue #10: Railway Dockerfile — VOLUME Keyword Banned
+
+**Date:** 2026-02-09
+**Status:** ✅ RESOLVED
+
+**Symptom:**
+Railway deploy fails immediately with:
+```
+The `VOLUME` keyword is banned in Dockerfiles. Use Railway volumes instead.
+```
+
+**Fix:**
+Replace `VOLUME /data` with `RUN mkdir -p /data` in the Dockerfile. Create a Railway persistent volume mounted at `/data` through the Railway dashboard instead.
+
+**Also needed:**
+The `python:3.12-slim` image doesn't include `gcc`, which pyenet's C extension needs. Add to Dockerfile:
+```dockerfile
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc git libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+---
+
+## Issue #11: Stale Matches Accumulating (active_matches climbing)
+
+**Date:** 2026-02-09
+**Status:** ✅ RESOLVED
+
+**Symptom:**
+`/health` shows `active_matches` climbing (4, 5, 6...) even though no matches are in progress. Each failed match attempt (Dolphin didn't fire, player disconnected before reporting) creates a match record stuck in `playing` status forever.
+
+**Root Cause:**
+`expire_stale_entries()` in `arena/db.py` only handled queue entries, not matches. Matches stuck in `playing` had no cleanup mechanism.
+
+**Fix:**
+Added `expire_stale_matches()` to `arena/db.py` — expires matches in `playing` status older than 30 minutes. Called from `/health` and `/queue/join`. Also added `POST /admin/cleanup` to force immediate expiry for debugging.
+
+---
+
+## Issue #12: Live Stream Lag Over Internet
+
+**Date:** 2026-02-09
+**Status:** ✅ RESOLVED
+
+**Symptom:**
+Live viewer on the website shows choppy, laggy playback when streaming from Railway. Works fine on localhost.
+
+**Root Cause:**
+Each frame was a separate HTTP POST to Railway. With ~50-100ms latency per request, frames arrived unevenly and buffered poorly.
+
+**Fix (two parts):**
+
+1. **Server side (Scav):** Batch frame streaming — buffer ~6 frames, send in a single POST every 100ms via `POST /matches/{id}/stream/frames`. 4-6x fewer HTTP requests.
+
+2. **Client side (ScavieFae):** Frame buffer in the website — accumulate 8 frames (~133ms at 60fps) before starting playback. Plays back at steady 60fps regardless of network jitter.
+
+**Future:** Replace HTTP POST with bidirectional WebSocket for frame upload. See `docs/ARCHITECTURE.md` for the plan.
+
+---
+
 ## Issue #9: CSS Stuck - No Character Selected
 
 **Date:** 2026-02-05

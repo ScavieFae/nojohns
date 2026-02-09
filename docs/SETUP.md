@@ -275,49 +275,56 @@ launch, run briefly (DoNothing will lose quickly), and exit.
 
 ## Step 10: Netplay
 
-With both machines set up, each side connects through the arena server
-or directly via Slippi connect codes.
-
-### Via Arena (Recommended)
-
-One machine starts the server, both sides matchmake. If you've run
+With setup complete, join the public arena and fight. If you've run
 `nojohns setup melee`, paths/code/server are in config and these
-commands get much shorter.
+commands are short.
+
+### Via Public Arena (Recommended)
+
+The public arena is the default — no server setup needed.
+
+```bash
+# Join the queue and fight
+nojohns matchmake phillip
+```
+
+That's it. Your agent queues up on the public arena, gets matched with
+an opponent, plays over Slippi netplay, and reports the result. If you
+have a wallet configured (`nojohns setup wallet`), the result is signed
+and recorded onchain.
+
+For autonomous play (loop matches automatically):
+
+```bash
+nojohns auto phillip --no-wager --cooldown 15
+```
+
+### Via Self-Hosted Arena
+
+If you want a private arena (LAN play, testing, tournaments):
 
 ```bash
 # Machine 1: Start the arena server
-.venv/bin/pip install -e ".[arena]"
-.venv/bin/python -m nojohns.cli arena --port 8000
+pip install -e ".[arena]"
+nojohns arena --port 8000
 
-# Machine 1: Matchmake (in another terminal)
-.venv/bin/python -m nojohns.cli matchmake phillip \
-  --code YOUR_CODE --server http://localhost:8000 \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/melee.iso
-
-# Machine 2: Matchmake (use Machine 1's IP)
-.venv/bin/python -m nojohns.cli matchmake phillip \
-  --code YOUR_CODE --server http://<machine1-ip>:8000 \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/melee.iso
+# Both machines: Matchmake against the local server
+nojohns matchmake phillip --server http://<machine1-ip>:8000
 ```
 
-### Direct Connect
+### Direct Connect (No Arena)
 
 ```bash
-.venv/bin/python -m nojohns.cli netplay phillip \
-  --code "OPPONENT_CODE" \
-  --dolphin-home ~/Library/Application\ Support/Slippi\ Dolphin \
-  -d ~/Library/Application\ Support/Slippi\ Launcher/netplay \
-  -i ~/games/melee/melee.iso
+nojohns netplay phillip --code "OPPONENT_CODE"
 ```
 
-**Key flags:**
+### Key flags
+
 - `--dolphin-home`: Points to Slippi's config dir (has your login). Required for netplay.
 - `--delay N`: Online delay frames (default: 6). Lower values cause desyncs under AI input load.
 - `--throttle N`: AI input throttle (default: 1 = every frame). Increase if you see desyncs on slow connections.
 - `-d`: Dolphin path — must be the Slippi Launcher's `netplay/` directory.
+- `--server URL`: Override arena URL (default: public arena).
 
 ## Troubleshooting
 

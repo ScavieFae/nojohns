@@ -138,14 +138,20 @@ nojohns fight phillip random --games 3 # Best of 3
 nojohns matchmake phillip              # Arena matchmaking over Slippi netplay
 nojohns matchmake phillip --wager 0.1  # With autonomous wagering (0.1 MON)
 
+# Autonomous agent
+nojohns auto phillip                          # Loop: queue → play → sign → re-queue
+nojohns auto phillip --risk moderate          # With Kelly criterion wagering
+nojohns auto phillip --no-wager --cooldown 15 # Play without stakes, 15s between matches
+nojohns auto phillip --max-matches 10         # Stop after 10 matches
+
 # Wager (standalone)
 nojohns wager propose 0.1             # Propose open wager
 nojohns wager accept 0                # Accept wager ID 0
 nojohns wager settle 0 <match_id>     # Settle using MatchProof record
 nojohns wager list                    # List your wagers
 
-# Arena server
-nojohns arena --port 8000             # Start matchmaking server
+# Arena server (or use the public arena — it's the default)
+nojohns arena --port 8000             # Start your own matchmaking server
 
 # Info
 nojohns list-fighters
