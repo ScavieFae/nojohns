@@ -87,7 +87,7 @@ class NetplayConfig:
     # Live streaming (optional) — stream frame data to arena for spectators
     arena_url: str | None = None  # e.g. "http://localhost:8000"
     match_id: str | None = None   # Arena match ID for streaming
-    stream_throttle: int = 2      # Stream every Nth frame (2 = 30fps, 1 = 60fps)
+    stream_throttle: int = 1      # Stream every Nth frame (1 = 60fps, 2 = 30fps)
 
 
 # ============================================================================
