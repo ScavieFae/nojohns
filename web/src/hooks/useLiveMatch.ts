@@ -89,6 +89,7 @@ export function useLiveMatch(
   const startPlayback = useCallback(() => {
     if (playbackIntervalRef.current) return; // Already playing
 
+    console.log(`[useLiveMatch] Starting playback, buffer has ${frameBufferRef.current.length} frames`);
     playbackIntervalRef.current = setInterval(() => {
       const frame = frameBufferRef.current.shift();
       if (frame) {
@@ -119,9 +120,10 @@ export function useLiveMatch(
 
         // Debug logging for all messages
         if (msg.type === "frame") {
-          // Only log every 60th frame to avoid spam
-          if ((msg as { frame: number }).frame % 60 === 0) {
-            console.log(`[useLiveMatch] Frame ${(msg as { frame: number }).frame}`);
+          // Log first frame and every 60th after
+          const frameNum = (msg as { frame: number }).frame;
+          if (frameNum === 0 || frameNum % 60 === 0) {
+            console.log(`[useLiveMatch] Frame ${frameNum}, buffer: ${frameBufferRef.current.length}, buffering: ${bufferingRef.current}`);
           }
         } else {
           console.log(`[useLiveMatch] Received message:`, msg.type, msg);
@@ -129,6 +131,7 @@ export function useLiveMatch(
 
         switch (msg.type) {
           case "match_start":
+            console.log(`[useLiveMatch] match_start received:`, msg);
             // Clear the connect timeout since we got match info
             if (wsRef.current) {
               const ws = wsRef.current as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> };
@@ -149,7 +152,10 @@ export function useLiveMatch(
           case "frame":
             // Add frame to buffer
             setState((prev) => {
-              if (!prev.matchInfo) return prev;
+              if (!prev.matchInfo) {
+                console.log(`[useLiveMatch] Frame received but no matchInfo yet, ignoring`);
+                return prev;
+              }
 
               const players = msg.players.map((p) =>
                 convertPlayerFrame(p, prev.matchInfo!)
@@ -167,14 +173,14 @@ export function useLiveMatch(
               // Update buffer health indicator
               const health = Math.min(1, frameBufferRef.current.length / BUFFER_TARGET);
 
-              // Start playback once buffer is full enough
-              if (bufferingRef.current && frameBufferRef.current.length >= BUFFER_TARGET) {
-                bufferingRef.current = false;
-                startPlayback();
-              }
-
               return { ...prev, bufferHealth: health };
             });
+
+            // Start playback once buffer is full enough (outside setState to avoid nested updates)
+            if (bufferingRef.current && frameBufferRef.current.length >= BUFFER_TARGET) {
+              bufferingRef.current = false;
+              startPlayback();
+            }
             break;
 
           case "game_end":
@@ -209,7 +215,7 @@ export function useLiveMatch(
         console.error("Failed to parse WebSocket message:", err);
       }
     },
-    [convertPlayerFrame]
+    [convertPlayerFrame, startPlayback]
   );
 
   // Connect/disconnect based on matchId
