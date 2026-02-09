@@ -65,6 +65,10 @@ export function useLiveMatch(
   const bufferingRef = useRef(true); // Start in buffering mode
   const matchInfoRef = useRef<MatchStartMessage | null>(null); // For frame handler access
 
+  // Receive FPS tracking for debugging
+  const framesReceivedRef = useRef(0);
+  const lastReceiveFpsLogRef = useRef(0);
+
   // Convert arena PlayerFrameData to viewer PlayerFrame
   const convertPlayerFrame = useCallback(
     (data: PlayerFrameData, matchInfo: MatchStartMessage): PlayerFrame => {
@@ -96,14 +100,21 @@ export function useLiveMatch(
     let lastFrameTime = performance.now();
     const targetFrameTime = PLAYBACK_INTERVAL_MS;
 
+    // FPS tracking for debugging
+    let framesPlayedThisSecond = 0;
+    let lastFpsLogTime = performance.now();
+
     const tick = (now: number) => {
       if (!playbackIntervalRef.current) return; // Stopped
 
       const elapsed = now - lastFrameTime;
 
-      // Only advance frame if enough time has passed
-      if (elapsed >= targetFrameTime) {
-        lastFrameTime = now - (elapsed % targetFrameTime); // Account for drift
+      // Calculate how many frames we should have played by now
+      const framesToPlay = Math.floor(elapsed / targetFrameTime);
+
+      if (framesToPlay > 0) {
+        // Advance time by the frames we're about to play
+        lastFrameTime += framesToPlay * targetFrameTime;
 
         // If buffer is getting too large, we're falling behind - drop old frames
         if (frameBufferRef.current.length > MAX_BUFFER_SIZE) {
@@ -112,16 +123,32 @@ export function useLiveMatch(
           console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up`);
         }
 
-        // Simple FIFO - frames arrive in order from WebSocket
-        const frame = frameBufferRef.current.shift();
+        // Skip intermediate frames if we need to play multiple, show the latest one
+        let frameToShow: MatchFrame | undefined;
+        for (let i = 0; i < framesToPlay; i++) {
+          const frame = frameBufferRef.current.shift();
+          if (frame) {
+            frameToShow = frame;
+            framesPlayedThisSecond++;
+          }
+        }
 
-        if (frame) {
+        if (frameToShow) {
           setState((prev) => ({
             ...prev,
-            currentFrame: frame,
+            currentFrame: frameToShow,
             bufferHealth: Math.min(1, frameBufferRef.current.length / BUFFER_TARGET),
           }));
         }
+      }
+
+      // Log FPS every second
+      const timeSinceLog = now - lastFpsLogTime;
+      if (timeSinceLog >= 1000) {
+        const fps = Math.round((framesPlayedThisSecond * 1000) / timeSinceLog);
+        console.log(`[useLiveMatch] Playback FPS: ${fps}, buffer: ${frameBufferRef.current.length}`);
+        framesPlayedThisSecond = 0;
+        lastFpsLogTime = now;
       }
 
       requestAnimationFrame(tick);
@@ -188,6 +215,18 @@ export function useLiveMatch(
               if (!matchInfo) {
                 console.log(`[useLiveMatch] Frame received but no matchInfo yet, ignoring`);
                 break;
+              }
+
+              // Track receive FPS
+              framesReceivedRef.current++;
+              const now = performance.now();
+              if (lastReceiveFpsLogRef.current === 0) {
+                lastReceiveFpsLogRef.current = now;
+              } else if (now - lastReceiveFpsLogRef.current >= 1000) {
+                const receiveFps = Math.round((framesReceivedRef.current * 1000) / (now - lastReceiveFpsLogRef.current));
+                console.log(`[useLiveMatch] Receive FPS: ${receiveFps}`);
+                framesReceivedRef.current = 0;
+                lastReceiveFpsLogRef.current = now;
               }
 
               const players = msg.players.map((p) =>
