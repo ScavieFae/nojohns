@@ -30,8 +30,6 @@ fighters/phillip/models/*.pkl
 phillip-research/
 docs/phillip-research/
 
-# Draft docs (Scav working on general docs)
-docs/BUILD-PIPELINE.md
 
 # Training data (large binary files, not committed)
 docs/phillip-training/replays/**/*.slp
