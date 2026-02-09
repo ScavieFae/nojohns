@@ -16,9 +16,10 @@ import type { MatchFrame, PlayerFrame } from "../components/viewer/MeleeViewer";
 import { ARENA_URL } from "../config";
 
 // Buffer config: wait for this many frames before starting playback
-// At 60fps, 8 frames = ~133ms of buffer (adds latency but smooths jitter)
-const BUFFER_TARGET = 8;
+// Batches are 16 frames, so buffer 24 frames (~400ms) to handle batch delays
+const BUFFER_TARGET = 24;
 const PLAYBACK_INTERVAL_MS = 16; // ~60fps playback
+const MAX_BUFFER_SIZE = 60; // Drop frames if we fall this far behind
 
 export interface LiveMatchState {
   status: "connecting" | "connected" | "ended" | "error" | "disconnected";
@@ -62,6 +63,7 @@ export function useLiveMatch(
   const frameBufferRef = useRef<MatchFrame[]>([]);
   const playbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bufferingRef = useRef(true); // Start in buffering mode
+  const matchInfoRef = useRef<MatchStartMessage | null>(null); // For frame handler access
 
   // Convert arena PlayerFrameData to viewer PlayerFrame
   const convertPlayerFrame = useCallback(
@@ -91,15 +93,15 @@ export function useLiveMatch(
 
     console.log(`[useLiveMatch] Starting playback, buffer has ${frameBufferRef.current.length} frames`);
     playbackIntervalRef.current = setInterval(() => {
-      // Simple FIFO - frames arrive in order from WebSocket
-      const frame = frameBufferRef.current.shift();
-
-      // If buffer is getting too large (>30 frames), we're falling behind - drop old frames
-      if (frameBufferRef.current.length > 30) {
+      // If buffer is getting too large, we're falling behind - drop old frames
+      if (frameBufferRef.current.length > MAX_BUFFER_SIZE) {
         const toDrop = frameBufferRef.current.length - BUFFER_TARGET;
         frameBufferRef.current.splice(0, toDrop);
         console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up`);
       }
+
+      // Simple FIFO - frames arrive in order from WebSocket
+      const frame = frameBufferRef.current.shift();
 
       if (frame) {
         setState((prev) => ({
@@ -119,6 +121,7 @@ export function useLiveMatch(
     }
     frameBufferRef.current = [];
     bufferingRef.current = true;
+    matchInfoRef.current = null;
   }, []);
 
   // Handle incoming messages
@@ -149,6 +152,7 @@ export function useLiveMatch(
                 ws._connectTimeout = undefined;
               }
             }
+            matchInfoRef.current = msg; // Store in ref for frame handler
             setState((prev) => ({
               ...prev,
               status: "connected",
@@ -159,36 +163,32 @@ export function useLiveMatch(
             break;
 
           case "frame":
-            // Add frame to buffer
-            setState((prev) => {
-              if (!prev.matchInfo) {
+            // Add frame to buffer (don't setState here - too expensive at 60fps)
+            {
+              const matchInfo = matchInfoRef.current;
+              if (!matchInfo) {
                 console.log(`[useLiveMatch] Frame received but no matchInfo yet, ignoring`);
-                return prev;
+                break;
               }
 
               const players = msg.players.map((p) =>
-                convertPlayerFrame(p, prev.matchInfo!)
+                convertPlayerFrame(p, matchInfo)
               );
 
               const newFrame: MatchFrame = {
                 frame: msg.frame,
-                stageId: prev.matchInfo.stageId,
+                stageId: matchInfo.stageId,
                 players,
               };
 
-              // Add to buffer
+              // Add to buffer (just update ref, no re-render)
               frameBufferRef.current.push(newFrame);
 
-              // Update buffer health indicator
-              const health = Math.min(1, frameBufferRef.current.length / BUFFER_TARGET);
-
-              return { ...prev, bufferHealth: health };
-            });
-
-            // Start playback once buffer is full enough (outside setState to avoid nested updates)
-            if (bufferingRef.current && frameBufferRef.current.length >= BUFFER_TARGET) {
-              bufferingRef.current = false;
-              startPlayback();
+              // Start playback once buffer is full enough
+              if (bufferingRef.current && frameBufferRef.current.length >= BUFFER_TARGET) {
+                bufferingRef.current = false;
+                startPlayback();
+              }
             }
             break;
 
