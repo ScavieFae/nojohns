@@ -7,6 +7,7 @@
 
 import { useParams, Link } from "react-router-dom";
 import { MeleeViewer } from "../components/viewer/MeleeViewer";
+import { PredictionWidget } from "../components/prediction/PredictionWidget";
 import { useLiveMatch } from "../hooks/useLiveMatch";
 import { useArenaHealth } from "../hooks/useArenaHealth";
 
@@ -105,7 +106,7 @@ export function LivePage() {
   const activeMatches = health?.active_matches ?? 0;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className={`mx-auto px-4 py-8 ${matchId ? "max-w-6xl" : "max-w-4xl"}`}>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold">
           {matchId ? "Live Match" : "Match Viewer"}
@@ -116,8 +117,15 @@ export function LivePage() {
       </div>
 
       {matchId ? (
-        // Viewing a specific live match
-        <LiveMatchViewer matchId={matchId} />
+        // Two-column: viewer + prediction sidebar
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 min-w-0">
+            <LiveMatchViewer matchId={matchId} />
+          </div>
+          <div className="lg:w-72 flex-shrink-0">
+            <PredictionWidget matchId={matchId} />
+          </div>
+        </div>
       ) : (
         // No match specified - show status and replay viewer
         <div>

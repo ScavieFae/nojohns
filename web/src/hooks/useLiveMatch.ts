@@ -110,20 +110,23 @@ export function useLiveMatch(
       const elapsed = now - lastFrameTime;
 
       // Calculate how many frames we should have played by now
-      const framesToPlay = Math.floor(elapsed / targetFrameTime);
+      // Cap at 2 frames per tick to avoid teleporting - we'll catch up gradually
+      const rawFramesToPlay = Math.floor(elapsed / targetFrameTime);
+      const framesToPlay = Math.min(rawFramesToPlay, 2);
 
       if (framesToPlay > 0) {
-        // Advance time by the frames we're about to play
+        // Advance time by the frames we're about to play (not raw, to allow catch-up)
         lastFrameTime += framesToPlay * targetFrameTime;
 
         // If buffer is getting too large, we're falling behind - drop old frames
+        // But do this separately from the smooth playback
         if (frameBufferRef.current.length > MAX_BUFFER_SIZE) {
           const toDrop = frameBufferRef.current.length - BUFFER_TARGET;
           frameBufferRef.current.splice(0, toDrop);
-          console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up`);
+          console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up (buffer overflow)`);
         }
 
-        // Skip intermediate frames if we need to play multiple, show the latest one
+        // Play frames smoothly - consume 1-2 frames per tick max
         let frameToShow: MatchFrame | undefined;
         for (let i = 0; i < framesToPlay; i++) {
           const frame = frameBufferRef.current.shift();
