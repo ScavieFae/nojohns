@@ -685,3 +685,45 @@ Kill the stuck matchmake process and restart. Usually works on second attempt.
 **Related Issues:**
 - Issue #7 (naming bug) - similar menu navigation problems
 - Issue #4 (position 3 bug) - menu navigation edge cases
+
+---
+
+## Issue #13: WebSocket Streaming Gotchas
+
+*Added 2026-02-09. WebSocket frame upload replaced HTTP batch posting.*
+
+### Railway may kill long WebSocket connections
+
+The stream upload WebSocket stays open for the entire match (~4-8 minutes, 14K+ frames).
+Railway's load balancer may have idle timeouts that drop the connection mid-match. If this
+happens, the `MatchStreamer` logs the disconnect but does **not** fall back to HTTP mid-stream —
+viewers see the match freeze.
+
+**Symptoms:** Live viewer freezes partway through a match. Arena logs show
+`Stream upload disconnected for match {id}`.
+
+**Workaround:** None yet. If this happens consistently, we may need to add mid-stream HTTP
+fallback or send WebSocket pings to keep the connection alive.
+
+### No backpressure on frame sends
+
+`MatchStreamer._ws_send()` uses `asyncio.run_coroutine_threadsafe()` fire-and-forget — it
+doesn't block the game loop waiting for the send to complete. If the network is slow, frames
+queue in the asyncio event loop's memory with no cap and no drop policy.
+
+**Risk:** Low in practice (JSON frames are ~200 bytes each, 14K frames = ~3MB total). Would
+only matter on extremely congested connections.
+
+### Viewer buffer over-sized for WebSocket delivery
+
+`useLiveMatch.ts` has `BUFFER_TARGET = 24` — tuned for bursty HTTP batches (~250ms gaps).
+With WebSocket, frames arrive individually at ~60fps, so the buffer fills in 400ms and adds
+unnecessary latency. ScavieFae should reduce to `BUFFER_TARGET = 8` now that delivery is
+continuous.
+
+### Message format divergence (HTTP vs WebSocket)
+
+The HTTP POST path transforms snake_case fields to camelCase server-side. The WebSocket path
+sends camelCase directly from the client. Both arrive at viewers in camelCase, so this works,
+but debugging can be confusing if you're reading server logs and see different field names
+depending on which path was used.
