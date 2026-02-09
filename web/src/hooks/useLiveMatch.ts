@@ -85,14 +85,28 @@ export function useLiveMatch(
     []
   );
 
+  // Track last played frame to avoid replaying old frames
+  const lastPlayedFrameRef = useRef<number>(-1);
+
   // Start smooth playback from buffer
   const startPlayback = useCallback(() => {
     if (playbackIntervalRef.current) return; // Already playing
 
     console.log(`[useLiveMatch] Starting playback, buffer has ${frameBufferRef.current.length} frames`);
     playbackIntervalRef.current = setInterval(() => {
-      const frame = frameBufferRef.current.shift();
+      // Sort buffer by frame number to handle out-of-order arrivals
+      frameBufferRef.current.sort((a, b) => a.frame - b.frame);
+
+      // Find the next frame to play (must be newer than last played)
+      const nextIndex = frameBufferRef.current.findIndex(f => f.frame > lastPlayedFrameRef.current);
+      if (nextIndex === -1) return; // No new frames yet
+
+      // Remove all frames up to and including the one we're playing
+      const framesToRemove = nextIndex + 1;
+      const frame = frameBufferRef.current.splice(0, framesToRemove).pop();
+
       if (frame) {
+        lastPlayedFrameRef.current = frame.frame;
         setState((prev) => ({
           ...prev,
           currentFrame: frame,
@@ -110,6 +124,7 @@ export function useLiveMatch(
     }
     frameBufferRef.current = [];
     bufferingRef.current = true;
+    lastPlayedFrameRef.current = -1;
   }, []);
 
   // Handle incoming messages
