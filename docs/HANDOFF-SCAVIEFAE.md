@@ -835,3 +835,95 @@ The website currently connects to a hardcoded arena URL. It should point at the 
 - Health check for hero section: `https://nojohns-arena-production.up.railway.app/health`
 
 Check `web/` for where the arena URL is configured and update it.
+
+---
+
+## Live Stream Optimization (day 8)
+
+The live viewer was choppy when streaming from Railway due to HTTP latency. We're fixing it in two parts:
+
+### Done (ScavieFae): Client-side frame buffer
+
+Added to `web/src/hooks/useLiveMatch.ts`:
+- Buffers 8 frames (~133ms at 60fps) before starting playback
+- Plays back at steady 60fps regardless of network jitter
+- Adds `bufferHealth` to state for UI feedback
+
+This is deployed to production.
+
+### TODO (Scav): Batch frame uploads
+
+**Problem**: Each frame is a separate HTTP POST to Railway. With ~50-100ms latency per request, frames arrive unevenly.
+
+**Solution**: Batch 4 frames per request (4x fewer HTTP requests).
+
+#### `games/melee/netplay.py`
+
+In `_stream_loop` (around line 177), batch frames before sending:
+
+```python
+BATCH_SIZE = 4  # Send 4 frames per request (~66ms worth at 60fps)
+
+def _stream_loop(self):
+    """Background thread that sends queued frames."""
+    logger.info(f"Stream loop started for {self.match_id}")
+    frames_sent = 0
+    while not self._stop.is_set():
+        batch = []
+        with self._lock:
+            while self._queue and len(batch) < BATCH_SIZE:
+                batch.append(self._queue.pop(0))
+
+        if batch and self._client:
+            url = f"{self.arena_url}/matches/{self.match_id}/stream/frame"
+            try:
+                resp = self._client.post(url, json={"frames": batch})
+                frames_sent += len(batch)
+                if frames_sent <= 12 or frames_sent % 100 == 0:
+                    logger.info(f"Stream batch of {len(batch)} frames sent ({resp.status_code})")
+            except Exception as e:
+                logger.warning(f"Stream batch failed: {e}")
+
+        # Wait proportional to batch size
+        time.sleep(0.016 * BATCH_SIZE)
+    logger.info(f"Stream loop ended for {self.match_id} ({frames_sent} frames sent)")
+```
+
+#### `arena/server.py`
+
+Update `/matches/{id}/stream/frame` to accept both single frame and batch:
+
+```python
+@app.post("/matches/{match_id}/stream/frame")
+async def stream_frame(match_id: str, req: Request) -> dict[str, Any]:
+    """Stream frame(s) — accepts single frame or batch."""
+    data = await req.json()
+
+    # Handle batch or single frame
+    if "frames" in data:
+        frames = data["frames"]
+    else:
+        frames = [data]  # Wrap single frame in list
+
+    # Broadcast each frame to WebSocket clients
+    for frame_data in frames:
+        message = {
+            "type": "frame",
+            "frame": frame_data.get("frame"),
+            "players": frame_data.get("players", []),
+        }
+        await _manager.broadcast(match_id, message)
+
+    return {"success": True, "frames_received": len(frames)}
+```
+
+#### Impact
+
+| Approach | Requests/sec | Latency impact |
+|----------|--------------|----------------|
+| Current (1 frame/req) | 60 | Each request adds ~50-100ms jitter |
+| Batched (4 frames/req) | 15 | 4x fewer requests, smoother delivery |
+
+### Future: WebSocket upload
+
+Replace HTTP POST with bidirectional WebSocket for frame upload. Client connects once, streams frames continuously. More efficient but bigger change — defer to post-hackathon.
