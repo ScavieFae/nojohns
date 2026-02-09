@@ -772,3 +772,66 @@ The `agents/` package is Python-side only — no direct website changes needed. 
 | `skill/references/wager-strategy.md` | NEW — custom strategy guide |
 | `tests/test_bankroll.py` | NEW — 23 tests |
 | `tests/test_strategy.py` | NEW — 21 tests |
+
+---
+
+## Playtest Infrastructure (updated day 8)
+
+### Arena is going public
+
+The arena is deploying to Railway so external playtesters can connect. The public URL will be:
+
+```
+https://nojohns-arena-production.up.railway.app
+```
+
+New users who don't configure `[arena] server` in their config will connect to this URL by default.
+
+### Your machine as auto-opponent
+
+We need your machine running an always-on opponent so there's someone to fight when external testers connect. Here's how:
+
+**1. Update your arena config:**
+
+Either remove the `[arena] server` line from `~/.nojohns/config.toml` (defaults to the public Railway arena), or set it explicitly:
+
+```toml
+[arena]
+server = "https://nojohns-arena-production.up.railway.app"
+```
+
+**2. Run the auto-opponent in tmux:**
+
+```bash
+tmux new -s opponent './scripts/auto-opponent.sh phillip'
+```
+
+Or directly:
+
+```bash
+nojohns auto phillip --no-wager --cooldown 15
+```
+
+This joins the public queue, waits for an opponent, plays a match with Phillip, and re-queues. `--no-wager` means it plays for experience only (no MON at stake). `--cooldown 15` gives 15 seconds between matches.
+
+Detach tmux with `Ctrl-B D`. Reattach with `tmux attach -t opponent`.
+
+**3. Verify it's working:**
+
+```bash
+curl https://nojohns-arena-production.up.railway.app/health
+```
+
+You should see `queue_size: 1` (your auto-opponent waiting).
+
+### SRE monitoring
+
+An SRE agent in `nojohns-community` monitors the arena health. It writes `status/arena.json` which other fleet agents can read. You don't need to do anything for this — it runs on its own.
+
+### Website update needed
+
+The website currently connects to a hardcoded arena URL. It should point at the Railway URL for:
+- Live match viewer WebSocket: `wss://nojohns-arena-production.up.railway.app/ws/match/{id}`
+- Health check for hero section: `https://nojohns-arena-production.up.railway.app/health`
+
+Check `web/` for where the arena URL is configured and update it.

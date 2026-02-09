@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from nojohns.config import (
+    DEFAULT_ARENA_URL,
     GameConfig,
     NojohnsConfig,
     load_config,
@@ -32,7 +33,7 @@ class TestLoadConfig:
         cfg = load_config(missing)
         assert isinstance(cfg, NojohnsConfig)
         assert cfg.games == {}
-        assert cfg.arena_server is None
+        assert cfg.arena_server == DEFAULT_ARENA_URL
 
     def test_minimal_melee_config(self, config_dir):
         path = _write_config(config_dir, """\
@@ -98,7 +99,7 @@ class TestLoadConfig:
         path.write_text("this is not [valid toml }{")
         cfg = load_config(path)
         assert cfg.games == {}
-        assert cfg.arena_server is None
+        assert cfg.arena_server == DEFAULT_ARENA_URL
 
     def test_partial_config_leaves_none(self, config_dir):
         path = _write_config(config_dir, """\
@@ -133,7 +134,7 @@ class TestLoadConfig:
         path.write_text("")
         cfg = load_config(path)
         assert cfg.games == {}
-        assert cfg.arena_server is None
+        assert cfg.arena_server == DEFAULT_ARENA_URL
 
 
 class TestGetGameConfig:
