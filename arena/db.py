@@ -217,9 +217,6 @@ class ArenaDB:
         """Expire queue entries that haven't been polled recently. Returns count."""
         with self._lock:
             cutoff = datetime.now(timezone.utc).timestamp() - timeout_seconds
-            # Convert cutoff back to ISO for comparison
-            from datetime import datetime as dt
-
             cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat()
             cursor = self._conn.execute(
                 "UPDATE queue SET status = 'expired' WHERE status = 'waiting' AND updated_at < ?",
@@ -227,6 +224,26 @@ class ArenaDB:
             )
             self._conn.commit()
             return cursor.rowcount
+
+    def expire_stale_matches(self, timeout_seconds: int = 1800) -> int:
+        """Expire matches stuck in 'playing' for too long (default 30 min).
+
+        This handles cases where Dolphin didn't fire, a player disconnected
+        before reporting, or the match was otherwise abandoned.
+        """
+        with self._lock:
+            cutoff = datetime.now(timezone.utc).timestamp() - timeout_seconds
+            cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat()
+            cursor = self._conn.execute(
+                "UPDATE matches SET status = 'expired' WHERE status = 'playing' AND created_at < ?",
+                (cutoff_iso,),
+            )
+            self._conn.commit()
+            count = cursor.rowcount
+            if count > 0:
+                import logging
+                logging.getLogger(__name__).info(f"Expired {count} stale matches")
+            return count
 
     # ------------------------------------------------------------------
     # Matches

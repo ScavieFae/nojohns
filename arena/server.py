@@ -287,6 +287,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
 
     # Sweep stale entries on each queue operation
     db.expire_stale_entries()
+    db.expire_stale_matches()
 
     queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address, req.agent_id)
     logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) agent_id={req.agent_id} -> {queue_id}")
@@ -459,11 +460,28 @@ def get_signatures(match_id: str) -> dict[str, Any]:
     }
 
 
+@app.post("/admin/cleanup")
+def admin_cleanup() -> dict[str, Any]:
+    """Force-expire stale queue entries and matches. For debugging."""
+    db = get_db()
+    expired_queue = db.expire_stale_entries(timeout_seconds=0)
+    expired_matches = db.expire_stale_matches(timeout_seconds=0)
+    _manager.sweep_stale()
+    return {
+        "expired_queue_entries": expired_queue,
+        "expired_matches": expired_matches,
+        "queue_size": db.queue_size(),
+        "active_matches": db.active_matches(),
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, Any]:
     """Server health check. Returns live match IDs for spectator discovery."""
     _manager.sweep_stale()
     db = get_db()
+    db.expire_stale_entries()
+    db.expire_stale_matches()
     return {
         "status": "ok",
         "queue_size": db.queue_size(),
