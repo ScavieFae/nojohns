@@ -18,6 +18,7 @@ Live streaming:
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -461,6 +462,7 @@ def get_signatures(match_id: str) -> dict[str, Any]:
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, Any]:
     """Server health check. Returns live match IDs for spectator discovery."""
+    _manager.sweep_stale()
     db = get_db()
     return {
         "status": "ok",
@@ -478,11 +480,15 @@ def health() -> dict[str, Any]:
 class ConnectionManager:
     """Manages WebSocket connections for live match streaming."""
 
+    STALE_MATCH_SECONDS = 30 * 60  # 30 minutes
+
     def __init__(self):
         # match_id -> list of connected WebSockets
         self.viewers: dict[str, list[WebSocket]] = {}
         # match_id -> last match_start message (for late joiners)
         self.match_info: dict[str, dict] = {}
+        # match_id -> timestamp of last activity (for stale cleanup)
+        self._last_activity: dict[str, float] = {}
 
     async def connect(self, match_id: str, websocket: WebSocket):
         await websocket.accept()
@@ -508,6 +514,9 @@ class ConnectionManager:
 
     async def broadcast(self, match_id: str, message: dict):
         """Broadcast message to all viewers of a match."""
+        # Track activity for stale cleanup
+        self._last_activity[match_id] = time.time()
+
         # Store match_start for late joiners (BEFORE checking viewers)
         if message.get("type") == "match_start":
             self.match_info[match_id] = message
@@ -538,6 +547,18 @@ class ConnectionManager:
         """Clean up all state for a match."""
         self.viewers.pop(match_id, None)
         self.match_info.pop(match_id, None)
+        self._last_activity.pop(match_id, None)
+
+    def sweep_stale(self):
+        """Remove matches with no activity for STALE_MATCH_SECONDS."""
+        now = time.time()
+        stale = [
+            mid for mid, ts in self._last_activity.items()
+            if now - ts > self.STALE_MATCH_SECONDS
+        ]
+        for mid in stale:
+            logger.info(f"Sweeping stale match {mid}")
+            self.cleanup_match(mid)
 
 
 # Global connection manager
