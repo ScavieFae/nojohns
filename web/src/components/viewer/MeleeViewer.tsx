@@ -9,6 +9,7 @@ import { useEffect, useState, useMemo } from "react";
 import { fetchAnimations, getAnimations, type CharacterAnimations } from "../../lib/animationCache";
 import { actionNameById, externalIdByInternalId } from "../../lib/meleeIds";
 import { characterDataByExternalId, getAnimationName } from "../../lib/characterData";
+import { getStageData, type StageData, type Platform } from "../../lib/stageData";
 
 // Frame data from arena WebSocket
 export interface PlayerFrame {
@@ -36,6 +37,37 @@ interface MeleeViewerProps {
 
 // Player colors (port 1-4) - brand colors
 const PLAYER_COLORS = ["#22c55e", "#a855f7", "#3b82f6", "#f59e0b"]; // green, purple, blue, amber
+
+// Platform renderer
+function PlatformRenderer({ platform, isMain = false }: { platform: Platform; isMain?: boolean }) {
+  return (
+    <rect
+      x={platform.x - platform.width / 2}
+      y={-platform.height}
+      width={platform.width}
+      height={platform.height}
+      fill={isMain ? "#3a3a3a" : "#2a2a2a"}
+      stroke="#555"
+      strokeWidth={0.5}
+      transform={`translate(0 ${platform.y})`}
+    />
+  );
+}
+
+// Stage renderer
+function StageRenderer({ stage }: { stage: StageData }) {
+  return (
+    <g>
+      {/* Main platform */}
+      <PlatformRenderer platform={stage.mainPlatform} isMain />
+
+      {/* Side/top platforms */}
+      {stage.platforms.map((platform, i) => (
+        <PlatformRenderer key={i} platform={platform} />
+      ))}
+    </g>
+  );
+}
 
 function PlayerRenderer({
   player,
@@ -135,6 +167,12 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
     });
   }, [frame, loadedChars]);
 
+  // Get stage data
+  const stageData = useMemo(() => {
+    if (!frame) return null;
+    return getStageData(frame.stageId);
+  }, [frame?.stageId]);
+
   if (!frame) {
     return (
       <div
@@ -158,16 +196,8 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
         {/* Coordinate system: Y-axis inverted (positive = up) */}
         {/* ViewBox: x=-140..140, y=-120..80; after Y-flip shows game y=-80..120 */}
         <g transform="scale(1 -1)">
-          {/* Stage platform (simplified - Yoshi's Story main platform) */}
-          <rect
-            x={-56}
-            y={-5}
-            width={112}
-            height={6}
-            fill="#3a3a3a"
-            stroke="#555"
-            strokeWidth={0.5}
-          />
+          {/* Stage platforms */}
+          {stageData && <StageRenderer stage={stageData} />}
 
           {/* Players */}
           {frame.players.map((player, i) => (
@@ -182,9 +212,12 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
 
         {/* HUD overlay (not inverted) */}
         <g>
-          {/* Frame counter */}
+          {/* Frame counter and stage name */}
           <text x={-135} y={-110} fill="#888" fontSize={6} fontFamily="monospace">
             Frame {frame.frame}
+          </text>
+          <text x={135} y={-110} fill="#888" fontSize={6} fontFamily="monospace" textAnchor="end">
+            {stageData?.name ?? "Unknown"}
           </text>
 
           {/* Player stocks/percent */}
