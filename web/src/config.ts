@@ -7,7 +7,7 @@ export const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA === "true";
 export const CONTRACTS = {
   matchProof: "0x1CC748475F1F666017771FB49131708446B9f3DF" as const,
   wager: "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d" as const,
-  predictionPool: "0x0000000000000000000000000000000000000000" as const, // TODO: update after deploy
+  predictionPool: "0x3455b3081B2af81443bEaa898F4Dd8F98BAc23b9" as const,
 };
 
 // Block where contracts were deployed — start scanning from here

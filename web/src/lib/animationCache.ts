@@ -12,12 +12,13 @@ import { characterZipByExternalId } from "./meleeIds";
 export type CharacterAnimations = Record<string, string[]>;
 
 const cache = new Map<number, CharacterAnimations>();
-const loading = new Map<number, Promise<CharacterAnimations>>();
+const loading = new Map<number, Promise<CharacterAnimations | null>>();
 
 /**
- * Fetch and cache animations for a character by external ID
+ * Fetch and cache animations for a character by external ID.
+ * Returns null on failure (caller should retry).
  */
-export async function fetchAnimations(externalCharId: number): Promise<CharacterAnimations> {
+export async function fetchAnimations(externalCharId: number): Promise<CharacterAnimations | null> {
   // Already cached
   const cached = cache.get(externalCharId);
   if (cached) return cached;
@@ -29,15 +30,17 @@ export async function fetchAnimations(externalCharId: number): Promise<Character
   // Start loading
   const zipName = characterZipByExternalId[externalCharId];
   if (!zipName) {
-    console.warn(`No ZIP for character ${externalCharId}`);
-    return {};
+    console.warn(`[anim] No ZIP for character ${externalCharId}`);
+    return null;
   }
+
+  console.log(`[anim] Loading ${zipName}.zip (externalId=${externalCharId})`);
 
   const promise = (async () => {
     try {
       const response = await fetch(`/zips/${zipName}.zip`);
       if (!response.ok) {
-        throw new Error(`Failed to fetch ${zipName}.zip: ${response.status}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
       const arrayBuffer = await response.arrayBuffer();
@@ -52,12 +55,13 @@ export async function fetchAnimations(externalCharId: number): Promise<Character
       }
 
       cache.set(externalCharId, animations);
-      loading.delete(externalCharId);
+      console.log(`[anim] Loaded ${zipName}: ${Object.keys(animations).length} animations`);
       return animations;
     } catch (err) {
+      console.error(`[anim] Failed to load ${zipName}.zip:`, err);
+      return null;
+    } finally {
       loading.delete(externalCharId);
-      console.error(`Failed to load animations for character ${externalCharId}:`, err);
-      return {};
     }
   })();
 

@@ -14,10 +14,15 @@ import type {
 import type { MatchFrame, PlayerFrame } from "../components/viewer/MeleeViewer";
 import { ARENA_URL } from "../config";
 
-// Buffer config
-const BUFFER_TARGET = 8; // ~133ms latency at 60fps
+// Buffer config — tuned for Slippi rollback netcode
+// Slippi uses deterministic rollback with online_delay frames (typically 6).
+// During rollback, libmelee re-emits frames with duplicate/backward frame numbers.
+// Buffer must be larger than rollback window + network jitter to absorb this.
+const BUFFER_TARGET = 20; // ~333ms latency — absorbs 6-frame rollback + 6-frame delay + jitter
 const PLAYBACK_INTERVAL_MS = 16; // ~60fps playback
-const BUFFER_CAPACITY = 64; // Circular buffer size (power of 2 for fast modulo)
+const BUFFER_CAPACITY = 128; // Circular buffer size (power of 2 for fast modulo)
+const CATCHUP_RATE = 4; // Extra frames to consume per tick when buffer is overfull
+const OVERFLOW_THRESHOLD = BUFFER_TARGET * 3; // Start catching up above this
 
 // ---------------------------------------------------------------------------
 // O(1) circular buffer — replaces Array.shift()/splice() which are O(n)
@@ -53,12 +58,6 @@ function ringShift<T>(buf: RingBuffer<T>): T | undefined {
   buf.read = (buf.read + 1) % buf.items.length;
   buf.size--;
   return item;
-}
-
-function ringDrop<T>(buf: RingBuffer<T>, count: number): void {
-  const toDrop = Math.min(count, buf.size);
-  buf.read = (buf.read + toDrop) % buf.items.length;
-  buf.size -= toDrop;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,8 +106,12 @@ export function useLiveMatch(
   const bufferingRef = useRef(true);
   const matchInfoRef = useRef<MatchStartMessage | null>(null);
 
+  // Frame deduplication — Slippi rollback replays frames with duplicate/backward numbers.
+  // We track the highest frame number seen and reject anything <= it.
+  const lastFrameNumRef = useRef(-999);
+
   // FPS tracking (debug only — logged once per second)
-  const fpsRef = useRef({ received: 0, played: 0, lastLog: 0 });
+  const fpsRef = useRef({ received: 0, played: 0, dropped: 0, lastLog: 0 });
 
   // Convert arena PlayerFrameData to viewer PlayerFrame
   const convertPlayerFrame = useCallback(
@@ -152,15 +155,16 @@ export function useLiveMatch(
         lastFrameTime += framesToPlay * targetFrameTime;
         const buf = frameBufferRef.current;
 
-        // If buffer is overflowing, drop old frames to catch up
-        if (buf.size > BUFFER_CAPACITY - 4) {
-          const toDrop = buf.size - BUFFER_TARGET;
-          ringDrop(buf, toDrop);
+        // Gradual catchup when buffer is overfull — consume extra frames per tick
+        // instead of mass-dropping which causes teleporting
+        let totalToConsume = framesToPlay;
+        if (buf.size > OVERFLOW_THRESHOLD) {
+          totalToConsume += CATCHUP_RATE;
         }
 
         // Consume frames
         let frameToShow: MatchFrame | undefined;
-        for (let i = 0; i < framesToPlay; i++) {
+        for (let i = 0; i < totalToConsume; i++) {
           const f = ringShift(buf);
           if (f) {
             frameToShow = f;
@@ -181,10 +185,11 @@ export function useLiveMatch(
       if (now - fpsRef.current.lastLog >= 1000) {
         const fps = fpsRef.current;
         console.log(
-          `[useLiveMatch] rx=${fps.received}fps tx=${fps.played}fps buf=${frameBufferRef.current.size}`,
+          `[useLiveMatch] rx=${fps.received}fps tx=${fps.played}fps drop=${fps.dropped} buf=${frameBufferRef.current.size}`,
         );
         fps.received = 0;
         fps.played = 0;
+        fps.dropped = 0;
         fps.lastLog = now;
       }
 
@@ -200,6 +205,7 @@ export function useLiveMatch(
     frameBufferRef.current = createRing(BUFFER_CAPACITY);
     bufferingRef.current = true;
     matchInfoRef.current = null;
+    lastFrameNumRef.current = -999;
   }, []);
 
   // Handle incoming messages
@@ -235,6 +241,15 @@ export function useLiveMatch(
             if (!matchInfo) break;
 
             fpsRef.current.received++;
+
+            // --- Frame deduplication ---
+            // Slippi rollback replays frames with duplicate/backward frame numbers.
+            // Reject any frame that isn't strictly newer than what we've already seen.
+            if (msg.frame <= lastFrameNumRef.current) {
+              fpsRef.current.dropped++;
+              break;
+            }
+            lastFrameNumRef.current = msg.frame;
 
             const players = msg.players.map((p) =>
               convertPlayerFrame(p, matchInfo),

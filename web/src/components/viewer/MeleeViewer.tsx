@@ -133,10 +133,13 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
 
     if (charIds.size === 0) return;
 
-    Promise.all([...charIds].map(fetchAnimations)).then(() => {
+    Promise.all([...charIds].map(fetchAnimations)).then((results) => {
+      // Only mark successfully loaded chars — failed ones will retry on next effect
+      const succeeded = [...charIds].filter((_, i) => results[i] !== null);
+      if (succeeded.length === 0) return;
       setLoadedChars((prev) => {
         const next = new Set(prev);
-        charIds.forEach((id) => next.add(id));
+        succeeded.forEach((id) => next.add(id));
         return next;
       });
     });

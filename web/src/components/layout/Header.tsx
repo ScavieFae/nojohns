@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { path: "/leaderboard", label: "Leaderboard" },
   { path: "/matches", label: "Matches" },
   { path: "/compete", label: "Compete" },
+  { path: "#", label: "Tournaments", disabled: true },
 ];
 
 export function Header() {
@@ -23,22 +24,34 @@ export function Header() {
         </Link>
 
         <nav className="flex gap-1">
-          {NAV_ITEMS.map(({ path, label }) => (
-            <Link
-              key={path}
-              to={path}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                pathname === path || (path === "/live" && pathname.startsWith("/live"))
-                  ? "bg-surface-600 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-surface-700"
-              }`}
-            >
-              {label}
-              {path === "/live" && hasLiveMatches && (
-                <span className="ml-1.5 inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </Link>
-          ))}
+          {NAV_ITEMS.map(({ path, label, disabled }) =>
+            disabled ? (
+              <span
+                key={label}
+                className="relative px-3 py-2 rounded text-sm font-medium text-gray-600 cursor-default group"
+              >
+                {label}
+                <span className="absolute -top-1 -right-1 text-[9px] px-1 py-px rounded bg-surface-600 text-gray-500 group-hover:text-gray-400">
+                  soon
+                </span>
+              </span>
+            ) : (
+              <Link
+                key={path}
+                to={path}
+                className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                  pathname === path || (path === "/live" && pathname.startsWith("/live"))
+                    ? "bg-surface-600 text-white"
+                    : "text-gray-400 hover:text-white hover:bg-surface-700"
+                }`}
+              >
+                {label}
+                {path === "/live" && hasLiveMatches && (
+                  <span className="ml-1.5 inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                )}
+              </Link>
+            )
+          )}
         </nav>
       </div>
     </header>

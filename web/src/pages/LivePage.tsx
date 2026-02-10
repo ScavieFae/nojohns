@@ -7,18 +7,19 @@
 
 import { useParams, Link } from "react-router-dom";
 import { MeleeViewer } from "../components/viewer/MeleeViewer";
+import { PredictionWidget } from "../components/prediction/PredictionWidget";
 import { useLiveMatch } from "../hooks/useLiveMatch";
 import { useArenaHealth } from "../hooks/useArenaHealth";
 
 function LiveMatchViewer({ matchId }: { matchId: string }) {
   const { status, matchInfo, currentFrame, error, gameScore } = useLiveMatch(matchId);
 
-  if (status === "connecting") {
+  if (status === "connecting" || status === "disconnected") {
     return (
       <div className="flex items-center justify-center h-96 bg-surface-800 rounded-lg">
         <div className="text-center">
           <div className="animate-spin w-8 h-8 border-2 border-accent-green border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-gray-400">Connecting to match {matchId}...</p>
+          <p className="text-gray-400">Connecting to match...</p>
         </div>
       </div>
     );
@@ -116,9 +117,14 @@ export function LivePage() {
       </div>
 
       {matchId ? (
-        // Full-width viewer
-        <div className="max-w-4xl mx-auto">
-          <LiveMatchViewer matchId={matchId} />
+        // Two-column: viewer + prediction sidebar
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 min-w-0">
+            <LiveMatchViewer matchId={matchId} />
+          </div>
+          <div className="lg:w-72 flex-shrink-0">
+            <PredictionWidget matchId={matchId} />
+          </div>
         </div>
       ) : (
         // No match specified - show status and replay viewer

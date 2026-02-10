@@ -49,3 +49,6 @@ contracts/broadcast/
 web/node_modules/
 web/dist/
 web/.vite/
+web/.vercel/
+web/tsconfig.tsbuildinfo
+web/.env.local

@@ -1114,3 +1114,160 @@ Verified locally:
 
 The HTTP POST endpoints (`/stream/start`, `/stream/frame`, `/stream/frames`, etc.) are unchanged.
 Old clients can still use them. The WebSocket path is preferred but not required.
+
+---
+
+## Prediction Markets (day 9, ScavieFae)
+
+### What's New
+
+Parimutuel prediction pools for live matches. Spectators (humans and agents) bet on match outcomes. Proportional payout from losing side to winning side.
+
+**GitHub issue**: #18
+
+### Contract: `PredictionPool.sol`
+
+**Files:**
+- `contracts/src/PredictionPool.sol` — parimutuel prediction pool
+- `contracts/test/PredictionPool.t.sol` — 45 tests (all passing)
+- `contracts/script/DeployPrediction.s.sol` — deploy script
+
+**Interface:**
+```solidity
+// Arena creates pools when matches queue
+function createPool(bytes32 matchId, address playerA, address playerB) external returns (uint256 poolId);
+
+// Anyone bets on a player (payable with MON)
+function bet(uint256 poolId, bool betOnA) external payable;
+
+// Anyone resolves once MatchProof has the result
+function resolve(uint256 poolId) external;
+
+// Winners claim proportional payout
+function claim(uint256 poolId) external;
+
+// Arena cancels if match doesn't happen
+function cancelPool(uint256 poolId) external;
+
+// Anyone cancels after 2h timeout
+function cancelStalePool(uint256 poolId) external;
+
+// Bettors reclaim from cancelled pools
+function claimRefund(uint256 poolId) external;
+
+// View functions
+function getPool(uint256 poolId) external view returns (Pool memory);
+function getUserBets(uint256 poolId, address user) external view returns (uint256 onA, uint256 onB);
+function getClaimable(uint256 poolId, address user) external view returns (uint256);
+function poolCount() external view returns (uint256);
+```
+
+**Constructor:**
+```solidity
+constructor(address _matchProof, address _arena, uint256 _feeBps)
+// _feeBps: fee in basis points (0 = no fee, 100 = 1%, max 1000 = 10%)
+// Start at 0% — add revenue later without redeploying
+```
+
+**Design:**
+- `arena` is the only address that can call `createPool` and `cancelPool` — prevents spam
+- Betting stays open while match is live (parimutuel odds shift as bets come in)
+- Resolves via `MatchProof.recorded()` + `getMatch()` — same trust model as Wager.sol
+- Fee is configurable at deploy time, deducted from total pool on resolution
+- 2-hour timeout: anyone can cancel a stale pool after timeout
+- Proportional payout: `payout = (distributable * userBet) / winningSideTotal`
+
+**Edge cases tested:**
+- One-sided pool (only bets on A, A wins) → everyone gets their money back
+- One-sided pool (only bets on B, A wins) → no one can claim
+- Empty pool resolve → valid, no payouts
+- Bet on both sides → only winning side bet counts for claim
+- Multiple bettors, proportional math verified
+- Fee at 0% and 5%
+
+### Deploy
+
+```bash
+export PRIVATE_KEY=<deployer-key>
+export MONAD_TESTNET_RPC_URL=https://testnet-rpc.monad.xyz
+export ARENA_ADDRESS=<arena-wallet-address>  # defaults to deployer
+export FEE_BPS=0  # defaults to 0
+
+cd contracts && forge script script/DeployPrediction.s.sol \
+  --rpc-url $MONAD_TESTNET_RPC_URL --broadcast \
+  --sig "run(address)" 0x1CC748475F1F666017771FB49131708446B9f3DF
+```
+
+After deploy, update `web/src/config.ts` with the PredictionPool address.
+
+### Arena Integration (Scav's part)
+
+The arena needs to:
+
+1. **Create pool when match starts:**
+   ```python
+   pool_id = prediction_pool.createPool(match_id_bytes32, player_a_addr, player_b_addr)
+   ```
+
+2. **Expose pool info:**
+   ```
+   GET /matches/{id}/pool → { poolId, totalA, totalB, status }
+   ```
+
+3. **Resolve after match result is recorded:**
+   ```python
+   prediction_pool.resolve(pool_id)
+   ```
+
+4. **Cancel if match doesn't happen:**
+   ```python
+   prediction_pool.cancelPool(pool_id)
+   ```
+
+The arena already has `ARENA_PRIVATE_KEY` for Elo posting — same key signs pool creation/resolution.
+
+**ABI:** Available in `web/src/abi/predictionPool.ts` or from `contracts/out/PredictionPool.sol/PredictionPool.json`.
+
+### Website Widget
+
+Added `PredictionWidget` sidebar to the live match viewer page:
+
+**New files:**
+- `web/src/components/prediction/PredictionWidget.tsx` — main widget
+- `web/src/components/prediction/OddsBar.tsx` — visual odds bar (green/red)
+- `web/src/components/prediction/BetForm.tsx` — amount input + bet buttons
+- `web/src/hooks/usePredictionPool.ts` — read pool state from contract
+- `web/src/hooks/usePlaceBet.ts` — write: place bet transaction
+- `web/src/hooks/useClaimPayout.ts` — write: claim payout transaction
+- `web/src/hooks/useWallet.ts` — minimal wallet connection (no wagmi)
+- `web/src/lib/wallet.ts` — viem wallet client helper
+- `web/src/abi/predictionPool.ts` — contract ABI
+
+**Modified:**
+- `web/src/config.ts` — added `predictionPool` to CONTRACTS
+- `web/src/pages/LivePage.tsx` — two-column layout (viewer + prediction sidebar)
+
+**Features:**
+- Shows current odds as green/red percentage bar
+- Shows total pool size in MON
+- "Connect Wallet" button for users without wallet
+- Bet input with quick amount buttons (0.01, 0.05, 0.1, 0.5 MON)
+- User's position: amount bet, potential payout at current odds
+- Claim button after resolution (or refund button if cancelled)
+- Polls every 5s for odds updates
+- Shows "Coming soon" placeholder until contract is deployed (address is zero)
+- Responsive: sidebar on desktop, stacked on mobile
+
+**Wallet connection:** Uses viem `createWalletClient` + `window.ethereum` (MetaMask/injected). No wagmi dependency added — keeps the bundle minimal.
+
+### Agent Prediction (Scav's part, future)
+
+Once the arena creates pools, idle agents can bet on other agents' matches:
+
+1. Query arena for active pools
+2. Look up both players' Elo from ReputationRegistry
+3. Compute implied probability from Elo differential
+4. Compare to pool odds — if edge exists, bet (Kelly criterion)
+5. Claim payouts after resolution
+
+This extends the existing `agents/bankroll.py` (has `win_probability_from_elo()` and `kelly_fraction()`) and `agents/strategy.py` (has `WagerStrategy` protocol).
