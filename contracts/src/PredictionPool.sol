@@ -136,6 +136,8 @@ contract PredictionPool {
     }
 
     /// @notice Resolve a pool using the recorded match result. Anyone can call.
+    /// @dev If nobody bet on the winning side, the pool is auto-cancelled so
+    ///      bettors can reclaim their funds via claimRefund().
     function resolve(uint256 poolId) external {
         Pool storage pool = _getPool(poolId);
         if (pool.status != PoolStatus.Open) revert PoolNotOpen();
@@ -147,6 +149,15 @@ contract PredictionPool {
         // Winner must be one of the pool's players
         if (matchWinner != pool.playerA && matchWinner != pool.playerB) {
             revert WinnerNotParticipant();
+        }
+
+        // If nobody bet on the winning side, cancel instead of resolving
+        // so all bettors can reclaim their funds via claimRefund().
+        uint256 winningSideTotal = matchWinner == pool.playerA ? pool.totalA : pool.totalB;
+        if (winningSideTotal == 0) {
+            pool.status = PoolStatus.Cancelled;
+            emit PoolCancelled(poolId);
+            return;
         }
 
         pool.status = PoolStatus.Resolved;

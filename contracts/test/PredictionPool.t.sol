@@ -650,25 +650,38 @@ contract PredictionPoolTest is Test {
         assertEq(bettor2.balance, bal2Before + 3 ether);
     }
 
-    function test_oneSidedPool_loserSideOnly() public {
-        // Only bets on B, A wins → no one can claim (money stuck, but also no winners)
+    function test_oneSidedPool_loserSideOnly_autoCancels() public {
+        // Only bets on B, A wins → auto-cancel, bettors get refunds
         bytes32 matchId = bytes32("match-one-side-2");
         uint256 poolId = _createPool(matchId);
 
         vm.prank(bettor1);
         pool.bet{value: 1 ether}(poolId, false); // bet on B
+        vm.prank(bettor2);
+        pool.bet{value: 2 ether}(poolId, false); // bet on B
 
         _recordMatch(matchId); // playerA wins
         pool.resolve(poolId);
 
-        // bettor1 bet on B (loser), can't claim
+        // Pool should be cancelled, not resolved
+        PredictionPool.Pool memory p = pool.getPool(poolId);
+        assertEq(uint8(p.status), uint8(PredictionPool.PoolStatus.Cancelled));
+
+        // Bettors can reclaim their funds
+        uint256 bal1Before = bettor1.balance;
+        uint256 bal2Before = bettor2.balance;
+
         vm.prank(bettor1);
-        vm.expectRevert(PredictionPool.NoPayout.selector);
-        pool.claim(poolId);
+        pool.claimRefund(poolId);
+        vm.prank(bettor2);
+        pool.claimRefund(poolId);
+
+        assertEq(bettor1.balance, bal1Before + 1 ether);
+        assertEq(bettor2.balance, bal2Before + 2 ether);
     }
 
-    function test_emptyPool_resolve() public {
-        // No bets, resolve is still valid
+    function test_emptyPool_resolve_autoCancels() public {
+        // No bets at all — auto-cancels (winningSideTotal == 0)
         bytes32 matchId = bytes32("match-empty");
         uint256 poolId = _createPool(matchId);
 
@@ -676,7 +689,7 @@ contract PredictionPoolTest is Test {
         pool.resolve(poolId);
 
         PredictionPool.Pool memory p = pool.getPool(poolId);
-        assertEq(uint8(p.status), uint8(PredictionPool.PoolStatus.Resolved));
+        assertEq(uint8(p.status), uint8(PredictionPool.PoolStatus.Cancelled));
     }
 
     function test_getClaimable_resolved() public {
