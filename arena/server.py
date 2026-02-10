@@ -162,6 +162,97 @@ def _post_elo_updates(match: dict):
         except Exception as e:
             logger.warning(f"Failed to post loser Elo: {e}")
 
+# =============================================================================
+# Prediction Pool Lifecycle
+# =============================================================================
+
+
+def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None):
+    """Create a prediction pool onchain when a match is created.
+
+    Silently skips if:
+    - Arena wallet not configured
+    - PREDICTION_POOL env var not set
+    - Either player has no wallet
+    """
+    account = _get_arena_account()
+    if account is None:
+        return
+
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        return
+
+    if not p1_wallet or not p2_wallet:
+        logger.debug("Match missing wallets — skipping pool creation")
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz")
+
+    # Convert match_id UUID to bytes32 (same logic as wager settlement)
+    match_id_clean = match_id.replace("-", "")
+    match_id_bytes = bytes.fromhex(match_id_clean.ljust(64, "0")[:64])
+
+    try:
+        from nojohns.contract import create_pool
+
+        pool_id = create_pool(
+            match_id_bytes, p1_wallet, p2_wallet,
+            account, rpc_url, pool_address,
+        )
+        logger.info(f"Prediction pool created for match {match_id}: poolId={pool_id}")
+
+        # Store pool_id in DB
+        db = get_db()
+        db.set_pool_id(match_id, pool_id)
+    except ImportError:
+        logger.debug("web3 not installed — skipping pool creation")
+    except Exception as e:
+        logger.warning(f"Failed to create prediction pool: {e}")
+
+
+def _try_cancel_pool(match_id: str):
+    """Cancel a prediction pool for an expired/abandoned match.
+
+    Reads pool_id from DB. Silently skips if no pool exists.
+    """
+    account = _get_arena_account()
+    if account is None:
+        return
+
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        return
+
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        return
+
+    pool_id = match.get("pool_id")
+    if pool_id is None:
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz")
+
+    try:
+        from nojohns.contract import cancel_pool
+
+        cancel_pool(pool_id, account, rpc_url, pool_address)
+        logger.info(f"Prediction pool {pool_id} cancelled for expired match {match_id}")
+    except ImportError:
+        logger.debug("web3 not installed — skipping pool cancellation")
+    except Exception as e:
+        logger.warning(f"Failed to cancel prediction pool {pool_id}: {e}")
+
+
+def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
+    """Expire stale matches and cancel their prediction pools."""
+    expired_ids = db.expire_stale_matches(timeout_seconds)
+    for mid in expired_ids:
+        _try_cancel_pool(mid)
+
+
 # Global DB instance — set during lifespan
 _db: ArenaDB | None = None
 
@@ -256,6 +347,8 @@ class MatchResponse(BaseModel):
     wager_amount: int | None = None  # in wei
     wager_id: int | None = None  # onchain wager ID
     wager_proposer: str | None = None  # 'p1' or 'p2'
+    # Prediction pool
+    pool_id: int | None = None  # onchain PredictionPool pool ID
 
 
 class SignatureRequest(BaseModel):
@@ -288,7 +381,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
 
     # Sweep stale entries on each queue operation
     db.expire_stale_entries()
-    db.expire_stale_matches()
+    _expire_matches_and_cancel_pools(db)
 
     queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address, req.agent_id)
     logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) agent_id={req.agent_id} -> {queue_id}")
@@ -301,6 +394,9 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
         logger.info(
             f"Matched! {opponent['connect_code']} vs {req.connect_code} -> {match_id}"
         )
+
+        # Create prediction pool for spectators to bet on
+        _try_create_pool(match_id, opponent.get("wallet_address"), req.wallet_address)
 
         # Return matched status with opponent info
         return {
@@ -466,11 +562,13 @@ def admin_cleanup() -> dict[str, Any]:
     """Force-expire stale queue entries and matches. For debugging."""
     db = get_db()
     expired_queue = db.expire_stale_entries(timeout_seconds=0)
-    expired_matches = db.expire_stale_matches(timeout_seconds=0)
+    expired_ids = db.expire_stale_matches(timeout_seconds=0)
+    for mid in expired_ids:
+        _try_cancel_pool(mid)
     _manager.sweep_stale()
     return {
         "expired_queue_entries": expired_queue,
-        "expired_matches": expired_matches,
+        "expired_matches": len(expired_ids),
         "queue_size": db.queue_size(),
         "active_matches": db.active_matches(),
     }
@@ -482,7 +580,7 @@ def health() -> dict[str, Any]:
     _manager.sweep_stale()
     db = get_db()
     db.expire_stale_entries()
-    db.expire_stale_matches()
+    _expire_matches_and_cancel_pools(db)
     return {
         "status": "ok",
         "queue_size": db.queue_size(),
@@ -938,4 +1036,24 @@ def get_match_wager(match_id: str) -> dict[str, Any]:
         "wager_amount": match.get("wager_amount"),
         "wager_id": match.get("wager_id"),
         "wager_proposer": match.get("wager_proposer"),
+    }
+
+
+# ======================================================================
+# Prediction Pool Endpoint
+# ======================================================================
+
+
+@app.get("/matches/{match_id}/pool")
+def get_match_pool(match_id: str) -> dict[str, Any]:
+    """Get prediction pool info for a match (pool_id for frontend lookups)."""
+    db = get_db()
+
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    return {
+        "match_id": match_id,
+        "pool_id": match.get("pool_id"),
     }

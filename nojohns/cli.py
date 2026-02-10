@@ -1019,8 +1019,11 @@ def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
         print(f" confirmed!")
         print(f"  tx: 0x{tx_hash}")
 
-        # Post Elo update to ReputationRegistry
-        _post_elo_update(match_result, nj_cfg, account)
+        # NOTE: Elo updates are posted by the arena server (not the player).
+        # ERC-8004 blocks self-feedback, so the agent wallet can't post its own Elo.
+
+        # Resolve prediction pool (if one exists for this match)
+        _try_resolve_pool(match_id, nj_cfg, account)
     except Exception as e:
         # Check if opponent beat us to it
         try:
@@ -1037,72 +1040,52 @@ def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
         print(f" failed: {e}")
 
 
-def _post_elo_update(match_result: dict, config, account):
-    """Post Elo update to ReputationRegistry after match."""
-    if config.chain is None or config.chain.reputation_registry is None:
-        logger.debug("No reputation registry configured — skipping Elo posting")
+def _try_resolve_pool(match_id: str, config, account):
+    """Resolve the prediction pool for a match after recordMatch() succeeds.
+
+    Reads pool_id from the arena, then calls resolve() on PredictionPool.
+    Silently skips if no pool exists or prediction_pool not configured.
+    """
+    if config.chain is None or config.chain.prediction_pool is None:
         return
-    if config.chain.agent_id is None:
-        logger.debug("No agent_id configured — skipping Elo posting")
+
+    # Get pool_id from arena
+    arena_server = config.arena_server
+    try:
+        import urllib.request
+        import json
+
+        url = f"{arena_server}/matches/{match_id}/pool"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        pool_id = data.get("pool_id")
+    except Exception as e:
+        logger.debug(f"Failed to fetch pool info: {e}")
+        return
+
+    if pool_id is None:
+        logger.debug("No prediction pool for this match")
         return
 
     try:
-        from nojohns.reputation import (
-            get_current_elo,
-            calculate_new_elo,
-            post_elo_update,
-            STARTING_ELO,
+        from nojohns.contract import resolve_pool
+
+        print(f"  Resolving prediction pool {pool_id}...", end="", flush=True)
+        tx_hash = resolve_pool(
+            pool_id, account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.prediction_pool,
         )
+        print(f" resolved! tx: 0x{tx_hash[:16]}...")
     except ImportError:
-        logger.debug("reputation module not available")
-        return
-
-    # Determine if we won
-    our_address = account.address.lower()
-    winner_address = match_result["winner"].lower()
-    we_won = our_address == winner_address
-
-    # Get current Elo
-    current = get_current_elo(
-        config.chain.agent_id,
-        config.chain.rpc_url,
-        config.chain.reputation_registry,
-    )
-
-    # For opponent Elo, use default (we don't know their agent_id easily)
-    # TODO: look up opponent's agent_id from IdentityRegistry by wallet
-    opponent_elo = STARTING_ELO
-
-    # Calculate new Elo
-    new_elo = calculate_new_elo(current.elo, opponent_elo, we_won)
-    peak_elo = max(current.peak_elo, new_elo)
-
-    # Update record
-    if we_won:
-        wins = current.wins + 1
-        losses = current.losses
-    else:
-        wins = current.wins
-        losses = current.losses + 1
-    record = f"{wins}-{losses}"
-
-    print(f"  Posting Elo update: {current.elo} → {new_elo} ({'+' if we_won else ''}{new_elo - current.elo})")
-
-    tx_hash = post_elo_update(
-        config.chain.agent_id,
-        new_elo,
-        peak_elo,
-        record,
-        account,
-        config.chain.rpc_url,
-        config.chain.reputation_registry,
-        config.chain.chain_id,
-    )
-
-    if tx_hash:
-        print(f"  Elo tx: 0x{tx_hash}")
-    else:
-        print("  Elo update failed (non-critical)")
+        logger.debug("web3 not installed — skipping pool resolution")
+    except Exception as e:
+        # Pool might not exist, or opponent resolved first
+        if "already" in str(e).lower() or "revert" in str(e).lower():
+            print(" already resolved.")
+        else:
+            logger.warning(f"Failed to resolve prediction pool: {e}")
+            print(f" failed (non-critical): {e}")
 
 
 def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, config):

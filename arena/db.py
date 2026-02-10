@@ -98,6 +98,12 @@ class ArenaDB:
             except sqlite3.OperationalError:
                 pass
 
+        # Prediction pool tracking
+        try:
+            self._conn.execute("ALTER TABLE matches ADD COLUMN pool_id INTEGER")
+        except sqlite3.OperationalError:
+            pass
+
         # ERC-8004 agent_id columns
         try:
             self._conn.execute("ALTER TABLE queue ADD COLUMN agent_id INTEGER")
@@ -225,25 +231,44 @@ class ArenaDB:
             self._conn.commit()
             return cursor.rowcount
 
-    def expire_stale_matches(self, timeout_seconds: int = 1800) -> int:
+    def expire_stale_matches(self, timeout_seconds: int = 1800) -> list[str]:
         """Expire matches stuck in 'playing' for too long (default 30 min).
 
         This handles cases where Dolphin didn't fire, a player disconnected
         before reporting, or the match was otherwise abandoned.
+
+        Returns list of expired match IDs (for pool cancellation).
         """
         with self._lock:
             cutoff = datetime.now(timezone.utc).timestamp() - timeout_seconds
             cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat()
-            cursor = self._conn.execute(
-                "UPDATE matches SET status = 'expired' WHERE status = 'playing' AND created_at < ?",
+
+            # Find matches that will be expired (need IDs for pool cancellation)
+            rows = self._conn.execute(
+                "SELECT id FROM matches WHERE status = 'playing' AND created_at < ?",
                 (cutoff_iso,),
+            ).fetchall()
+            expired_ids = [row["id"] for row in rows]
+
+            if expired_ids:
+                self._conn.execute(
+                    "UPDATE matches SET status = 'expired' WHERE status = 'playing' AND created_at < ?",
+                    (cutoff_iso,),
+                )
+                self._conn.commit()
+                import logging
+                logging.getLogger(__name__).info(f"Expired {len(expired_ids)} stale matches")
+
+            return expired_ids
+
+    def set_pool_id(self, match_id: str, pool_id: int) -> None:
+        """Store the onchain prediction pool ID for a match."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE matches SET pool_id = ? WHERE id = ?",
+                (pool_id, match_id),
             )
             self._conn.commit()
-            count = cursor.rowcount
-            if count > 0:
-                import logging
-                logging.getLogger(__name__).info(f"Expired {count} stale matches")
-            return count
 
     # ------------------------------------------------------------------
     # Matches
