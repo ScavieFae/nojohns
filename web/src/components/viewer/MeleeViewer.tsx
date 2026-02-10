@@ -5,7 +5,7 @@
  * Animation data: SlippiLab (MIT) - https://github.com/frankborden/slippilab
  */
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, memo } from "react";
 import { fetchAnimations, getAnimations, type CharacterAnimations } from "../../lib/animationCache";
 import { actionNameById, externalIdByInternalId } from "../../lib/meleeIds";
 import { characterDataByExternalId, getAnimationName } from "../../lib/characterData";
@@ -58,10 +58,7 @@ function PlatformRenderer({ platform, isMain = false }: { platform: Platform; is
 function StageRenderer({ stage }: { stage: StageData }) {
   return (
     <g>
-      {/* Main platform */}
       <PlatformRenderer platform={stage.mainPlatform} isMain />
-
-      {/* Side/top platforms */}
       {stage.platforms.map((platform, i) => (
         <PlatformRenderer key={i} platform={platform} />
       ))}
@@ -69,7 +66,8 @@ function StageRenderer({ stage }: { stage: StageData }) {
   );
 }
 
-function PlayerRenderer({
+// Memoized player renderer — only re-renders when player data actually changes
+const PlayerRenderer = memo(function PlayerRenderer({
   player,
   playerIndex,
   animations,
@@ -81,12 +79,10 @@ function PlayerRenderer({
   const externalCharId = externalIdByInternalId[player.internalCharId] ?? 0;
   const charData = characterDataByExternalId[externalCharId] ?? characterDataByExternalId[2];
 
-  // Get action name and animation
   const actionName = actionNameById[player.actionStateId] ?? "Wait";
   const animName = getAnimationName(actionName);
   const animFrames = animations?.[animName] ?? animations?.["Wait1"] ?? [];
 
-  // Get the right frame (with wraparound)
   const frameIndex = Math.floor(Math.max(0, player.actionFrame)) % Math.max(1, animFrames.length);
   let path = animFrames[frameIndex];
 
@@ -97,7 +93,6 @@ function PlayerRenderer({
   }
 
   if (!path) {
-    // Fallback: draw a simple circle if no animation found
     return (
       <circle
         cx={player.x}
@@ -109,27 +104,17 @@ function PlayerRenderer({
     );
   }
 
-  // Build transform: translate to position, scale by character scale, flip by facing direction
-  // The SVG paths are centered around (500, 500) and need to be scaled down
-  const transforms = [
-    `translate(${player.x} ${player.y})`,
-    `scale(${charData.scale} ${charData.scale})`,
-    `scale(${player.facingDirection} 1)`,
-    "scale(0.1 -0.1)",
-    "translate(-500 -500)",
-  ].join(" ");
-
   return (
     <path
       d={path}
-      transform={transforms}
+      transform={`translate(${player.x} ${player.y}) scale(${charData.scale} ${charData.scale}) scale(${player.facingDirection} 1) scale(0.1 -0.1) translate(-500 -500)`}
       fill={PLAYER_COLORS[playerIndex]}
       stroke="black"
       strokeWidth={0.5}
       opacity={0.9}
     />
   );
-}
+});
 
 export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerProps) {
   const [loadedChars, setLoadedChars] = useState<Set<number>>(new Set());
@@ -148,7 +133,6 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
 
     if (charIds.size === 0) return;
 
-    // Load missing character animations
     Promise.all([...charIds].map(fetchAnimations)).then(() => {
       setLoadedChars((prev) => {
         const next = new Set(prev);
@@ -156,18 +140,18 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
         return next;
       });
     });
-  }, [frame, loadedChars]);
+  }, [frame?.players.map((p) => p.internalCharId).join(","), loadedChars]);
 
-  // Get animations for each player
+  // Get animations for each player — only depends on frame (getAnimations reads from cache)
   const playerAnimations = useMemo(() => {
     if (!frame) return [];
     return frame.players.map((player) => {
       const externalId = externalIdByInternalId[player.internalCharId];
       return externalId !== undefined ? getAnimations(externalId) : undefined;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame, loadedChars]);
 
-  // Get stage data
   const stageData = useMemo(() => {
     if (!frame) return null;
     return getStageData(frame.stageId);
@@ -194,12 +178,9 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
         preserveAspectRatio="xMidYMid meet"
       >
         {/* Coordinate system: Y-axis inverted (positive = up) */}
-        {/* ViewBox: x=-140..140, y=-120..80; after Y-flip shows game y=-80..120 */}
         <g transform="scale(1 -1)">
-          {/* Stage platforms */}
           {stageData && <StageRenderer stage={stageData} />}
 
-          {/* Players */}
           {frame.players.map((player, i) => (
             <PlayerRenderer
               key={i}
@@ -212,7 +193,6 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
 
         {/* HUD overlay (not inverted) */}
         <g>
-          {/* Frame counter and stage name */}
           <text x={-135} y={-110} fill="#888" fontSize={6} fontFamily="monospace">
             Frame {frame.frame}
           </text>
@@ -220,7 +200,6 @@ export function MeleeViewer({ frame, width = 730, height = 600 }: MeleeViewerPro
             {stageData?.name ?? "Unknown"}
           </text>
 
-          {/* Player stocks/percent */}
           {frame.players.map((player, i) => (
             <g key={i} transform={`translate(${-130 + i * 100}, 72)`}>
               <text fill={PLAYER_COLORS[i]} fontSize={7} fontFamily="monospace" fontWeight="bold">

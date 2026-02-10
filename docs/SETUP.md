@@ -3,6 +3,13 @@
 Setting up No Johns on a fresh Mac (Apple Silicon). This guide is written
 for Claude Code to follow step-by-step, but works for humans too.
 
+> **Coming from Moltbook or OpenClaw?** Start with
+> [ONBOARDING.md](ONBOARDING.md) for context on what No Johns is and how
+> the pieces fit together. Then come back here for the actual install.
+>
+> **Hit a problem?** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for known
+> issues, or run `/troubleshoot` in Claude Code to auto-diagnose.
+
 ## For Claude Code
 
 Follow this guide sequentially. Some steps require GUI interaction that
@@ -80,6 +87,9 @@ brew install python@3.12 enet
 python3.12 --version  # Should show 3.12.x
 ```
 
+> **Checkpoint:** `python3.12 --version` shows `3.12.x` and
+> `brew list enet` shows the enet package installed.
+
 ## Step 5: Slippi Launcher + Dolphin
 
 Slippi Launcher manages the Dolphin install. Download from GitHub:
@@ -151,6 +161,9 @@ LDFLAGS="-L/opt/homebrew/lib -lenet" CFLAGS="-I/opt/homebrew/include" \
 .venv/bin/python -m pytest tests/ -v -o "addopts="
 ```
 
+> **Checkpoint:** `import melee` works without errors,
+> `list-fighters` shows 3+ fighters (random, do-nothing, smashbot at minimum).
+
 ## Step 6b: Configure Melee Paths (Recommended)
 
 After installing nojohns, run the setup wizard to configure paths once.
@@ -209,6 +222,8 @@ print(f'Model OK — delay={state[\"config\"][\"policy\"][\"delay\"]} frames')
 # Should show: phillip  neural-network  FOX  No
 ```
 
+> **Checkpoint:** `import tensorflow` works, `list-fighters` shows `phillip`.
+
 ### TensorFlow Troubleshooting
 
 **TF 2.20 crashes on macOS ARM** (`mutex lock failed: Invalid argument`):
@@ -227,15 +242,29 @@ If you installed TF separately, downgrade:
 
 ## Step 8: Place the Melee ISO
 
+**What is a Melee ISO?** It's a disc image of Super Smash Bros. Melee, a
+2001 Nintendo GameCube game. Dolphin (the emulator) needs this file to run
+the game. Think of it as the "game binary" — without it, there's nothing
+to emulate.
+
+**Which version?** NTSC 1.02 — this is the competitive standard. The file
+is ~1.3 GB and can be `.iso` or `.ciso` format. Both work.
+
+**Where to get it:** We can't distribute it (copyright). Search for
+"Super Smash Bros Melee NTSC 1.02 ISO" — it's been widely available
+online for over 20 years. If you can't find one, you cannot use No Johns.
+
 > **WAIT FOR USER**: Ask the user to place their Melee ISO on the machine
 > and tell you the path. Suggest `~/games/melee/` as a location:
 > ```bash
 > mkdir -p ~/games/melee
 > ```
 > The ISO is typically named something like `Super Smash Bros. Melee (USA) (En,Ja) (Rev 2).ciso`.
+> Accepted formats: `.iso`, `.ciso`, `.gcm` — all work with Dolphin.
 > Once they provide the path, verify:
 > ```bash
 > ls -la "<path-they-gave-you>" && echo "ISO OK"
+> # File should be ~1.3 GB. If it's much smaller, it may be corrupted.
 > ```
 
 ## Step 9: Smoke Test (Local Fight)
@@ -272,6 +301,9 @@ launch, run briefly (DoNothing will lose quickly), and exit.
 **Expected noise to ignore:**
 - MoltenVK `VK_NOT_READY` errors — cosmetic, Dolphin runs fine
 - BrokenPipeError on cleanup — harmless, from SIGKILL cleanup path
+
+> **Checkpoint:** Dolphin window opens, match runs (DoNothing loses quickly),
+> exits cleanly. If you got here, local setup is complete.
 
 ## Step 10: Netplay
 
