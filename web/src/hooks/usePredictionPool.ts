@@ -130,9 +130,7 @@ export function usePredictionPool(matchId: string | undefined) {
   const poolIdQuery = useQuery({
     queryKey: ["predictionPoolId", matchIdHex],
     queryFn: () => findPoolIdForMatch(matchIdHex!),
-    enabled:
-      !!matchIdHex &&
-      CONTRACTS.predictionPool !== "0x0000000000000000000000000000000000000000",
+    enabled: !!matchIdHex,
     staleTime: 60_000,
   });
 

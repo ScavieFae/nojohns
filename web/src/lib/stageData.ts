@@ -27,7 +27,7 @@ export interface StageData {
 
 // Stage IDs from libmelee (vladfi1 fork) - these match gamestate.stage.value
 export const STAGE_IDS = {
-  FOUNTAIN_OF_DREAMS: 2,
+  FOUNTAIN_OF_DREAMS: 8,
   YOSHIS_STORY: 6,          // Was wrong (had 8)
   POKEMON_STADIUM: 18,       // Was wrong (had 3)
   BATTLEFIELD: 24,           // Was wrong (had 31)

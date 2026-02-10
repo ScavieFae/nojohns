@@ -14,12 +14,12 @@ import { useArenaHealth } from "../hooks/useArenaHealth";
 function LiveMatchViewer({ matchId }: { matchId: string }) {
   const { status, matchInfo, currentFrame, error, gameScore } = useLiveMatch(matchId);
 
-  if (status === "connecting") {
+  if (status === "connecting" || status === "disconnected") {
     return (
       <div className="flex items-center justify-center h-96 bg-surface-800 rounded-lg">
         <div className="text-center">
           <div className="animate-spin w-8 h-8 border-2 border-accent-green border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-gray-400">Connecting to match {matchId}...</p>
+          <p className="text-gray-400">Connecting to match...</p>
         </div>
       </div>
     );

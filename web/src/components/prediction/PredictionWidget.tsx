@@ -9,7 +9,6 @@ import {
 import { usePlaceBet } from "../../hooks/usePlaceBet";
 import { useClaimPayout } from "../../hooks/useClaimPayout";
 import { useWallet } from "../../hooks/useWallet";
-import { CONTRACTS } from "../../config";
 
 interface PredictionWidgetProps {
   matchId: string;
@@ -25,16 +24,6 @@ export function PredictionWidget({ matchId }: PredictionWidgetProps) {
     isPending: claimPending,
     error: claimError,
   } = useClaimPayout();
-
-  // Not deployed yet
-  if (CONTRACTS.predictionPool === "0x0000000000000000000000000000000000000000") {
-    return (
-      <div className="bg-surface-800 rounded-lg p-4">
-        <h3 className="text-sm font-bold text-gray-400 mb-2">Predictions</h3>
-        <p className="text-xs text-gray-500">Coming soon</p>
-      </div>
-    );
-  }
 
   if (isLoading) {
     return (
