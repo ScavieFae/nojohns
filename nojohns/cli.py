@@ -1021,6 +1021,9 @@ def _try_record_onchain(match_id, match_result, nj_cfg, account, _get):
 
         # Post Elo update to ReputationRegistry
         _post_elo_update(match_result, nj_cfg, account)
+
+        # Resolve prediction pool (if one exists for this match)
+        _try_resolve_pool(match_id, nj_cfg, account)
     except Exception as e:
         # Check if opponent beat us to it
         try:
@@ -1103,6 +1106,54 @@ def _post_elo_update(match_result: dict, config, account):
         print(f"  Elo tx: 0x{tx_hash}")
     else:
         print("  Elo update failed (non-critical)")
+
+
+def _try_resolve_pool(match_id: str, config, account):
+    """Resolve the prediction pool for a match after recordMatch() succeeds.
+
+    Reads pool_id from the arena, then calls resolve() on PredictionPool.
+    Silently skips if no pool exists or prediction_pool not configured.
+    """
+    if config.chain is None or config.chain.prediction_pool is None:
+        return
+
+    # Get pool_id from arena
+    arena_server = config.arena_server
+    try:
+        import urllib.request
+        import json
+
+        url = f"{arena_server}/matches/{match_id}/pool"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        pool_id = data.get("pool_id")
+    except Exception as e:
+        logger.debug(f"Failed to fetch pool info: {e}")
+        return
+
+    if pool_id is None:
+        logger.debug("No prediction pool for this match")
+        return
+
+    try:
+        from nojohns.contract import resolve_pool
+
+        print(f"  Resolving prediction pool {pool_id}...", end="", flush=True)
+        tx_hash = resolve_pool(
+            pool_id, account,
+            rpc_url=config.chain.rpc_url,
+            contract_address=config.chain.prediction_pool,
+        )
+        print(f" resolved! tx: 0x{tx_hash[:16]}...")
+    except ImportError:
+        logger.debug("web3 not installed — skipping pool resolution")
+    except Exception as e:
+        # Pool might not exist, or opponent resolved first
+        if "already" in str(e).lower() or "revert" in str(e).lower():
+            print(" already resolved.")
+        else:
+            logger.warning(f"Failed to resolve prediction pool: {e}")
+            print(f" failed (non-critical): {e}")
 
 
 def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, config):

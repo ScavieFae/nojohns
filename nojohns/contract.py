@@ -237,6 +237,178 @@ def is_recorded(
     return contract.functions.recorded(match_id).call()
 
 
+# =============================================================================
+# PredictionPool
+# =============================================================================
+
+PREDICTION_POOL_ABI = [
+    {
+        "type": "function",
+        "name": "createPool",
+        "inputs": [
+            {"name": "matchId", "type": "bytes32"},
+            {"name": "playerA", "type": "address"},
+            {"name": "playerB", "type": "address"},
+        ],
+        "outputs": [{"name": "poolId", "type": "uint256"}],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function",
+        "name": "resolve",
+        "inputs": [{"name": "poolId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function",
+        "name": "cancelPool",
+        "inputs": [{"name": "poolId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function",
+        "name": "getPool",
+        "inputs": [{"name": "poolId", "type": "uint256"}],
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {"name": "matchId", "type": "bytes32"},
+                    {"name": "playerA", "type": "address"},
+                    {"name": "playerB", "type": "address"},
+                    {"name": "totalA", "type": "uint256"},
+                    {"name": "totalB", "type": "uint256"},
+                    {"name": "status", "type": "uint8"},
+                    {"name": "winner", "type": "address"},
+                    {"name": "createdAt", "type": "uint256"},
+                ],
+            }
+        ],
+        "stateMutability": "view",
+    },
+]
+
+
+def get_prediction_pool_contract(rpc_url: str, contract_address: str):
+    """Get a web3 Contract instance for PredictionPool.
+
+    Returns:
+        (web3_instance, contract) tuple.
+    """
+    Web3 = _require_web3()
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(contract_address),
+        abi=PREDICTION_POOL_ABI,
+    )
+    return w3, contract
+
+
+def create_pool(
+    match_id_bytes: bytes,
+    player_a: str,
+    player_b: str,
+    account,
+    rpc_url: str,
+    contract_address: str,
+) -> int:
+    """Create a prediction pool for a match. Returns the pool ID."""
+    Web3 = _require_web3()
+    w3, contract = get_prediction_pool_contract(rpc_url, contract_address)
+
+    fn = contract.functions.createPool(
+        match_id_bytes,
+        Web3.to_checksum_address(player_a),
+        Web3.to_checksum_address(player_b),
+    )
+
+    # Simulate first to get the return value (pool ID)
+    pool_id = fn.call({"from": account.address})
+
+    tx = fn.build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "chainId": w3.eth.chain_id,
+            "gas": 300_000,
+        }
+    )
+
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    logger.info(f"createPool tx sent: {tx_hash.hex()}")
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"createPool reverted: {tx_hash.hex()}")
+
+    logger.info(f"createPool confirmed in block {receipt['blockNumber']}, poolId={pool_id}")
+    return pool_id
+
+
+def resolve_pool(
+    pool_id: int,
+    account,
+    rpc_url: str,
+    contract_address: str,
+) -> str:
+    """Resolve a prediction pool after match is recorded onchain. Returns tx hash."""
+    w3, contract = get_prediction_pool_contract(rpc_url, contract_address)
+
+    tx = contract.functions.resolve(pool_id).build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "chainId": w3.eth.chain_id,
+            "gas": 300_000,
+        }
+    )
+
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    logger.info(f"resolve tx sent: {tx_hash.hex()}")
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"resolve reverted: {tx_hash.hex()}")
+
+    logger.info(f"resolve confirmed in block {receipt['blockNumber']}")
+    return tx_hash.hex()
+
+
+def cancel_pool(
+    pool_id: int,
+    account,
+    rpc_url: str,
+    contract_address: str,
+) -> str:
+    """Cancel a prediction pool (refunds all bettors). Returns tx hash."""
+    w3, contract = get_prediction_pool_contract(rpc_url, contract_address)
+
+    tx = contract.functions.cancelPool(pool_id).build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "chainId": w3.eth.chain_id,
+            "gas": 300_000,
+        }
+    )
+
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    logger.info(f"cancelPool tx sent: {tx_hash.hex()}")
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"cancelPool reverted: {tx_hash.hex()}")
+
+    logger.info(f"cancelPool confirmed in block {receipt['blockNumber']}")
+    return tx_hash.hex()
+
+
 def _match_result_to_tuple(match_result: dict[str, Any]) -> tuple:
     """Convert a MatchResult dict to the tuple format web3.py expects for structs."""
     return (
