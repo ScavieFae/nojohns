@@ -1,7 +1,7 @@
 export const CHAIN_ID = 10143;
 export const RPC_URL = "https://testnet-rpc.monad.xyz";
 export const BLOCK_EXPLORER_URL = "https://testnet.monadexplorer.com";
-export const ARENA_URL = import.meta.env.VITE_ARENA_URL ?? "http://localhost:8000";
+export const ARENA_URL = import.meta.env.VITE_ARENA_URL ?? "https://nojohns-arena-production.up.railway.app";
 export const USE_MOCK_DATA = import.meta.env.VITE_USE_MOCK_DATA === "true";
 
 export const CONTRACTS = {

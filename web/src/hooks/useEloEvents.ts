@@ -1,13 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { createPublicClient, http } from "viem";
 import { reputationRegistryAbi } from "../abi/reputationRegistry";
-import { ERC8004, RPC_URL, USE_MOCK_DATA, DEPLOY_BLOCK, MAX_LOG_RANGE } from "../config";
+import { ERC8004, USE_MOCK_DATA } from "../config";
+import { publicClient } from "../viem";
+import { getBatchedLogs } from "../lib/getLogs";
 
-const client = createPublicClient({
-  transport: http(RPC_URL),
-});
-
-// Minimal IdentityRegistry ABI for ownerOf
 const identityRegistryAbi = [
   {
     type: "function",
@@ -19,12 +15,12 @@ const identityRegistryAbi = [
 ] as const;
 
 const feedbackGivenEvent = reputationRegistryAbi.find(
-  (e) => e.type === "event" && e.name === "FeedbackGiven"
+  (e) => e.type === "event" && e.name === "FeedbackGiven",
 )!;
 
 /**
- * Fetch Elo updates from ReputationRegistry FeedbackGiven events
- * Maps agentId → wallet address via IdentityRegistry.ownerOf()
+ * Fetch Elo updates from ReputationRegistry FeedbackGiven events.
+ * Maps agentId → wallet address via IdentityRegistry.ownerOf().
  */
 export function useEloEvents() {
   return useQuery({
@@ -32,68 +28,38 @@ export function useEloEvents() {
     queryFn: async (): Promise<Map<`0x${string}`, number>> => {
       if (USE_MOCK_DATA) return new Map();
 
-      const currentBlock = await client.getBlockNumber();
+      const { logs } = await getBatchedLogs({
+        address: ERC8004.reputation,
+        event: feedbackGivenEvent,
+        cacheKey: "eloFeedback",
+      });
+
+      // Keep only the latest Elo per agentId
       const eloByAgent = new Map<bigint, { elo: number; block: bigint }>();
+      for (const log of logs) {
+        if (log.args.tag1 !== "elo" || log.args.tag2 !== "melee") continue;
 
-      // Scan in batches (Monad has small getLogs limit)
-      let fromBlock = DEPLOY_BLOCK;
-      while (fromBlock <= currentBlock) {
-        const toBlock =
-          fromBlock + MAX_LOG_RANGE - 1n > currentBlock
-            ? currentBlock
-            : fromBlock + MAX_LOG_RANGE - 1n;
+        const agentId = log.args.agentId!;
+        const value = log.args.value!;
+        const blockNumber = log.blockNumber;
 
-        try {
-          const logs = await client.getLogs({
-            address: ERC8004.reputation,
-            event: feedbackGivenEvent,
-            fromBlock,
-            toBlock,
-          });
-
-          for (const log of logs) {
-            const tag1 = log.args.tag1;
-            const tag2 = log.args.tag2;
-
-            // Only process elo/melee feedback
-            if (tag1 !== "elo" || tag2 !== "melee") continue;
-
-            const agentId = log.args.agentId!;
-            const value = log.args.value!;
-            const blockNumber = log.blockNumber;
-
-            // Keep only the latest value per agent
-            const existing = eloByAgent.get(agentId);
-            if (!existing || blockNumber > existing.block) {
-              eloByAgent.set(agentId, {
-                elo: Number(value),
-                block: blockNumber,
-              });
-            }
-          }
-        } catch {
-          // Skip failed batches
+        const existing = eloByAgent.get(agentId);
+        if (!existing || blockNumber > existing.block) {
+          eloByAgent.set(agentId, { elo: Number(value), block: blockNumber });
         }
-
-        fromBlock = toBlock + 1n;
       }
 
       // Map agentId → wallet address
       const eloByAddress = new Map<`0x${string}`, number>();
-      const agentIds = Array.from(eloByAgent.keys());
-
-      // Batch ownerOf calls
-      for (const agentId of agentIds) {
+      for (const [agentId, { elo }] of eloByAgent) {
         try {
-          const owner = await client.readContract({
+          const owner = await publicClient.readContract({
             address: ERC8004.identity,
             abi: identityRegistryAbi,
             functionName: "ownerOf",
             args: [agentId],
           });
-
-          const eloData = eloByAgent.get(agentId)!;
-          eloByAddress.set(owner, eloData.elo);
+          eloByAddress.set(owner, elo);
         } catch {
           // Agent might not exist or be burned
         }
@@ -101,6 +67,7 @@ export function useEloEvents() {
 
       return eloByAddress;
     },
-    staleTime: 30_000, // Refetch every 30s
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 }
