@@ -1,7 +1,7 @@
 /**
  * Hook for connecting to live match WebSocket stream
  *
- * Uses a frame buffer to smooth playback over network jitter.
+ * Uses a circular frame buffer to smooth playback over network jitter.
  * Frames are buffered until we have enough, then played back at a steady rate.
  */
 
@@ -12,14 +12,56 @@ import type {
   PlayerFrameData,
 } from "../lib/liveMatchProtocol";
 import type { MatchFrame, PlayerFrame } from "../components/viewer/MeleeViewer";
-// Character IDs from arena are already internal IDs (libmelee format)
 import { ARENA_URL } from "../config";
 
-// Buffer config: wait for this many frames before starting playback
-// WebSocket delivers frames continuously at 60fps, so smaller buffer is fine
-const BUFFER_TARGET = 8;  // ~133ms latency
+// Buffer config
+const BUFFER_TARGET = 8; // ~133ms latency at 60fps
 const PLAYBACK_INTERVAL_MS = 16; // ~60fps playback
-const MAX_BUFFER_SIZE = 30; // Drop frames if we fall this far behind
+const BUFFER_CAPACITY = 64; // Circular buffer size (power of 2 for fast modulo)
+
+// ---------------------------------------------------------------------------
+// O(1) circular buffer — replaces Array.shift()/splice() which are O(n)
+// ---------------------------------------------------------------------------
+
+interface RingBuffer<T> {
+  items: (T | undefined)[];
+  read: number;
+  write: number;
+  size: number;
+}
+
+function createRing<T>(capacity: number): RingBuffer<T> {
+  return { items: new Array(capacity), read: 0, write: 0, size: 0 };
+}
+
+function ringPush<T>(buf: RingBuffer<T>, item: T): void {
+  const cap = buf.items.length;
+  buf.items[buf.write] = item;
+  buf.write = (buf.write + 1) % cap;
+  if (buf.size < cap) {
+    buf.size++;
+  } else {
+    // Overwrite oldest — advance read pointer
+    buf.read = (buf.read + 1) % cap;
+  }
+}
+
+function ringShift<T>(buf: RingBuffer<T>): T | undefined {
+  if (buf.size === 0) return undefined;
+  const item = buf.items[buf.read];
+  buf.items[buf.read] = undefined; // help GC
+  buf.read = (buf.read + 1) % buf.items.length;
+  buf.size--;
+  return item;
+}
+
+function ringDrop<T>(buf: RingBuffer<T>, count: number): void {
+  const toDrop = Math.min(count, buf.size);
+  buf.read = (buf.read + toDrop) % buf.items.length;
+  buf.size -= toDrop;
+}
+
+// ---------------------------------------------------------------------------
 
 export interface LiveMatchState {
   status: "connecting" | "connected" | "ended" | "error" | "disconnected";
@@ -44,7 +86,7 @@ interface UseLiveMatchOptions {
  */
 export function useLiveMatch(
   matchId: string | null,
-  options: UseLiveMatchOptions = {}
+  options: UseLiveMatchOptions = {},
 ): LiveMatchState {
   const [state, setState] = useState<LiveMatchState>({
     status: "disconnected",
@@ -59,24 +101,20 @@ export function useLiveMatch(
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
-  // Frame buffer for smooth playback
-  const frameBufferRef = useRef<MatchFrame[]>([]);
-  const playbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const bufferingRef = useRef(true); // Start in buffering mode
-  const matchInfoRef = useRef<MatchStartMessage | null>(null); // For frame handler access
+  // Circular frame buffer for smooth playback
+  const frameBufferRef = useRef<RingBuffer<MatchFrame>>(createRing(BUFFER_CAPACITY));
+  const playingRef = useRef(false);
+  const bufferingRef = useRef(true);
+  const matchInfoRef = useRef<MatchStartMessage | null>(null);
 
-  // Receive FPS tracking for debugging
-  const framesReceivedRef = useRef(0);
-  const lastReceiveFpsLogRef = useRef(0);
+  // FPS tracking (debug only — logged once per second)
+  const fpsRef = useRef({ received: 0, played: 0, lastLog: 0 });
 
   // Convert arena PlayerFrameData to viewer PlayerFrame
   const convertPlayerFrame = useCallback(
     (data: PlayerFrameData, matchInfo: MatchStartMessage): PlayerFrame => {
-      // Find player info from match start
       const playerInfo = matchInfo.players.find((p) => p.port === data.port);
-      // characterId from arena is libmelee's internal ID (same as animation files use)
       const internalCharId = playerInfo?.characterId ?? 0;
-
       return {
         internalCharId,
         x: data.x,
@@ -88,51 +126,45 @@ export function useLiveMatch(
         stocks: data.stocks,
       };
     },
-    []
+    [],
   );
 
   // Start smooth playback from buffer
   const startPlayback = useCallback(() => {
-    if (playbackIntervalRef.current) return; // Already playing
+    if (playingRef.current) return;
+    playingRef.current = true;
 
-    console.log(`[useLiveMatch] Starting playback, buffer has ${frameBufferRef.current.length} frames`);
+    console.log(
+      `[useLiveMatch] Starting playback, buffer: ${frameBufferRef.current.size}`,
+    );
 
     let lastFrameTime = performance.now();
     const targetFrameTime = PLAYBACK_INTERVAL_MS;
 
-    // FPS tracking for debugging
-    let framesPlayedThisSecond = 0;
-    let lastFpsLogTime = performance.now();
-
     const tick = (now: number) => {
-      if (!playbackIntervalRef.current) return; // Stopped
+      if (!playingRef.current) return;
 
       const elapsed = now - lastFrameTime;
-
-      // Calculate how many frames we should have played by now
-      // Cap at 2 frames per tick to avoid teleporting - we'll catch up gradually
       const rawFramesToPlay = Math.floor(elapsed / targetFrameTime);
-      const framesToPlay = Math.min(rawFramesToPlay, 2);
+      const framesToPlay = Math.min(rawFramesToPlay, 2); // Cap to avoid teleporting
 
       if (framesToPlay > 0) {
-        // Advance time by the frames we're about to play (not raw, to allow catch-up)
         lastFrameTime += framesToPlay * targetFrameTime;
+        const buf = frameBufferRef.current;
 
-        // If buffer is getting too large, we're falling behind - drop old frames
-        // But do this separately from the smooth playback
-        if (frameBufferRef.current.length > MAX_BUFFER_SIZE) {
-          const toDrop = frameBufferRef.current.length - BUFFER_TARGET;
-          frameBufferRef.current.splice(0, toDrop);
-          console.log(`[useLiveMatch] Dropped ${toDrop} frames to catch up (buffer overflow)`);
+        // If buffer is overflowing, drop old frames to catch up
+        if (buf.size > BUFFER_CAPACITY - 4) {
+          const toDrop = buf.size - BUFFER_TARGET;
+          ringDrop(buf, toDrop);
         }
 
-        // Play frames smoothly - consume 1-2 frames per tick max
+        // Consume frames
         let frameToShow: MatchFrame | undefined;
         for (let i = 0; i < framesToPlay; i++) {
-          const frame = frameBufferRef.current.shift();
-          if (frame) {
-            frameToShow = frame;
-            framesPlayedThisSecond++;
+          const f = ringShift(buf);
+          if (f) {
+            frameToShow = f;
+            fpsRef.current.played++;
           }
         }
 
@@ -140,35 +172,32 @@ export function useLiveMatch(
           setState((prev) => ({
             ...prev,
             currentFrame: frameToShow,
-            bufferHealth: Math.min(1, frameBufferRef.current.length / BUFFER_TARGET),
+            bufferHealth: Math.min(1, buf.size / BUFFER_TARGET),
           }));
         }
       }
 
-      // Log FPS every second
-      const timeSinceLog = now - lastFpsLogTime;
-      if (timeSinceLog >= 1000) {
-        const fps = Math.round((framesPlayedThisSecond * 1000) / timeSinceLog);
-        console.log(`[useLiveMatch] Playback FPS: ${fps}, buffer: ${frameBufferRef.current.length}`);
-        framesPlayedThisSecond = 0;
-        lastFpsLogTime = now;
+      // FPS log once per second
+      if (now - fpsRef.current.lastLog >= 1000) {
+        const fps = fpsRef.current;
+        console.log(
+          `[useLiveMatch] rx=${fps.received}fps tx=${fps.played}fps buf=${frameBufferRef.current.size}`,
+        );
+        fps.received = 0;
+        fps.played = 0;
+        fps.lastLog = now;
       }
 
       requestAnimationFrame(tick);
     };
 
-    // Use a dummy interval ref to track "playing" state, actual timing via rAF
-    playbackIntervalRef.current = 1 as unknown as ReturnType<typeof setInterval>;
     requestAnimationFrame(tick);
   }, []);
 
   // Stop playback
   const stopPlayback = useCallback(() => {
-    if (playbackIntervalRef.current) {
-      clearInterval(playbackIntervalRef.current);
-      playbackIntervalRef.current = null;
-    }
-    frameBufferRef.current = [];
+    playingRef.current = false;
+    frameBufferRef.current = createRing(BUFFER_CAPACITY);
     bufferingRef.current = true;
     matchInfoRef.current = null;
   }, []);
@@ -179,29 +208,19 @@ export function useLiveMatch(
       try {
         const msg: ArenaMessage = JSON.parse(event.data);
 
-        // Debug logging for all messages
-        if (msg.type === "frame") {
-          // Log first frame and every 60th after
-          const frameNum = (msg as { frame: number }).frame;
-          if (frameNum === 0 || frameNum % 60 === 0) {
-            console.log(`[useLiveMatch] Frame ${frameNum}, buffer: ${frameBufferRef.current.length}, buffering: ${bufferingRef.current}`);
-          }
-        } else {
-          console.log(`[useLiveMatch] Received message:`, msg.type, msg);
-        }
-
         switch (msg.type) {
           case "match_start":
-            console.log(`[useLiveMatch] match_start received:`, msg);
-            // Clear the connect timeout since we got match info
+            console.log(`[useLiveMatch] match_start:`, msg);
             if (wsRef.current) {
-              const ws = wsRef.current as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> };
+              const ws = wsRef.current as WebSocket & {
+                _connectTimeout?: ReturnType<typeof setTimeout>;
+              };
               if (ws._connectTimeout) {
                 clearTimeout(ws._connectTimeout);
                 ws._connectTimeout = undefined;
               }
             }
-            matchInfoRef.current = msg; // Store in ref for frame handler
+            matchInfoRef.current = msg;
             setState((prev) => ({
               ...prev,
               status: "connected",
@@ -211,52 +230,36 @@ export function useLiveMatch(
             optionsRef.current.onMatchStart?.(msg);
             break;
 
-          case "frame":
-            // Add frame to buffer (don't setState here - too expensive at 60fps)
-            {
-              const matchInfo = matchInfoRef.current;
-              if (!matchInfo) {
-                console.log(`[useLiveMatch] Frame received but no matchInfo yet, ignoring`);
-                break;
-              }
+          case "frame": {
+            const matchInfo = matchInfoRef.current;
+            if (!matchInfo) break;
 
-              // Track receive FPS
-              framesReceivedRef.current++;
-              const now = performance.now();
-              if (lastReceiveFpsLogRef.current === 0) {
-                lastReceiveFpsLogRef.current = now;
-              } else if (now - lastReceiveFpsLogRef.current >= 1000) {
-                const receiveFps = Math.round((framesReceivedRef.current * 1000) / (now - lastReceiveFpsLogRef.current));
-                console.log(`[useLiveMatch] Receive FPS: ${receiveFps}`);
-                framesReceivedRef.current = 0;
-                lastReceiveFpsLogRef.current = now;
-              }
+            fpsRef.current.received++;
 
-              const players = msg.players.map((p) =>
-                convertPlayerFrame(p, matchInfo)
-              );
+            const players = msg.players.map((p) =>
+              convertPlayerFrame(p, matchInfo),
+            );
 
-              const newFrame: MatchFrame = {
-                frame: msg.frame,
-                stageId: matchInfo.stageId,
-                players,
-              };
+            ringPush(frameBufferRef.current, {
+              frame: msg.frame,
+              stageId: matchInfo.stageId,
+              players,
+            });
 
-              // Add to buffer (just update ref, no re-render)
-              frameBufferRef.current.push(newFrame);
-
-              // Start playback once buffer is full enough
-              if (bufferingRef.current && frameBufferRef.current.length >= BUFFER_TARGET) {
-                bufferingRef.current = false;
-                startPlayback();
-              }
+            // Start playback once buffer is full enough
+            if (
+              bufferingRef.current &&
+              frameBufferRef.current.size >= BUFFER_TARGET
+            ) {
+              bufferingRef.current = false;
+              startPlayback();
             }
             break;
+          }
 
           case "game_end":
             setState((prev) => {
               const newScore: [number, number] = [...prev.gameScore];
-              // Assuming 2-player match, port 1 is index 0, port 2 is index 1
               if (msg.winnerPort === 1) newScore[0]++;
               else newScore[1]++;
               return { ...prev, gameScore: newScore };
@@ -285,13 +288,12 @@ export function useLiveMatch(
         console.error("Failed to parse WebSocket message:", err);
       }
     },
-    [convertPlayerFrame, startPlayback]
+    [convertPlayerFrame, startPlayback],
   );
 
   // Connect/disconnect based on matchId
   useEffect(() => {
     if (!matchId) {
-      // Disconnect
       stopPlayback();
       if (wsRef.current) {
         wsRef.current.close();
@@ -308,9 +310,7 @@ export function useLiveMatch(
       return;
     }
 
-    // Build WebSocket URL
     const wsUrl = ARENA_URL.replace(/^http/, "ws") + `/ws/match/${matchId}`;
-
     setState((prev) => ({ ...prev, status: "connecting", error: null }));
 
     const ws = new WebSocket(wsUrl);
@@ -318,35 +318,23 @@ export function useLiveMatch(
 
     ws.onopen = () => {
       console.log(`[useLiveMatch] Connected to ${wsUrl}`);
-
-      // Set a timeout - if we don't receive match_start within 5s, the match may have ended
       const timeout = setTimeout(() => {
         setState((prev) => {
           if (prev.status === "connecting") {
-            console.log("[useLiveMatch] Timeout waiting for match_start - match may have ended");
-            return {
-              ...prev,
-              status: "ended",
-              error: "Match has already ended",
-            };
+            return { ...prev, status: "ended", error: "Match has already ended" };
           }
           return prev;
         });
       }, 5000);
-
-      // Store timeout so we can clear it if we do receive match_start
-      (ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> })._connectTimeout = timeout;
+      (
+        ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> }
+      )._connectTimeout = timeout;
     };
 
     ws.onmessage = handleMessage;
 
-    ws.onerror = (event) => {
-      console.error("[useLiveMatch] WebSocket error:", event);
-      setState((prev) => ({
-        ...prev,
-        status: "error",
-        error: "Connection error",
-      }));
+    ws.onerror = () => {
+      setState((prev) => ({ ...prev, status: "error", error: "Connection error" }));
     };
 
     ws.onclose = (event) => {
@@ -360,12 +348,12 @@ export function useLiveMatch(
     };
 
     return () => {
-      // Clear any pending timeout
-      const wsWithTimeout = ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> };
+      const wsWithTimeout = ws as WebSocket & {
+        _connectTimeout?: ReturnType<typeof setTimeout>;
+      };
       if (wsWithTimeout._connectTimeout) {
         clearTimeout(wsWithTimeout._connectTimeout);
       }
-      // Stop playback
       stopPlayback();
       ws.close();
       if (wsRef.current === ws) {
