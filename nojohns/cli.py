@@ -592,7 +592,8 @@ def _setup_identity(name=None, description=None, yes=False):
     if chain_data.get("agent_id"):
         print(f"Already registered as agent #{chain_data['agent_id']}")
         if yes:
-            print("Re-registering (--yes)")
+            print("Already registered — skipping (use interactive mode to re-register)")
+            return 0
         else:
             print()
             overwrite = input("Register a new agent? [y/N]: ").strip().lower()
