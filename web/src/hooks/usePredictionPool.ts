@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { publicClient } from "../viem";
-import { CONTRACTS } from "../config";
+import { CONTRACTS, ARENA_URL } from "../config";
 import { predictionPoolAbi } from "../abi/predictionPool";
 
 export enum PoolStatus {
@@ -29,33 +28,25 @@ export interface UserPosition {
 }
 
 /**
- * Find a prediction pool for a matchId by scanning PoolCreated events.
- * Returns null if no pool exists for this match.
+ * Find a prediction pool for a matchId by querying the arena API.
+ * The arena tracks pool_id in its database — one fast HTTP call
+ * instead of scanning on-chain (Monad limits getLogs to 100-block range).
  */
 async function findPoolIdForMatch(
-  matchId: `0x${string}`
+  matchId: string
 ): Promise<bigint | null> {
   const address = CONTRACTS.predictionPool as `0x${string}`;
   if (address === "0x0000000000000000000000000000000000000000") return null;
 
-  // Check pool count first
-  const count = (await publicClient.readContract({
-    address,
-    abi: predictionPoolAbi,
-    functionName: "poolCount",
-  })) as bigint;
-
-  // Scan pools (they're sequential IDs, so just check each)
-  for (let i = 0n; i < count; i++) {
-    const pool = (await publicClient.readContract({
-      address,
-      abi: predictionPoolAbi,
-      functionName: "getPool",
-      args: [i],
-    })) as {
-      matchId: `0x${string}`;
-    };
-    if (pool.matchId === matchId) return i;
+  try {
+    const resp = await fetch(`${ARENA_URL}/matches/${matchId}/pool`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (data.pool_id !== null && data.pool_id !== undefined) {
+      return BigInt(data.pool_id);
+    }
+  } catch {
+    // Arena unreachable — fall back to nothing
   }
   return null;
 }
@@ -124,28 +115,10 @@ async function fetchUserPosition(
  * Polls every 5s when pool is open to track odds changes.
  */
 export function usePredictionPool(matchId: string | undefined) {
-  // Arena match IDs are UUIDs like "5b26172f-ec93-4e76-b41e-b161ff13a7b6"
-  // On-chain they're bytes32: SHA256 hash of the UUID string (matches arena's pool creation)
-  const [matchIdHex, setMatchIdHex] = useState<`0x${string}` | undefined>(undefined);
-
-  useEffect(() => {
-    if (!matchId) {
-      setMatchIdHex(undefined);
-      return;
-    }
-    // SHA256 hash the raw UUID string to match arena's hashlib.sha256(match_id.encode())
-    crypto.subtle.digest("SHA-256", new TextEncoder().encode(matchId)).then((buf) => {
-      const hex = Array.from(new Uint8Array(buf))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-      setMatchIdHex(`0x${hex}` as `0x${string}`);
-    });
-  }, [matchId]);
-
   const poolIdQuery = useQuery({
-    queryKey: ["predictionPoolId", matchIdHex],
-    queryFn: () => findPoolIdForMatch(matchIdHex!),
-    enabled: !!matchIdHex,
+    queryKey: ["predictionPoolId", matchId],
+    queryFn: () => findPoolIdForMatch(matchId!),
+    enabled: !!matchId,
     staleTime: 60_000,
   });
 
