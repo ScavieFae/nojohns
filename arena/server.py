@@ -31,11 +31,11 @@ from .db import ArenaDB
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Arena Wallet (for posting Elo updates to ReputationRegistry)
+# Arena Wallet (for onchain operations)
 # =============================================================================
 # SECURITY: Arena wallet key is loaded from env var, NOT config file.
-# This wallet is used only for posting Elo updates — it cannot access
-# player funds or forge match results (those need player signatures).
+# This wallet submits recordMatch() (using player sigs), posts Elo updates,
+# creates/resolves prediction pools, but cannot forge results (needs player sigs).
 # Keep minimal MON in this wallet, just enough for gas.
 
 _arena_account = None  # Loaded lazily
@@ -161,6 +161,87 @@ def _post_elo_updates(match: dict):
                 logger.info(f"Posted Elo for loser agent {loser_agent_id}: {current.elo} → {new_elo}")
         except Exception as e:
             logger.warning(f"Failed to post loser Elo: {e}")
+
+# =============================================================================
+# Onchain Match Recording
+# =============================================================================
+
+
+def _try_record_match(match_id: str):
+    """Submit recordMatch() to MatchProof using the arena wallet.
+
+    Called when both player signatures arrive. The arena is the submitter
+    (pays gas), using the two player EIP-712 signatures collected via the
+    /matches/{id}/signature endpoint.
+
+    Silently skips if arena wallet not configured, match_proof not set,
+    or either signature is missing.
+    """
+    import hashlib
+
+    account = _get_arena_account()
+    if account is None:
+        logger.debug("Arena wallet not configured — skipping match recording")
+        return
+
+    match_proof = os.environ.get("MATCH_PROOF")
+    if not match_proof:
+        logger.warning(
+            f"Match recording skipped for {match_id}: MATCH_PROOF env var not set"
+        )
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        return
+
+    winner_wallet = match.get("winner_wallet")
+    loser_wallet = match.get("loser_wallet")
+    if not winner_wallet or not loser_wallet:
+        logger.debug(f"Match {match_id} missing winner/loser wallets — skipping recording")
+        return
+
+    sigs = db.get_signatures(match_id)
+    if len(sigs) < 2:
+        logger.debug(f"Match {match_id} has {len(sigs)} signatures — need 2")
+        return
+
+    sig_a = bytes.fromhex(sigs[0]["signature"])
+    sig_b = bytes.fromhex(sigs[1]["signature"])
+
+    # Build the same MatchResult the players signed
+    match_result = {
+        "matchId": hashlib.sha256(match_id.encode()).digest(),
+        "winner": winner_wallet,
+        "loser": loser_wallet,
+        "gameId": "melee",
+        "winnerScore": match.get("winner_score", 0),
+        "loserScore": match.get("loser_score", 0),
+        "replayHash": b"\x00" * 32,
+        "timestamp": match["result_timestamp"],
+    }
+
+    try:
+        from nojohns.contract import record_match, is_recorded
+
+        # Check if already recorded (idempotent — another client may have submitted)
+        if is_recorded(match_result["matchId"], rpc_url=rpc_url, contract_address=match_proof):
+            logger.info(f"Match {match_id} already recorded onchain")
+            return
+
+        tx_hash = record_match(
+            match_result, sig_a, sig_b,
+            account, rpc_url=rpc_url, contract_address=match_proof,
+        )
+        logger.info(f"Match {match_id} recorded onchain: tx={tx_hash}")
+    except ImportError:
+        logger.debug("web3 not installed — skipping match recording")
+    except Exception as e:
+        logger.warning(f"Failed to record match {match_id} onchain: {e}")
+
 
 # =============================================================================
 # Prediction Pool Lifecycle
@@ -343,6 +424,12 @@ def _log_startup_config():
     else:
         logger.warning("  Arena wallet: NOT configured (ARENA_PRIVATE_KEY missing)")
         logger.warning("  → Prediction pools, Elo posting DISABLED")
+
+    match_proof = os.environ.get("MATCH_PROOF")
+    if match_proof:
+        logger.info(f"  MatchProof: {match_proof}")
+    else:
+        logger.info("  MatchProof: NOT configured (MATCH_PROOF not set — arena won't record matches)")
 
     if pool_addr:
         if not arena_key:
@@ -616,8 +703,13 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
         f"Signature for {match_id} from {req.address} ({count}/2 received)"
     )
 
-    # When both signatures received, post Elo updates and resolve pool
+    # When both signatures received: record onchain, post Elo, resolve pool
     if count >= 2:
+        try:
+            _try_record_match(match_id)
+        except Exception as e:
+            logger.warning(f"Match recording failed (non-critical): {e}")
+
         try:
             _post_elo_updates(match)
         except Exception as e:
