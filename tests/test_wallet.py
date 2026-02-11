@@ -260,8 +260,8 @@ class TestConfigParsing:
 
         cfg = load_config(config_path)
         assert cfg.chain is not None
-        assert cfg.chain.chain_id == 10143
-        assert cfg.chain.rpc_url == "https://testnet-rpc.monad.xyz"
+        assert cfg.chain.chain_id == 143
+        assert cfg.chain.rpc_url == "https://rpc.monad.xyz"
 
     def test_no_wallet_section(self, tmp_path):
         from nojohns.config import load_config

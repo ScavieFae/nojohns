@@ -81,11 +81,11 @@ def _post_elo_updates(match: dict):
         return
 
     # Get chain config from env
-    rpc_url = os.environ.get("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz")
-    chain_id = int(os.environ.get("MONAD_CHAIN_ID", "10143"))
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    chain_id = int(os.environ.get("MONAD_CHAIN_ID", "143"))
     reputation_registry = os.environ.get(
         "REPUTATION_REGISTRY",
-        "0x8004B663056A597Dffe9eCcC1965A193B7388713"  # testnet default
+        "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"  # mainnet default
     )
 
     winner_agent_id = None
@@ -170,24 +170,32 @@ def _post_elo_updates(match: dict):
 def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None):
     """Create a prediction pool onchain when a match is created.
 
-    Silently skips if:
-    - Arena wallet not configured
-    - PREDICTION_POOL env var not set
-    - Either player has no wallet
+    Logs warnings for each skip condition so Railway logs show exactly why
+    pool creation didn't happen.
     """
     account = _get_arena_account()
     if account is None:
+        logger.warning(
+            f"Pool creation skipped for {match_id}: arena wallet not configured "
+            "(ARENA_PRIVATE_KEY not set or eth_account not installed)"
+        )
         return
 
     pool_address = os.environ.get("PREDICTION_POOL")
     if not pool_address:
+        logger.warning(
+            f"Pool creation skipped for {match_id}: PREDICTION_POOL env var not set"
+        )
         return
 
     if not p1_wallet or not p2_wallet:
-        logger.debug("Match missing wallets — skipping pool creation")
+        logger.warning(
+            f"Pool creation skipped for {match_id}: missing wallets "
+            f"(p1={p1_wallet}, p2={p2_wallet})"
+        )
         return
 
-    rpc_url = os.environ.get("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
 
     # Convert match_id UUID to bytes32 (same logic as wager settlement)
     match_id_clean = match_id.replace("-", "")
@@ -233,7 +241,7 @@ def _try_cancel_pool(match_id: str):
     if pool_id is None:
         return
 
-    rpc_url = os.environ.get("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
 
     try:
         from nojohns.contract import cancel_pool
@@ -244,6 +252,44 @@ def _try_cancel_pool(match_id: str):
         logger.debug("web3 not installed — skipping pool cancellation")
     except Exception as e:
         logger.warning(f"Failed to cancel prediction pool {pool_id}: {e}")
+
+
+def _try_resolve_pool(match_id: str):
+    """Resolve a prediction pool after match is recorded onchain.
+
+    Called after both signatures are received. The arena resolves the pool
+    so bettors don't have to wait for a player client to do it.
+    """
+    account = _get_arena_account()
+    if account is None:
+        return
+
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        return
+
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        return
+
+    pool_id = match.get("pool_id")
+    if pool_id is None:
+        logger.debug(f"No pool to resolve for match {match_id}")
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    try:
+        from nojohns.contract import resolve_pool
+
+        tx_hash = resolve_pool(pool_id, account, rpc_url, pool_address)
+        logger.info(f"Prediction pool {pool_id} resolved for match {match_id}: tx={tx_hash}")
+    except ImportError:
+        logger.debug("web3 not installed — skipping pool resolution")
+    except Exception as e:
+        # Pool may already be resolved by client — that's fine
+        logger.warning(f"Failed to resolve prediction pool {pool_id}: {e}")
 
 
 def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
@@ -268,8 +314,53 @@ async def lifespan(app: FastAPI):
     db_path = getattr(app.state, "db_path", "arena.db")
     _db = ArenaDB(db_path)
     logger.info(f"Arena DB initialized: {db_path}")
+
+    # Startup validation: log prediction pool + Elo config
+    _log_startup_config()
+
     yield
     _db = None
+
+
+def _log_startup_config():
+    """Log arena configuration on startup so operators can verify env vars."""
+    arena_key = os.environ.get("ARENA_PRIVATE_KEY")
+    pool_addr = os.environ.get("PREDICTION_POOL")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    chain_id = os.environ.get("MONAD_CHAIN_ID", "143")
+    rep_registry = os.environ.get("REPUTATION_REGISTRY")
+
+    logger.info("=" * 50)
+    logger.info("Arena startup config:")
+    logger.info(f"  Chain: {chain_id} | RPC: {rpc_url}")
+
+    if arena_key:
+        account = _get_arena_account()
+        if account:
+            logger.info(f"  Arena wallet: {account.address}")
+        else:
+            logger.warning("  Arena wallet: key set but failed to load!")
+    else:
+        logger.warning("  Arena wallet: NOT configured (ARENA_PRIVATE_KEY missing)")
+        logger.warning("  → Prediction pools, Elo posting DISABLED")
+
+    if pool_addr:
+        if not arena_key:
+            logger.error(
+                "  PREDICTION_POOL is set but ARENA_PRIVATE_KEY is not! "
+                "Pools will silently fail to create."
+            )
+        else:
+            logger.info(f"  Prediction pool: {pool_addr}")
+    else:
+        logger.info("  Prediction pool: NOT configured (PREDICTION_POOL not set)")
+
+    if rep_registry:
+        logger.info(f"  Reputation registry: {rep_registry}")
+    else:
+        logger.info("  Reputation registry: NOT configured (Elo posting disabled)")
+
+    logger.info("=" * 50)
 
 
 app = FastAPI(title="No Johns Arena", lifespan=lifespan)
@@ -525,12 +616,17 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
         f"Signature for {match_id} from {req.address} ({count}/2 received)"
     )
 
-    # When both signatures received, post Elo updates (async, non-blocking)
+    # When both signatures received, post Elo updates and resolve pool
     if count >= 2:
         try:
             _post_elo_updates(match)
         except Exception as e:
             logger.warning(f"Elo posting failed (non-critical): {e}")
+
+        try:
+            _try_resolve_pool(match_id)
+        except Exception as e:
+            logger.warning(f"Pool resolution failed (non-critical): {e}")
 
     return {
         "match_id": match_id,

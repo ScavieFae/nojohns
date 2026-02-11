@@ -1271,3 +1271,131 @@ Once the arena creates pools, idle agents can bet on other agents' matches:
 5. Claim payouts after resolution
 
 This extends the existing `agents/bankroll.py` (has `win_probability_from_elo()` and `kelly_fraction()`) and `agents/strategy.py` (has `WagerStrategy` protocol).
+
+---
+
+## Day 11: Mainnet Migration (updated Feb 11, 2026)
+
+4 days until deadline. We're flipping everything from testnet to mainnet. Python defaults already updated.
+
+### CRITICAL — Website Mainnet Config
+
+Once Scav deploys contracts to mainnet, update `web/src/config.ts`:
+
+```typescript
+// Chain
+export const CHAIN_ID = 143;
+export const RPC_URL = "https://rpc.monad.xyz";
+export const BLOCK_EXPLORER_URL = "https://monadexplorer.com"; // verify this URL
+
+// Contracts — fill in after Scav deploys
+export const CONTRACTS = {
+  matchProof: "<mainnet MatchProof address>",
+  wager: "<mainnet Wager address>",
+  predictionPool: "<mainnet PredictionPool address>",
+};
+
+// ERC-8004 registries (already on mainnet)
+export const ERC8004 = {
+  identityRegistry: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+  reputationRegistry: "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+};
+
+// IMPORTANT: update DEPLOY_BLOCK to mainnet deploy block (reduces getLogs scan range)
+export const DEPLOY_BLOCK = ???;  // fill in after deploy
+```
+
+Scav will update `contracts/deployments.json` with mainnet addresses once deployed. Read from there.
+
+### CRITICAL — Vercel SPA Routing Fix (issue #27)
+
+Direct-linking to `/leaderboard`, `/live`, `/compete` returns 404 on Vercel because it's an SPA.
+
+**Fix:** Create `web/vercel.json`:
+```json
+{
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
+```
+
+Then redeploy. One-line fix.
+
+### Claim Hooks Needed
+
+`useClaimPayout.ts` and `useClaimRefund.ts` were referenced in the prediction widget but may not be fully wired. Bettors need these to collect winnings:
+
+- `useClaimPayout(poolId)` → calls `PredictionPool.claim(poolId)`
+- `useClaimRefund(poolId)` → calls `PredictionPool.claimRefund(poolId)` (for cancelled pools)
+
+Pattern: same as `usePlaceBet.ts` but calls different contract function.
+
+### Nice to Have
+
+- Show "No active pool" state in PredictionWidget instead of hiding entirely when pool doesn't exist
+- Replace O(n) pool lookup with event log filtering by indexed `matchId` (flagged in PR #23 review)
+- Consider showing mainnet vs testnet indicator in UI header
+
+### Python-Side Changes Already Made
+
+- `nojohns/config.py`: Default `chain_id=143`, `rpc_url=https://rpc.monad.xyz`
+- `nojohns/contract.py`: Default RPC changed to mainnet
+- `arena/server.py`: All env var fallbacks now use mainnet defaults (chain 143, mainnet RPC, mainnet ReputationRegistry)
+- `_setup_monad()`: Now defaults to mainnet in the interactive prompt
+- `contracts/deployments.json`: Added `monad_mainnet` placeholder section + `prediction_pool` to testnet section
+- Arena startup: Logs full config on boot (wallet, pool, registry — warns if misconfigured)
+- Arena: `_try_create_pool()` now logs warnings instead of silently returning
+- Arena: `_try_resolve_pool()` added — resolves pools server-side when both signatures received
+
+### Railway Env Vars (Scav will update)
+
+```bash
+MONAD_RPC_URL=https://rpc.monad.xyz
+MONAD_CHAIN_ID=143
+REPUTATION_REGISTRY=0x8004BAa17C55a88189AE136b182e5fdA19dE9b63
+PREDICTION_POOL=<mainnet address after deploy>
+ARENA_PRIVATE_KEY=<same key, funded on mainnet>
+```
+
+### Deploy Sequence
+
+1. **ScavieFae deploys contracts to mainnet** (you own `contracts/`)
+2. ScavieFae updates `contracts/deployments.json` with mainnet addresses
+3. Scav updates Railway env vars + Python defaults with new addresses
+4. ScavieFae updates `web/src/config.ts` with mainnet addresses
+5. ScavieFae adds `web/vercel.json` for SPA routing
+6. ScavieFae redeploys to Vercel
+7. Both test: match → pool created → bets → pool resolved → website shows it
+
+### Deploy Commands (mainnet)
+
+**Step 1: MatchProof + Wager**
+```bash
+export PRIVATE_KEY=<deployer-key-for-0xF04366a3...0420>
+export MONAD_MAINNET_RPC_URL=https://rpc.monad.xyz
+
+cd contracts && forge script script/Deploy.s.sol \
+  --rpc-url $MONAD_MAINNET_RPC_URL --broadcast
+```
+
+**Step 2: PredictionPool**
+
+IMPORTANT: Set `ARENA_ADDRESS` to the arena wallet, NOT the deployer. The arena wallet is what signs pool creation/resolution txs at runtime.
+
+```bash
+export ARENA_ADDRESS=0xd8A01dE3D27BD6Fb0df99E7ca94eC69c5dAbe38C
+export FEE_BPS=0
+
+cd contracts && forge script script/DeployPrediction.s.sol \
+  --rpc-url $MONAD_MAINNET_RPC_URL --broadcast \
+  --sig "run(address)" <MAINNET_MATCH_PROOF_ADDRESS>
+```
+
+If `ARENA_ADDRESS` is not set, it defaults to the deployer — and the arena server won't be able to create pools.
+
+### Wallet Funding Status
+
+Both wallets are funded on mainnet (~271 MON each):
+- Deployer (`0xF04366a3...0420`): ready to deploy
+- Arena (`0xd8A01dE3...38C`): ready for runtime gas

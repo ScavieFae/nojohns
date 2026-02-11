@@ -420,22 +420,23 @@ def _setup_monad():
     print()
     print("Chain Configuration")
     print("-" * 40)
-    default_chain_id = current_chain.get("chain_id", 10143)
-    default_rpc = current_chain.get("rpc_url", "https://testnet-rpc.monad.xyz")
+    default_chain_id = current_chain.get("chain_id", 143)
+    default_rpc = current_chain.get("rpc_url", "https://rpc.monad.xyz")
 
-    chain_choice = input(f"Network — testnet (default) or mainnet? [testnet]: ").strip().lower()
-    if chain_choice == "mainnet":
-        chain_id = 143
-        rpc_url = "https://rpc.monad.xyz"
-        print("  Using Monad mainnet (chain 143)")
-    else:
+    chain_choice = input(f"Network — mainnet (default) or testnet? [mainnet]: ").strip().lower()
+    if chain_choice == "testnet":
         chain_id = 10143
         rpc_url = "https://testnet-rpc.monad.xyz"
         print("  Using Monad testnet (chain 10143)")
+    else:
+        chain_id = 143
+        rpc_url = "https://rpc.monad.xyz"
+        print("  Using Monad mainnet (chain 143)")
 
     # Contract addresses (optional — ScavieFae deploys these)
     match_proof = current_chain.get("match_proof", "")
     wager = current_chain.get("wager", "")
+    prediction_pool = current_chain.get("prediction_pool", "")
 
     # Build updated config, preserving existing sections
     lines = ["# No Johns configuration\n"]
@@ -480,6 +481,10 @@ def _setup_monad():
         lines.append(f'wager = "{wager}"')
     else:
         lines.append('# wager = "0x..."  # set after contract deploy')
+    if prediction_pool:
+        lines.append(f'prediction_pool = "{prediction_pool}"')
+    else:
+        lines.append('# prediction_pool = "0x..."  # set after contract deploy')
     lines.append("")
 
     CONFIG_PATH.write_text("\n".join(lines))

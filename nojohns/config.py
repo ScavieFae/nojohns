@@ -96,8 +96,8 @@ class WalletConfig:
 class ChainConfig:
     """Blockchain network configuration."""
 
-    chain_id: int = 10143  # Monad testnet
-    rpc_url: str = "https://testnet-rpc.monad.xyz"
+    chain_id: int = 143  # Monad mainnet
+    rpc_url: str = "https://rpc.monad.xyz"
     match_proof: str | None = None  # MatchProof contract address
     wager: str | None = None  # Wager contract address
     prediction_pool: str | None = None  # PredictionPool contract address
@@ -213,8 +213,8 @@ def load_config(path: Path | None = None) -> NojohnsConfig:
     if "chain" in raw and isinstance(raw["chain"], dict):
         chain_data = raw["chain"]
         chain = ChainConfig(
-            chain_id=chain_data.get("chain_id", 10143),
-            rpc_url=chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz"),
+            chain_id=chain_data.get("chain_id", 143),
+            rpc_url=chain_data.get("rpc_url", "https://rpc.monad.xyz"),
             match_proof=chain_data.get("match_proof"),
             wager=chain_data.get("wager"),
             prediction_pool=chain_data.get("prediction_pool"),
