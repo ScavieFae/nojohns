@@ -1181,10 +1181,10 @@ def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, c
     if config.chain is None or config.chain.wager is None:
         return
 
-    # Convert match_id (UUID string) to bytes32
-    # Strip hyphens and pad/truncate to 32 bytes
-    match_id_clean = match_id.replace("-", "")
-    match_id_bytes = bytes.fromhex(match_id_clean.ljust(64, '0')[:64])
+    # Convert match_id (UUID string) to bytes32 — must use SHA256 to match
+    # what recordMatch() stores in MatchProof (Wager.settleWager looks it up there)
+    import hashlib
+    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
 
     pot_mon = (wager_amount or 0) * 2 / 10**18
     print(f"  Settling wager {wager_id} ({pot_mon} MON pot)...", end="", flush=True)
@@ -2274,10 +2274,17 @@ def cmd_wager_settle(args):
     wager_id = int(args.wager_id)
     match_id_hex = args.match_id
 
-    # Convert match_id to bytes32
+    # Convert match_id to bytes32 — SHA256 hash to match MatchProof storage
+    import hashlib
     if match_id_hex.startswith("0x"):
         match_id_hex = match_id_hex[2:]
-    match_id = bytes.fromhex(match_id_hex.ljust(64, '0'))
+    # If it looks like a UUID (32 hex chars or has dashes), hash it
+    # If already 64 hex chars, assume it's already a hash
+    clean = match_id_hex.replace("-", "")
+    if len(clean) == 64:
+        match_id = bytes.fromhex(clean)
+    else:
+        match_id = hashlib.sha256(match_id_hex.encode()).digest()
 
     # Get wager info
     try:

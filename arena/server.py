@@ -17,6 +17,7 @@ Live streaming:
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -177,8 +178,6 @@ def _try_record_match(match_id: str):
     Silently skips if arena wallet not configured, match_proof not set,
     or either signature is missing.
     """
-    import hashlib
-
     account = _get_arena_account()
     if account is None:
         logger.debug("Arena wallet not configured — skipping match recording")
@@ -278,9 +277,9 @@ def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None
 
     rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
 
-    # Convert match_id UUID to bytes32 (same logic as wager settlement)
-    match_id_clean = match_id.replace("-", "")
-    match_id_bytes = bytes.fromhex(match_id_clean.ljust(64, "0")[:64])
+    # Convert match_id UUID to bytes32 — must match the SHA256 hash used
+    # in EIP-712 signing and recordMatch() so pools link to recorded matches
+    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
 
     try:
         from nojohns.contract import create_pool
