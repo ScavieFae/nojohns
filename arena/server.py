@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -40,6 +41,18 @@ logger = logging.getLogger(__name__)
 # Keep minimal MON in this wallet, just enough for gas.
 
 _arena_account = None  # Loaded lazily
+
+
+def _background(fn, *args):
+    """Run a function in a background thread (fire-and-forget for onchain ops).
+
+    Onchain operations (record match, post Elo, create/resolve/cancel pools)
+    can take 5-30s each due to Monad RPC latency and tx confirmation. Running
+    them synchronously in HTTP handlers causes Railway's proxy to 502 when the
+    response takes too long. This fires them off in daemon threads so the HTTP
+    response returns immediately.
+    """
+    threading.Thread(target=fn, args=args, daemon=True).start()
 
 
 def _get_arena_account():
@@ -421,8 +434,8 @@ def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
     """Expire stale matches, cancel their prediction pools, and void stuck wagers."""
     expired_ids = db.expire_stale_matches(timeout_seconds)
     for mid in expired_ids:
-        _try_cancel_pool(mid)
-        _try_void_wager(mid)
+        _background(_try_cancel_pool, mid)
+        _background(_try_void_wager, mid)
 
 
 # Global DB instance — set during lifespan
@@ -624,8 +637,8 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
             f"Matched! {opponent['connect_code']} vs {req.connect_code} -> {match_id}"
         )
 
-        # Create prediction pool for spectators to bet on
-        _try_create_pool(match_id, opponent.get("wallet_address"), req.wallet_address)
+        # Create prediction pool for spectators to bet on (background — don't block response)
+        _background(_try_create_pool, match_id, opponent.get("wallet_address"), req.wallet_address)
 
         # Return matched status with opponent info
         return {
@@ -754,22 +767,13 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
         f"Signature for {match_id} from {req.address} ({count}/2 received)"
     )
 
-    # When both signatures received: record onchain, post Elo, resolve pool
+    # When both signatures received: record onchain, post Elo, resolve pool.
+    # All run in background threads so the HTTP response returns immediately —
+    # these chain ops can take 20-40s total and would trigger Railway 502s.
     if count >= 2:
-        try:
-            _try_record_match(match_id)
-        except Exception as e:
-            logger.warning(f"Match recording failed (non-critical): {e}")
-
-        try:
-            _post_elo_updates(match)
-        except Exception as e:
-            logger.warning(f"Elo posting failed (non-critical): {e}")
-
-        try:
-            _try_resolve_pool(match_id)
-        except Exception as e:
-            logger.warning(f"Pool resolution failed (non-critical): {e}")
+        _background(_try_record_match, match_id)
+        _background(_post_elo_updates, match)
+        _background(_try_resolve_pool, match_id)
 
     return {
         "match_id": match_id,
@@ -803,7 +807,7 @@ def admin_cleanup() -> dict[str, Any]:
     expired_queue = db.expire_stale_entries(timeout_seconds=0)
     expired_ids = db.expire_stale_matches(timeout_seconds=0)
     for mid in expired_ids:
-        _try_cancel_pool(mid)
+        _background(_try_cancel_pool, mid)
     _manager.sweep_stale()
     return {
         "expired_queue_entries": expired_queue,
