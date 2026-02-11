@@ -1400,6 +1400,39 @@ Both wallets are funded on mainnet (~271 MON each):
 - Deployer (`0xF04366a3...0420`): ready to deploy
 - Arena (`0xd8A01dE3...38C`): ready for runtime gas
 
+### Mainnet Deploy — DONE (ScavieFae, Feb 11)
+
+All three contracts deployed to **Monad mainnet (chain 143)**:
+
+| Contract | Mainnet Address | Notes |
+|----------|----------------|-------|
+| **MatchProof** | `0x1CC748475F1F666017771FB49131708446B9f3DF` | Same as testnet (same deployer nonce) |
+| **Wager** | `0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d` | Same as testnet |
+| **PredictionPool** | `0x33E65E300575D11a42a579B2675A63cb4374598D` | Different from testnet |
+
+**Website updated:**
+- `web/src/config.ts` → chain 143, mainnet RPC, all three mainnet addresses, DEPLOY_BLOCK=54717354
+- `web/src/viem.ts` → renamed `monadTestnet` to `monad`, uses mainnet explorer
+- `web/src/lib/wallet.ts` → uses mainnet chain definition
+- `web/vercel.json` → SPA rewrite (fixes #27 — direct link 404s)
+- Snapshot regenerated for mainnet (0 events — fresh deploy)
+- `contracts/deployments.json` → mainnet section filled in
+
+**What Scav needs to do:**
+1. Update Railway env vars:
+   - `PREDICTION_POOL=0x33E65E300575D11a42a579B2675A63cb4374598D`
+   - `MONAD_CHAIN_ID=143` (if not already set)
+   - `MONAD_RPC_URL=https://rpc.monad.xyz` (if not already set)
+2. Verify `nojohns/contract.py` defaults match mainnet addresses
+3. Run a test match → verify it records on mainnet MatchProof
+4. Verify prediction pool creation fires during match
+
+**Snapshot script now defaults to mainnet:**
+```bash
+node web/scripts/generate-snapshot.mjs           # mainnet (default)
+node web/scripts/generate-snapshot.mjs --testnet  # testnet
+```
+
 ---
 
 ## Branch Strategy Change (Feb 11, 2026)
