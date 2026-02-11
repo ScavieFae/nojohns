@@ -1,136 +1,148 @@
-# Deploying the Arena Server
+# Deploy Guide
 
-The arena is a FastAPI + SQLite server. It runs anywhere Python runs.
+How changes get from code to live services.
 
-**Public arena**: `https://nojohns-arena-production.up.railway.app` — this is the default. You only need to deploy your own if you want a private arena.
+## Services
 
-## Quick Start (Local)
+| Service | Platform | URL | Deploys on push to |
+|---------|----------|-----|--------------------|
+| Arena server | Railway | `https://nojohns-arena-production.up.railway.app` | `dev` |
+| Website | Vercel | nojohns.gg | `main` (ScavieFae) |
+| Contracts | Monad mainnet | `contracts/deployments.json` | Manual |
+
+## Arena (Railway)
+
+### Deploy
+
+Push to `dev`. Railway auto-builds the Dockerfile and restarts.
+
+```bash
+git push origin dev
+# ~60 seconds later:
+curl https://nojohns-arena-production.up.railway.app/health
+```
+
+### Env vars (Railway dashboard)
+
+Set in Railway dashboard → Settings → Variables. Not in code.
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `PORT` | `8000` | Auto-set by Railway |
+| `ARENA_PRIVATE_KEY` | `<key>` | Pool creation, Elo posting |
+| `MONAD_RPC_URL` | `https://rpc.monad.xyz` | Mainnet RPC |
+| `MONAD_CHAIN_ID` | `143` | Mainnet |
+| `REPUTATION_REGISTRY` | `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63` | Elo signals |
+| `PREDICTION_POOL` | `0x33E65E300575D11a42a579B2675A63cb4374598D` | Spectator betting |
+
+If a contract is redeployed (new address), update the env var here and Railway will pick it up on next deploy.
+
+### Logs
+
+```bash
+railway logs                    # Railway CLI
+# Or: Railway dashboard → Deployments → latest → Logs
+```
+
+### Persistent data
+
+SQLite lives at `/data/arena.db` on a Railway volume. Survives redeploys. To wipe: delete the volume in Railway dashboard and redeploy.
+
+### Troubleshooting
+
+- **Deploy FAILED but health check passes**: `railway redeploy --yes` to force container swap
+- **Build fails on pyenet**: Dockerfile needs `gcc`, `git`, `libc6-dev` before `pip install`
+- **Health check timeout**: Set to 10s+ in `railway.toml`. First request is slow.
+
+## Website (Vercel)
+
+ScavieFae controls the website. Scav does not deploy it.
+
+If the website needs a change (new contract address, chain config), add it to `docs/HANDOFF-SCAVIEFAE.md` and she'll handle it.
+
+**Key file**: `web/src/config.ts` — all contract addresses, chain ID, RPC URL, deploy block.
+
+**SPA routing**: `web/vercel.json` rewrites all routes to `/index.html`.
+
+## Contracts (Foundry)
+
+Already deployed to Monad mainnet (chain 143). Redeployment is rare.
+
+### Current addresses
+
+| Contract | Address |
+|----------|---------|
+| MatchProof | `0x1CC748475F1F666017771FB49131708446B9f3DF` |
+| Wager | `0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d` |
+| PredictionPool | `0x33E65E300575D11a42a579B2675A63cb4374598D` |
+
+### If a contract changes (multi-step, coordinate both agents)
+
+1. ScavieFae deploys via `forge script --broadcast`
+2. Update `contracts/deployments.json`
+3. Update `nojohns/config.py` ChainConfig defaults (Scav)
+4. Update `web/src/config.ts` (ScavieFae)
+5. Update Railway env vars if address changed (dashboard)
+6. Push `dev` (arena) and `main` (website)
+
+## Release to Main
+
+`main` is the public branch. During the hackathon, most work stays on `dev`. When shipping a milestone:
+
+```bash
+./scripts/release-to-main.sh
+```
+
+Squash-merges `dev` → `main`, strips internal files (handoff docs, `.claude/`). Vercel auto-deploys the website from `main`.
+
+## Self-Hosting the Arena
+
+For operators running their own arena (not using the public one).
+
+### Local
 
 ```bash
 pip install -e ".[arena]"
 nojohns arena --port 8000
 ```
 
-Arena is now at `http://localhost:8000`. Health check: `curl http://localhost:8000/health`
-
-## Docker
-
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-
-# gcc + libc6-dev needed for pyenet C extension, git for pip install from GitHub
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc git libc6-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY . .
-RUN pip install --no-cache-dir -e ".[arena,wallet]"
-RUN mkdir -p /data
-
-ENV PORT=8000
-EXPOSE 8000
-
-CMD python -m nojohns.cli arena --port $PORT --db /data/arena.db
-```
+### Docker
 
 ```bash
 docker build -t nojohns-arena .
 docker run -p 8000:8000 -v arena-data:/data nojohns-arena
 ```
 
-### Build Notes
+### Docker build notes
 
-- **pyenet needs gcc**: The `python:3.12-slim` image doesn't include a C compiler. pyenet (a libmelee dependency) has C extensions that require `gcc` and `libc6-dev`.
-- **libmelee is pulled from GitHub**: The `git` package is needed for pip to clone vladfi1's libmelee fork.
-- **No `VOLUME` keyword**: Some platforms (Railway) ban `VOLUME` in Dockerfiles. Use `RUN mkdir -p /data` instead and mount externally.
-- **`[wallet]` extra is optional**: Only needed if you want Elo posting and signature verification. The arena runs without it.
+- `python:3.12-slim` needs `gcc` + `libc6-dev` for pyenet C extensions
+- `git` needed for pip to clone vladfi1's libmelee fork from GitHub
+- No `VOLUME` keyword (Railway bans it) — use `RUN mkdir -p /data` + external mount
+- `[wallet]` extra is optional — only needed for Elo posting and signature verification
 
-## Railway
-
-Railway auto-deploys from the repo's Dockerfile.
-
-### Setup
-
-1. Install Railway CLI: `brew install railway` (or [railway.com/docs](https://docs.railway.com))
-2. `railway login`
-3. `railway init` or link to existing project
-4. Create a persistent volume mounted at `/data` (for SQLite)
-5. `railway up`
-
-### Configuration
-
-`railway.toml` in the repo root:
-
-```toml
-[build]
-dockerfilePath = "Dockerfile"
-
-[deploy]
-healthcheckPath = "/health"
-healthcheckTimeout = 60
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 3
-```
-
-### Environment Variables
-
-Set these in the Railway dashboard (Settings > Variables):
-
-| Variable | Required | Default | Purpose |
-|----------|----------|---------|---------|
-| `PORT` | No | `8000` | Railway sets this automatically |
-| `ARENA_PRIVATE_KEY` | No | — | Wallet for posting Elo updates |
-| `MONAD_RPC_URL` | No | `https://testnet-rpc.monad.xyz` | Monad RPC endpoint |
-| `MONAD_CHAIN_ID` | No | `10143` | Chain ID |
-| `REPUTATION_REGISTRY` | No | testnet address | ReputationRegistry contract |
-
-### Troubleshooting Railway
-
-**Deploy shows FAILED but health check passes:**
-Railway sometimes reports FAILED while the old container keeps running. Try `railway redeploy --yes` to force a container swap, or `railway down --yes && railway up` to start fresh.
-
-**`VOLUME` keyword banned:**
-Railway doesn't allow the `VOLUME` Dockerfile instruction. Use `RUN mkdir -p /data` and create a Railway volume mounted at `/data` through the dashboard.
-
-**Build fails on pyenet:**
-Make sure `gcc`, `git`, and `libc6-dev` are installed in the Dockerfile before `pip install`. The `python:3.12-slim` image doesn't include these.
-
-**Health check timeout:**
-Set `healthcheckTimeout` to at least 60 seconds. The first request after deploy can be slow while Python imports load.
-
-## VPS / Bare Metal
+### VPS / bare metal
 
 ```bash
-# Clone and install
 git clone https://github.com/ScavieFae/nojohns.git
 cd nojohns
 python3.12 -m venv .venv
 .venv/bin/pip install -e ".[arena,wallet]"
-
-# Run with a process manager
-# Option 1: systemd
-# Option 2: tmux/screen
-tmux new -s arena '.venv/bin/python -m nojohns.cli arena --port 8000 --db /var/lib/nojohns/arena.db'
+tmux new -s arena '.venv/bin/python -m nojohns.cli arena --port 8000 --db arena.db'
 ```
 
-### Reverse Proxy (Caddy)
+### Reverse proxy
 
+**Caddy** (WebSocket support automatic):
 ```
 arena.yourdomain.com {
     reverse_proxy localhost:8000
 }
 ```
 
-WebSocket connections (`/ws/match/{id}`) are proxied automatically by Caddy.
-
-### Reverse Proxy (nginx)
-
+**nginx** (needs WebSocket headers):
 ```nginx
 server {
     server_name arena.yourdomain.com;
-
     location / {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
@@ -141,18 +153,27 @@ server {
 }
 ```
 
-The `Upgrade` and `Connection` headers are needed for WebSocket support.
+## Security
 
-## Security Notes
-
-- The arena has **no authentication**. Anyone can join the queue and play.
+- Arena has **no authentication**. Anyone can join and play.
 - Match integrity comes from **EIP-712 dual signatures**, not from trusting the arena.
-- The arena wallet (if configured) can only post Elo updates — it cannot forge matches or access player funds.
-- Keep `ARENA_PRIVATE_KEY` in environment variables, never in config files or code.
-- SQLite is single-writer — fine for one arena instance. If you need horizontal scaling, swap to Postgres.
+- Arena wallet can only post Elo and create/resolve pools — cannot forge matches or touch player funds.
+- Keep `ARENA_PRIVATE_KEY` in env vars, never in code or config files.
+- SQLite is single-writer. Fine for one instance. Swap to Postgres for horizontal scaling.
 
-## Data
+## Quick Reference
 
-- **SQLite DB**: All queue entries, matches, and signatures. Back up `/data/arena.db`.
-- **In-memory**: Live streaming state (WebSocket connections, frame buffers). Lost on restart. This is fine — active matches just lose their spectator feed.
-- **Cleanup**: Stale queue entries expire after 5 minutes. Stale matches expire after 30 minutes. Both are cleaned up on health checks and queue joins. Use `POST /admin/cleanup` to force immediate cleanup.
+```bash
+# Deploy arena
+git push origin dev
+
+# Check arena
+curl https://nojohns-arena-production.up.railway.app/health
+curl https://nojohns-arena-production.up.railway.app/pools
+
+# View logs
+railway logs
+
+# Release to public
+./scripts/release-to-main.sh
+```
