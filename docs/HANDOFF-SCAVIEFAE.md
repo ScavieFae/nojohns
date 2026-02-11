@@ -1475,3 +1475,28 @@ node web/scripts/generate-snapshot.mjs --testnet  # testnet
 ### Post-pull hook
 
 A hook now fires after `git pull` and checks if handoff docs changed. If they did, you'll see the diff and a reminder to review + add any items you need to communicate back (planning changes, questions, blockers — not status updates).
+
+---
+
+## Action: Switch Railway to Deploy from `dev`
+
+**Priority: Do this now.** Railway is currently deploying from `main`, but all hackathon work is on `dev`. Until this is switched, arena changes don't go live on push.
+
+1. Open Railway dashboard → nojohns project
+2. Click the arena service → Settings → Source (or "Source Repo" section)
+3. Change **Branch** from `main` to `dev`
+4. Save. Railway will immediately redeploy from `dev`.
+
+After the hackathon we'll switch back to `main`.
+
+**Verify it worked:**
+```bash
+curl https://nojohns-arena-production.up.railway.app/health
+```
+
+Should return `{"status":"ok",...}`. The new `/pools` endpoint should also be live:
+```bash
+curl https://nojohns-arena-production.up.railway.app/pools
+```
+
+See `docs/DEPLOY.md` for the full deploy reference.
