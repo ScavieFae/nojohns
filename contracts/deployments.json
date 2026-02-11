@@ -9,11 +9,10 @@
   },
   "monad_mainnet": {
     "chain_id": 143,
-    "match_proof": null,
-    "wager": null,
-    "prediction_pool": null,
-    "deployed_at": null,
-    "deployer": "0xF04366a36d8231748673864DFcAC967E1d600420",
-    "_note": "Deploy with forge script, then fill in addresses"
+    "match_proof": "0x1CC748475F1F666017771FB49131708446B9f3DF",
+    "wager": "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d",
+    "prediction_pool": "0x33E65E300575D11a42a579B2675A63cb4374598D",
+    "deployed_at": "2026-02-11",
+    "deployer": "0xF04366a36d8231748673864DFcAC967E1d600420"
   }
 }

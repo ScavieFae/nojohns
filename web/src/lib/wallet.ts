@@ -1,5 +1,5 @@
 import { createWalletClient, custom } from "viem";
-import { monadTestnet } from "../viem";
+import { monad } from "../viem";
 
 /**
  * Minimal wallet connection via window.ethereum (MetaMask/injected).
@@ -39,7 +39,7 @@ export async function getConnectedAccount(): Promise<`0x${string}` | null> {
 export function getWalletClient() {
   if (!window.ethereum) return null;
   return createWalletClient({
-    chain: monadTestnet,
+    chain: monad,
     transport: custom(window.ethereum),
   });
 }
