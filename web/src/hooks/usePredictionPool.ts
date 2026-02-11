@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { publicClient } from "../viem";
 import { CONTRACTS } from "../config";
@@ -124,10 +125,22 @@ async function fetchUserPosition(
  */
 export function usePredictionPool(matchId: string | undefined) {
   // Arena match IDs are UUIDs like "5b26172f-ec93-4e76-b41e-b161ff13a7b6"
-  // On-chain they're bytes32: strip dashes, right-pad with zeros
-  const matchIdHex = matchId
-    ? (`0x${matchId.replace(/^0x/, "").replace(/-/g, "").padEnd(64, "0")}` as `0x${string}`)
-    : undefined;
+  // On-chain they're bytes32: SHA256 hash of the UUID string (matches arena's pool creation)
+  const [matchIdHex, setMatchIdHex] = useState<`0x${string}` | undefined>(undefined);
+
+  useEffect(() => {
+    if (!matchId) {
+      setMatchIdHex(undefined);
+      return;
+    }
+    // SHA256 hash the raw UUID string to match arena's hashlib.sha256(match_id.encode())
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(matchId)).then((buf) => {
+      const hex = Array.from(new Uint8Array(buf))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      setMatchIdHex(`0x${hex}` as `0x${string}`);
+    });
+  }, [matchId]);
 
   const poolIdQuery = useQuery({
     queryKey: ["predictionPoolId", matchIdHex],
