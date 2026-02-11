@@ -243,6 +243,7 @@ def is_recorded(
 # =============================================================================
 
 PREDICTION_POOL_ABI = [
+    # --- Arena-only (createPool, resolve, cancelPool) ---
     {
         "type": "function",
         "name": "createPool",
@@ -268,6 +269,32 @@ PREDICTION_POOL_ABI = [
         "outputs": [],
         "stateMutability": "nonpayable",
     },
+    # --- Spectator betting ---
+    {
+        "type": "function",
+        "name": "bet",
+        "inputs": [
+            {"name": "poolId", "type": "uint256"},
+            {"name": "betOnA", "type": "bool"},
+        ],
+        "outputs": [],
+        "stateMutability": "payable",
+    },
+    {
+        "type": "function",
+        "name": "claim",
+        "inputs": [{"name": "poolId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "type": "function",
+        "name": "claimRefund",
+        "inputs": [{"name": "poolId", "type": "uint256"}],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    # --- View functions ---
     {
         "type": "function",
         "name": "getPool",
@@ -288,6 +315,36 @@ PREDICTION_POOL_ABI = [
                 ],
             }
         ],
+        "stateMutability": "view",
+    },
+    {
+        "type": "function",
+        "name": "getUserBets",
+        "inputs": [
+            {"name": "poolId", "type": "uint256"},
+            {"name": "user", "type": "address"},
+        ],
+        "outputs": [
+            {"name": "onA", "type": "uint256"},
+            {"name": "onB", "type": "uint256"},
+        ],
+        "stateMutability": "view",
+    },
+    {
+        "type": "function",
+        "name": "getClaimable",
+        "inputs": [
+            {"name": "poolId", "type": "uint256"},
+            {"name": "user", "type": "address"},
+        ],
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+    },
+    {
+        "type": "function",
+        "name": "poolCount",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "view",
     },
 ]
@@ -408,6 +465,150 @@ def cancel_pool(
 
     logger.info(f"cancelPool confirmed in block {receipt['blockNumber']}")
     return tx_hash.hex()
+
+
+# =============================================================================
+# Spectator Betting
+# =============================================================================
+
+
+def get_pool(
+    pool_id: int,
+    rpc_url: str,
+    contract_address: str,
+) -> dict[str, Any]:
+    """Read a prediction pool's state. Returns dict with pool fields."""
+    _, contract = get_prediction_pool_contract(rpc_url, contract_address)
+    raw = contract.functions.getPool(pool_id).call()
+    return {
+        "matchId": bytes(raw[0]),
+        "playerA": raw[1],
+        "playerB": raw[2],
+        "totalA": raw[3],
+        "totalB": raw[4],
+        "status": raw[5],  # 0=Open, 1=Resolved, 2=Cancelled
+        "winner": raw[6],
+        "createdAt": raw[7],
+    }
+
+
+def get_pool_odds(
+    pool_id: int,
+    rpc_url: str,
+    contract_address: str,
+) -> dict[str, Any]:
+    """Get current pool odds as probabilities. Convenience wrapper over get_pool."""
+    pool = get_pool(pool_id, rpc_url, contract_address)
+    total_a = pool["totalA"]
+    total_b = pool["totalB"]
+    total = total_a + total_b
+
+    if total == 0:
+        implied_a = 0.5
+        implied_b = 0.5
+    else:
+        implied_a = total_a / total
+        implied_b = total_b / total
+
+    return {
+        **pool,
+        "total": total,
+        "impliedProbA": implied_a,
+        "impliedProbB": implied_b,
+    }
+
+
+def place_bet(
+    pool_id: int,
+    bet_on_a: bool,
+    amount_wei: int,
+    account,
+    rpc_url: str,
+    contract_address: str,
+) -> str:
+    """Place a bet on a prediction pool. Returns tx hash."""
+    w3, contract = get_prediction_pool_contract(rpc_url, contract_address)
+
+    tx = contract.functions.bet(pool_id, bet_on_a).build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "chainId": w3.eth.chain_id,
+            "gas": 200_000,
+            "value": amount_wei,
+        }
+    )
+
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    logger.info(f"bet tx sent: {tx_hash.hex()}")
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"bet reverted: {tx_hash.hex()}")
+
+    side = "A" if bet_on_a else "B"
+    logger.info(f"Bet on pool {pool_id} side {side} confirmed: {tx_hash.hex()}")
+    return tx_hash.hex()
+
+
+def claim_payout(
+    pool_id: int,
+    account,
+    rpc_url: str,
+    contract_address: str,
+) -> str:
+    """Claim payout from a resolved pool. Returns tx hash."""
+    w3, contract = get_prediction_pool_contract(rpc_url, contract_address)
+
+    tx = contract.functions.claim(pool_id).build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "chainId": w3.eth.chain_id,
+            "gas": 200_000,
+        }
+    )
+
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    logger.info(f"claim tx sent: {tx_hash.hex()}")
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"claim reverted: {tx_hash.hex()}")
+
+    logger.info(f"Claim on pool {pool_id} confirmed: {tx_hash.hex()}")
+    return tx_hash.hex()
+
+
+def get_user_bets(
+    pool_id: int,
+    user_address: str,
+    rpc_url: str,
+    contract_address: str,
+) -> dict[str, int]:
+    """Get a user's bets on a pool. Returns {onA: wei, onB: wei}."""
+    Web3 = _require_web3()
+    _, contract = get_prediction_pool_contract(rpc_url, contract_address)
+    on_a, on_b = contract.functions.getUserBets(
+        pool_id, Web3.to_checksum_address(user_address)
+    ).call()
+    return {"onA": on_a, "onB": on_b}
+
+
+def get_claimable(
+    pool_id: int,
+    user_address: str,
+    rpc_url: str,
+    contract_address: str,
+) -> int:
+    """Get the amount claimable by a user from a resolved pool. Returns wei."""
+    Web3 = _require_web3()
+    _, contract = get_prediction_pool_contract(rpc_url, contract_address)
+    return contract.functions.getClaimable(
+        pool_id, Web3.to_checksum_address(user_address)
+    ).call()
 
 
 def _match_result_to_tuple(match_result: dict[str, Any]) -> tuple:

@@ -1153,3 +1153,18 @@ def get_match_pool(match_id: str) -> dict[str, Any]:
         "match_id": match_id,
         "pool_id": match.get("pool_id"),
     }
+
+
+@app.get("/pools")
+def list_pools() -> dict[str, Any]:
+    """List all matches with active prediction pools.
+
+    Spectator agents use this to discover bettable pools.
+    Returns matches where pool_id is set, ordered by newest first.
+    """
+    db = get_db()
+    pools = db.get_matches_with_pools()
+    return {
+        "pools": pools,
+        "count": len(pools),
+    }

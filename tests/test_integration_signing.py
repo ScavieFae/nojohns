@@ -44,8 +44,8 @@ from nojohns.contract import (
     DEFAULT_RPC_URL,
 )
 
-# Use testnet values
-CHAIN_ID = 10143
+# Use mainnet values (defaults flipped to mainnet in config)
+CHAIN_ID = 143
 CONTRACT_ADDRESS = DEFAULT_MATCH_PROOF
 RPC_URL = DEFAULT_RPC_URL
 

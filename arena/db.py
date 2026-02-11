@@ -500,6 +500,21 @@ class ArenaDB:
             return True
 
     # ------------------------------------------------------------------
+    # Pools
+    # ------------------------------------------------------------------
+
+    def get_matches_with_pools(self) -> list[dict[str, Any]]:
+        """Get all matches that have prediction pools, newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, status, p1_wallet, p2_wallet, pool_id, "
+                "winner_wallet, loser_wallet, created_at, completed_at "
+                "FROM matches WHERE pool_id IS NOT NULL "
+                "ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 

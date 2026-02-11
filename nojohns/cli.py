@@ -14,6 +14,9 @@ Usage:
     nojohns auto <f>               # Autonomous agent loop
     nojohns list-fighters
     nojohns info <fighter>
+    nojohns pools                  # List active prediction pools
+    nojohns bet <pool> <side> <amt> # Bet on a prediction pool
+    nojohns spectate               # Autonomous spectator agent
 """
 
 import argparse
@@ -2381,6 +2384,194 @@ def cmd_wager_list(args):
 
 
 # ============================================================================
+# Prediction Pool Commands
+# ============================================================================
+
+
+def cmd_pools(args):
+    """List active prediction pools from the arena."""
+    config = load_config()
+    arena_url = getattr(args, "server", None) or config.arena_server
+
+    from agents.spectator import discover_pools
+
+    pools = discover_pools(arena_url)
+    if not pools:
+        print("No active prediction pools.")
+        return 0
+
+    print(f"{'Pool ID':>8}  {'Match Status':<12}  {'Player A':<14}  {'Player B':<14}")
+    print("-" * 56)
+
+    for p in pools:
+        pool_id = p.get("pool_id", "?")
+        status = p.get("status", "?")
+        p1 = (p.get("p1_wallet") or "none")[:12] + ".."
+        p2 = (p.get("p2_wallet") or "none")[:12] + ".."
+        print(f"{pool_id:>8}  {status:<12}  {p1:<14}  {p2:<14}")
+
+    # If wallet is configured, show onchain odds for active pools
+    if config.wallet and config.chain:
+        print()
+        active = [p for p in pools if p.get("status") == "playing" and p.get("pool_id") is not None]
+        if active:
+            print(f"{'Pool ID':>8}  {'Total A':>12}  {'Total B':>12}  {'Odds A':>8}  {'Odds B':>8}")
+            print("-" * 58)
+            for p in active[:5]:  # Limit to 5 to avoid RPC spam
+                try:
+                    from nojohns.contract import get_pool_odds
+                    odds = get_pool_odds(p["pool_id"], config.chain.rpc_url, config.chain.prediction_pool)
+                    total_a_mon = odds["totalA"] / 10**18
+                    total_b_mon = odds["totalB"] / 10**18
+                    print(
+                        f"{p['pool_id']:>8}  {total_a_mon:>12.4f}  {total_b_mon:>12.4f}  "
+                        f"{odds['impliedProbA']:>7.1%}  {odds['impliedProbB']:>7.1%}"
+                    )
+                except Exception as e:
+                    print(f"{p['pool_id']:>8}  (error: {e})")
+
+    print()
+    return 0
+
+
+def cmd_bet(args):
+    """Place a bet on a prediction pool."""
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None:
+        logger.error("No chain configured. Run: nojohns setup wallet")
+        return 1
+
+    from nojohns.wallet import load_wallet
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    pool_id = int(args.pool_id)
+    side = args.side.upper()
+    if side not in ("A", "B"):
+        logger.error("Side must be 'A' or 'B'")
+        return 1
+    bet_on_a = side == "A"
+
+    try:
+        amount_mon = float(args.amount)
+        amount_wei = int(amount_mon * 10**18)
+    except ValueError:
+        logger.error(f"Invalid amount: {args.amount}")
+        return 1
+
+    # Conflict of interest check
+    from nojohns.contract import get_pool_odds
+    from agents.spectator import is_conflict_of_interest
+
+    try:
+        pool = get_pool_odds(pool_id, config.chain.rpc_url, config.chain.prediction_pool)
+    except Exception as e:
+        logger.error(f"Failed to read pool {pool_id}: {e}")
+        return 1
+
+    if is_conflict_of_interest(pool, account.address):
+        logger.error(
+            "You're a player in this match. Use `nojohns wager` for direct wagers instead. "
+            "Players betting on their own match's prediction pool is a conflict of interest."
+        )
+        return 1
+
+    # Show pool state
+    total_a_mon = pool["totalA"] / 10**18
+    total_b_mon = pool["totalB"] / 10**18
+    print(f"Pool {pool_id}: {total_a_mon:.4f} MON on A | {total_b_mon:.4f} MON on B")
+    print(f"  Implied odds: A={pool['impliedProbA']:.1%} / B={pool['impliedProbB']:.1%}")
+    print(f"  Betting {amount_mon} MON on side {side}")
+    print(f"  From: {account.address}")
+    print()
+
+    try:
+        from nojohns.contract import place_bet
+        tx_hash = place_bet(
+            pool_id, bet_on_a, amount_wei,
+            account, config.chain.rpc_url, config.chain.prediction_pool,
+        )
+        print(f"Bet placed! TX: {tx_hash}")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to place bet: {e}")
+        return 1
+
+
+def cmd_spectate(args):
+    """Run the autonomous spectator agent (watch matches, bet on pools)."""
+    import asyncio
+
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None:
+        logger.error("No chain configured. Run: nojohns setup wallet")
+        return 1
+
+    from nojohns.wallet import load_wallet
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    arena_url = getattr(args, "server", None) or config.arena_server
+    risk = args.risk or "moderate"
+    risk_params = {"conservative": (0.25, 0.03), "moderate": (0.5, 0.05), "aggressive": (1.0, 0.10)}
+    multiplier, max_pct = risk_params.get(risk, (0.5, 0.05))
+
+    from agents.spectator import SpectatorAgent
+
+    agent = SpectatorAgent(
+        arena_url=arena_url,
+        account=account,
+        rpc_url=config.chain.rpc_url,
+        pool_address=config.chain.prediction_pool,
+        multiplier=multiplier,
+        max_pct=max_pct,
+        poll_interval=args.interval or 10,
+    )
+
+    from agents.bankroll import get_mon_balance
+    balance = get_mon_balance(account.address, config.chain.rpc_url)
+    balance_mon = balance / 10**18
+
+    print(f"Spectator agent starting")
+    print(f"  Arena: {arena_url}")
+    print(f"  Wallet: {account.address}")
+    print(f"  Balance: {balance_mon:.4f} MON")
+    print(f"  Risk: {risk} (Kelly {multiplier}x, max {max_pct:.0%})")
+    print(f"  Pool: {config.chain.prediction_pool}")
+    print()
+    print("Watching for live matches with prediction pools...")
+    print("Press Ctrl+C to stop.")
+    print()
+
+    try:
+        asyncio.run(agent.run())
+    except KeyboardInterrupt:
+        agent.stop()
+        print()
+        print(f"Stopped. Placed {len(agent.bets)} bet(s) this session.")
+        if agent.bets:
+            print("Claiming any resolved payouts...")
+            txs = agent.claim_all()
+            if txs:
+                print(f"Claimed {len(txs)} payout(s).")
+    return 0
+
+
+# ============================================================================
 # Fighter Loading
 # ============================================================================
 
@@ -2566,6 +2757,28 @@ def main():
     wager_list = wager_subparsers.add_parser("list", help="List wagers for an address")
     wager_list.add_argument("--address", "-a", help="Wallet address (default: configured wallet)")
     wager_list.set_defaults(wager_func=cmd_wager_list)
+
+    # pools command
+    pools_parser = subparsers.add_parser("pools", help="List active prediction pools")
+    pools_parser.add_argument("--server", default=None, help="Arena server URL")
+    pools_parser.set_defaults(func=cmd_pools)
+
+    # bet command
+    bet_parser = subparsers.add_parser("bet", help="Bet on a prediction pool")
+    bet_parser.add_argument("pool_id", help="Pool ID to bet on")
+    bet_parser.add_argument("side", help="Side to bet on: A or B")
+    bet_parser.add_argument("amount", help="Amount of MON to bet (e.g. 0.01)")
+    bet_parser.set_defaults(func=cmd_bet)
+
+    # spectate command
+    spectate_parser = subparsers.add_parser(
+        "spectate", help="Autonomous spectator: watch matches, bet on prediction pools"
+    )
+    spectate_parser.add_argument("--server", default=None, help="Arena server URL")
+    spectate_parser.add_argument("--risk", choices=["conservative", "moderate", "aggressive"],
+                                 default=None, help="Risk profile (default: moderate)")
+    spectate_parser.add_argument("--interval", type=int, default=None, help="Poll interval in seconds (default: 10)")
+    spectate_parser.set_defaults(func=cmd_spectate)
 
     args = parser.parse_args()
 
