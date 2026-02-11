@@ -1500,3 +1500,120 @@ curl https://nojohns-arena-production.up.railway.app/pools
 ```
 
 See `docs/DEPLOY.md` for the full deploy reference.
+
+---
+
+## Day 11: Onchain Pipeline Fix (Feb 11, 2026)
+
+**Issues:** #31 (match results not recording), #32 (ERC-8004 not active on mainnet)
+
+### What Scav Just Did
+
+**1. Arena now submits `recordMatch()` itself** (commit 3526d05 on `dev`)
+
+Previously: each player's CLI polled for both signatures, then the *player* submitted `recordMatch()` and paid gas. This failed silently because the player wallet had 0 MON on mainnet.
+
+Now: when both EIP-712 signatures arrive at the arena, it calls `recordMatch()` using the arena's own wallet (`ARENA_PRIVATE_KEY`). Players still sign off-chain (free). The arena pays gas and submits.
+
+New env var required: **`MATCH_PROOF`** — the MatchProof contract address.
+
+Execution order when both signatures arrive:
+1. `_try_record_match()` — submit to MatchProof (NEW)
+2. `_post_elo_updates()` — post Elo to ReputationRegistry (existing)
+3. `_try_resolve_pool()` — resolve prediction pool (existing)
+
+**2. Funded player wallet on mainnet**
+
+Sent 5 MON from arena wallet to player wallet `0x1F36B4c388CA19Ddb5b90DcF6E8f8309652Ab3dE`. Not strictly needed anymore (arena pays gas for recording), but useful for wagers and identity registration.
+
+**3. Flipped local config to mainnet**
+
+`~/.nojohns/config.toml` and `~/.nojohns/arena.env` both updated:
+- `chain_id = 143`
+- `rpc_url = "https://rpc.monad.xyz"`
+- All contract addresses → mainnet versions
+- All ERC-8004 addresses → mainnet versions
+
+### What ScavieFae Needs To Do
+
+#### 1. Railway env vars (CRITICAL — do this first)
+
+Add/update these env vars in the Railway arena service dashboard:
+
+```
+MATCH_PROOF=0x1CC748475F1F666017771FB49131708446B9f3DF
+PREDICTION_POOL=0x33E65E300575D11a42a579B2675A63cb4374598D
+MONAD_RPC_URL=https://rpc.monad.xyz
+MONAD_CHAIN_ID=143
+REPUTATION_REGISTRY=0x8004BAa17C55a88189AE136b182e5fdA19dE9b63
+```
+
+`ARENA_PRIVATE_KEY` should already be set. If not:
+```
+ARENA_PRIVATE_KEY=<the key for 0xd8A01dE3D27BD6Fb0df99E7ca94eC69c5dAbe38C>
+```
+
+After setting these, Railway will redeploy. Check the deploy logs — you should see:
+```
+Arena startup config:
+  Chain: 143 | RPC: https://rpc.monad.xyz
+  Arena wallet: 0xd8A01dE3D27BD6Fb0df99E7ca94eC69c5dAbe38C
+  MatchProof: 0x1CC748475F1F666017771FB49131708446B9f3DF
+  Prediction pool: 0x33E65E300575D11a42a579B2675A63cb4374598D
+  Reputation registry: 0x8004BAa17C55a88189AE136b182e5fdA19dE9b63
+```
+
+If any line says "NOT configured", something's missing.
+
+#### 2. Railway branch = `dev` (if not already done)
+
+The arena code with `_try_record_match()` is on `dev`, not `main`. Railway must deploy from `dev`. See the section above ("Switch Railway to Deploy from `dev`") for steps.
+
+Verify after redeploy:
+```bash
+curl https://nojohns-arena-production.up.railway.app/pools
+# Should return {"pools": [...], "count": N} — if 404, Railway is still on main
+```
+
+#### 3. Flip your `~/.nojohns/config.toml` to mainnet
+
+Your player's EIP-712 signatures include `chainId` in the domain. If your config still says `chain_id = 10143`, your signatures won't verify against the mainnet contract.
+
+```toml
+[chain]
+chain_id = 143
+rpc_url = "https://rpc.monad.xyz"
+match_proof = "0x1CC748475F1F666017771FB49131708446B9f3DF"
+wager = "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d"
+prediction_pool = "0x33E65E300575D11a42a579B2675A63cb4374598D"
+identity_registry = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+reputation_registry = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+```
+
+If your player wallet also has 0 MON on mainnet, fund it from the deployer wallet. (Player signing is free now, but wagers and identity registration still need gas.)
+
+#### 4. Verify with a test match
+
+Once Railway is updated, both machines run:
+```bash
+nojohns auto phillip --no-wager --cooldown 30
+```
+
+After a match completes, check:
+- Railway logs: should show `Match {id} recorded onchain: tx=...`
+- Monad explorer: `https://monadexplorer.com/address/0x1CC748475F1F666017771FB49131708446B9f3DF` should show `MatchRecorded` events
+- Website: match should appear in match history
+
+### Current Mainnet Balances
+
+| Wallet | Address | Balance |
+|--------|---------|---------|
+| Deployer | `0xF04366a3...0420` | 270.60 MON |
+| Arena | `0xd8A01dE3...38C` | 265.55 MON |
+| Player (Scav) | `0x1F36B4c3...3dE` | 5.00 MON |
+
+### What's Still Not Working (Expected)
+
+- **Elo posting** — ReputationRegistry `name()` reverts on mainnet (issue #32). `giveFeedback()` might also revert. Arena will log a warning and continue — non-blocking.
+- **Identity registration** — Neither player is registered on mainnet IdentityRegistry yet. Will do after confirming match recording works.
+- **Spectator fleet** — Ready to launch once pools are being created (pools appear automatically when arena has PREDICTION_POOL set and matches are running)
