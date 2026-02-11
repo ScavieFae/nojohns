@@ -113,6 +113,39 @@ def _require_melee_args(args) -> bool:
     return ok
 
 
+def _preflight_melee(args) -> bool:
+    """Pre-flight validation of Dolphin/ISO paths before launching a game.
+
+    Call after _resolve_args() and _require_melee_args(). Returns True if OK.
+    """
+    ok = True
+
+    # ISO must exist
+    iso = Path(getattr(args, "iso", "") or "").expanduser()
+    if not iso.exists():
+        logger.error(f"Melee ISO not found: {iso}")
+        logger.error("Check the path in ~/.nojohns/config.toml or pass --iso")
+        ok = False
+
+    # Dolphin must exist
+    dolphin = Path(getattr(args, "dolphin", "") or "").expanduser()
+    if not dolphin.exists():
+        logger.error(f"Dolphin not found: {dolphin}")
+        logger.error("Install Slippi Launcher (slippi.gg) then run: nojohns setup melee")
+        ok = False
+    elif "netplay" not in str(dolphin).lower():
+        logger.error(f"Dolphin path must contain 'netplay': {dolphin}")
+        logger.error(
+            "libmelee requires the Slippi netplay Dolphin. Typical path:\n"
+            "  Mac: ~/Library/Application Support/Slippi Launcher/netplay\n"
+            "  Win: %APPDATA%/Slippi Launcher/netplay\n"
+            "  Linux: ~/.config/Slippi Launcher/netplay"
+        )
+        ok = False
+
+    return ok
+
+
 # ============================================================================
 # Setup Commands
 # ============================================================================
@@ -339,16 +372,30 @@ def _setup_melee_phillip():
     print()
     print("Verifying...")
 
-    # Check TF import
+    # Check TF import and version
     result = subprocess.run(
-        [python, "-c", "import tensorflow as tf; print(f'TensorFlow {tf.__version__}')"],
+        [python, "-c", "import tensorflow as tf; print(tf.__version__)"],
         capture_output=True,
         text=True,
     )
     if result.returncode == 0:
-        print(f"  {result.stdout.strip()} OK")
+        tf_version = result.stdout.strip()
+        print(f"  TensorFlow {tf_version} OK")
+        if not tf_version.startswith("2.18"):
+            logger.warning(
+                f"TensorFlow {tf_version} detected — Phillip requires 2.18.1.\n"
+                "  TF 2.20+ crashes on macOS ARM ('mutex lock failed').\n"
+                "  Fix: pip install tensorflow==2.18.1 tf-keras==2.18.0"
+            )
     else:
-        logger.warning(f"TensorFlow import failed: {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        if "mutex" in stderr.lower() or "invalid argument" in stderr.lower():
+            logger.error(
+                "TensorFlow crashed on import (macOS ARM + TF 2.20 bug).\n"
+                "  Fix: pip install tensorflow==2.18.1 tf-keras==2.18.0"
+            )
+        else:
+            logger.warning(f"TensorFlow import failed: {stderr}")
 
     # Check model loads
     result = subprocess.run(
@@ -2597,7 +2644,23 @@ def load_fighter(name: str):
 # Main
 # ============================================================================
 
+def _check_python_version():
+    """Warn if running on Python 3.13+ where libmelee won't build."""
+    if sys.version_info >= (3, 13):
+        print(
+            f"WARNING: You're running Python {sys.version_info.major}.{sys.version_info.minor}. "
+            "libmelee requires Python 3.12 (pyenet C extensions fail on 3.13+).\n"
+            "Use the project venv:\n"
+            "  source .venv/bin/activate    # Python 3.12 with all deps\n"
+            "Or create one:\n"
+            "  python3.12 -m venv .venv && .venv/bin/pip install -e '.[wallet]'\n",
+            file=sys.stderr,
+        )
+
+
 def main():
+    _check_python_version()
+
     parser = argparse.ArgumentParser(
         prog="nojohns",
         description="Melee AI tournaments for Moltbots",
@@ -2790,6 +2853,8 @@ def main():
         _resolve_args(args, game_cfg, nj_cfg)
 
         if not _require_melee_args(args):
+            sys.exit(1)
+        if not _preflight_melee(args):
             sys.exit(1)
 
     sys.exit(args.func(args))
