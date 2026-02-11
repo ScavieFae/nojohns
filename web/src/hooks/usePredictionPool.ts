@@ -123,8 +123,10 @@ async function fetchUserPosition(
  * Polls every 5s when pool is open to track odds changes.
  */
 export function usePredictionPool(matchId: string | undefined) {
+  // Arena match IDs are UUIDs like "5b26172f-ec93-4e76-b41e-b161ff13a7b6"
+  // On-chain they're bytes32: strip dashes, right-pad with zeros
   const matchIdHex = matchId
-    ? (`0x${matchId.replace(/^0x/, "").padStart(64, "0")}` as `0x${string}`)
+    ? (`0x${matchId.replace(/^0x/, "").replace(/-/g, "").padEnd(64, "0")}` as `0x${string}`)
     : undefined;
 
   const poolIdQuery = useQuery({
