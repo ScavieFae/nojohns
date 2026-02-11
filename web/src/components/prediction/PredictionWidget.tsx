@@ -1,4 +1,5 @@
 import { formatEther } from "viem";
+import { truncateAddress } from "../../lib/addresses";
 import { OddsBar } from "./OddsBar";
 import { BetForm } from "./BetForm";
 import {
@@ -87,6 +88,17 @@ export function PredictionWidget({ matchId }: PredictionWidgetProps) {
         </span>
       </div>
 
+      {/* Winner announcement */}
+      {isResolved && pool.winner !== "0x0000000000000000000000000000000000000000" && (
+        <div className={`text-center py-2 rounded text-sm font-bold ${
+          pool.winner.toLowerCase() === pool.playerA.toLowerCase()
+            ? "bg-accent-green/20 text-accent-green"
+            : "bg-purple-500/20 text-purple-400"
+        }`}>
+          Winner: {truncateAddress(pool.winner)}
+        </div>
+      )}
+
       {/* Odds */}
       <OddsBar
         playerA={pool.playerA}
@@ -105,7 +117,7 @@ export function PredictionWidget({ matchId }: PredictionWidgetProps) {
             </p>
           )}
           {position.betOnB > 0n && (
-            <p className="text-xs text-red-400">
+            <p className="text-xs text-purple-400">
               {formatEther(position.betOnB)} MON on Player B
             </p>
           )}

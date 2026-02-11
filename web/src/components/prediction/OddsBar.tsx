@@ -21,7 +21,7 @@ export function OddsBar({ playerA, playerB, totalA, totalB }: OddsBarProps) {
         <span className="text-accent-green font-mono">
           {truncateAddress(playerA)}
         </span>
-        <span className="text-red-400 font-mono">
+        <span className="text-purple-400 font-mono">
           {truncateAddress(playerB)}
         </span>
       </div>
@@ -35,7 +35,7 @@ export function OddsBar({ playerA, playerB, totalA, totalB }: OddsBarProps) {
           {total > 0n && <span>{pctA}%</span>}
         </div>
         <div
-          className="bg-red-500/70 flex items-center justify-center text-xs font-bold transition-all duration-500"
+          className="bg-purple-500/70 flex items-center justify-center text-xs font-bold transition-all duration-500"
           style={{ width: `${Math.max(pctB, 5)}%` }}
         >
           {total > 0n && <span>{pctB}%</span>}
