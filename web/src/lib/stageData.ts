@@ -40,7 +40,7 @@ export const stageDataById: Record<number, StageData> = {
   // Battlefield
   [STAGE_IDS.BATTLEFIELD]: {
     name: "Battlefield",
-    mainPlatform: { x: 0, y: 0, width: 79.0, height: 6 },
+    mainPlatform: { x: 0, y: 0, width: 136.8, height: 6 },
     platforms: [
       { x: -57.6, y: 27.2, width: 51.0, height: 3 }, // left
       { x: 57.6, y: 27.2, width: 51.0, height: 3 },  // right
@@ -53,7 +53,7 @@ export const stageDataById: Record<number, StageData> = {
   // Final Destination
   [STAGE_IDS.FINAL_DESTINATION]: {
     name: "Final Destination",
-    mainPlatform: { x: 0, y: 0, width: 85.5, height: 6 },
+    mainPlatform: { x: 0, y: 0, width: 171.1, height: 6 },
     platforms: [], // No platforms!
     blastzones: { left: -246, right: 246, top: 188, bottom: -140 },
     backgroundColor: "#0f0f1a",
@@ -62,7 +62,7 @@ export const stageDataById: Record<number, StageData> = {
   // Dreamland N64
   [STAGE_IDS.DREAMLAND]: {
     name: "Dreamland",
-    mainPlatform: { x: 0, y: 0, width: 77.3, height: 6 },
+    mainPlatform: { x: 0, y: 0, width: 154.6, height: 6 },
     platforms: [
       { x: -61.4, y: 30.2, width: 31.5, height: 3 }, // left
       { x: 61.4, y: 30.2, width: 31.5, height: 3 },  // right
@@ -75,7 +75,7 @@ export const stageDataById: Record<number, StageData> = {
   // Yoshi's Story
   [STAGE_IDS.YOSHIS_STORY]: {
     name: "Yoshi's Story",
-    mainPlatform: { x: 0, y: 0, width: 56.0, height: 6 },
+    mainPlatform: { x: 0, y: 0, width: 112.0, height: 6 },
     platforms: [
       { x: -59.5, y: 23.5, width: 24.0, height: 3 }, // left
       { x: 59.5, y: 23.5, width: 24.0, height: 3 },  // right
@@ -88,7 +88,7 @@ export const stageDataById: Record<number, StageData> = {
   // Fountain of Dreams
   [STAGE_IDS.FOUNTAIN_OF_DREAMS]: {
     name: "Fountain of Dreams",
-    mainPlatform: { x: 0, y: 0, width: 63.0, height: 6 },
+    mainPlatform: { x: 0, y: 0, width: 126.7, height: 6 },
     platforms: [
       { x: -49.5, y: 16.5, width: 21.0, height: 3 }, // left (moves)
       { x: 49.5, y: 16.5, width: 21.0, height: 3 },  // right (moves)
@@ -101,7 +101,7 @@ export const stageDataById: Record<number, StageData> = {
   // Pokemon Stadium
   [STAGE_IDS.POKEMON_STADIUM]: {
     name: "Pokemon Stadium",
-    mainPlatform: { x: 0, y: 0, width: 87.75, height: 6 },
+    mainPlatform: { x: 0, y: 0, width: 175.5, height: 6 },
     platforms: [
       { x: -55, y: 25, width: 25.0, height: 3 }, // left
       { x: 55, y: 25, width: 25.0, height: 3 },  // right
@@ -114,7 +114,7 @@ export const stageDataById: Record<number, StageData> = {
 // Default stage if ID not found
 export const defaultStage: StageData = {
   name: "Unknown Stage",
-  mainPlatform: { x: 0, y: 0, width: 80, height: 6 },
+  mainPlatform: { x: 0, y: 0, width: 150, height: 6 },
   platforms: [],
   blastzones: { left: -200, right: 200, top: 180, bottom: -100 },
   backgroundColor: "#1a1a1a",
