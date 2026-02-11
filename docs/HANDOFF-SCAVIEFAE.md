@@ -1399,3 +1399,46 @@ If `ARENA_ADDRESS` is not set, it defaults to the deployer — and the arena ser
 Both wallets are funded on mainnet (~271 MON each):
 - Deployer (`0xF04366a3...0420`): ready to deploy
 - Arena (`0xd8A01dE3...38C`): ready for runtime gas
+
+---
+
+## Branch Strategy Change (Feb 11, 2026)
+
+**We now have two long-lived branches.** Switch your default working branch to `dev`.
+
+| Branch | Purpose | Audience |
+|--------|---------|----------|
+| **`main`** | Public-facing releases. Clean, no internal docs. | Users, judges |
+| **`dev`** | All agent work. Handoff docs, hooks, dev artifacts. | Us three + Mattie |
+
+### What changed
+
+- **Handoff docs (`docs/HANDOFF-*.md`)** removed from `main`, live only on `dev`
+- **`.claude/` hooks and settings** removed from `main`, live only on `dev`
+- **`CODEOWNERS`** added on `dev` — Mattie must approve changes to `.claude/`, handoff docs, CLAUDE.md files, and contract source. This protects against prompt injection via external PRs.
+
+### Your workflow now
+
+1. **Pull from `dev`** (not `main`):
+   ```bash
+   git checkout dev
+   git pull origin dev
+   ```
+
+2. **Branch off `dev`** for new work:
+   ```bash
+   git checkout -b scaviefae/mainnet-deploy dev
+   ```
+
+3. **PR into `dev`** (not `main`)
+
+4. **Releases to `main`** are curated via `scripts/release-to-main.sh` — run from `dev`, it squash-merges and strips internal files. Mattie or Scav will run this.
+
+### Why
+
+- `main` is the public repo. Judges, users, and potential contributors see it. Handoff docs and agent hooks don't belong there.
+- Handoff docs are a prompt injection surface — if someone PRs a modified handoff to a public branch, an agent could execute it. CODEOWNERS + dev-only mitigates this.
+
+### Post-pull hook
+
+A hook now fires after `git pull` and checks if handoff docs changed. If they did, you'll see the diff and a reminder to review + add any items you need to communicate back (planning changes, questions, blockers — not status updates).
