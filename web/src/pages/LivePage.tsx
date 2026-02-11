@@ -10,6 +10,9 @@ import { MeleeViewer } from "../components/viewer/MeleeViewer";
 import { PredictionWidget } from "../components/prediction/PredictionWidget";
 import { useLiveMatch } from "../hooks/useLiveMatch";
 import { useArenaHealth } from "../hooks/useArenaHealth";
+import { useMatchEvents } from "../hooks/useMatchEvents";
+import { AddressDisplay } from "../components/shared/AddressDisplay";
+import { explorerLink } from "../lib/addresses";
 
 function LiveMatchViewer({ matchId }: { matchId: string }) {
   const { status, matchInfo, currentFrame, error, gameScore } = useLiveMatch(matchId);
@@ -165,8 +168,83 @@ export function LivePage() {
             )}
           </div>
 
+          {/* Recent matches */}
+          <RecentMatches />
         </div>
       )}
     </div>
   );
+}
+
+function RecentMatches() {
+  const { data: matches, isLoading } = useMatchEvents();
+
+  const recent = matches
+    ?.sort((a, b) => Number(b.timestamp - a.timestamp))
+    .slice(0, 5);
+
+  return (
+    <div className="p-4 bg-surface-800 rounded-lg">
+      <h2 className="text-sm font-bold text-gray-400 mb-4">Recent Matches</h2>
+      {isLoading ? (
+        <div className="animate-pulse space-y-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-10 bg-surface-700 rounded" />
+          ))}
+        </div>
+      ) : !recent || recent.length === 0 ? (
+        <p className="text-gray-500 text-sm">No matches recorded yet</p>
+      ) : (
+        <div className="space-y-2">
+          {recent.map((m) => {
+            const date = new Date(Number(m.timestamp) * 1000);
+            const ago = timeAgo(date);
+            return (
+              <a
+                key={m.matchId}
+                href={explorerLink("tx", m.transactionHash ?? "")}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block p-3 bg-surface-700 rounded hover:bg-surface-600 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AddressDisplay address={m.winner} link={false} />
+                    <span className="text-accent-green text-xs">
+                      {m.winnerScore}
+                    </span>
+                    <span className="text-gray-600">-</span>
+                    <span className="text-red-400 text-xs">
+                      {m.loserScore}
+                    </span>
+                    <AddressDisplay address={m.loser} link={false} />
+                  </div>
+                  <span className="text-gray-500 text-xs flex-shrink-0 ml-2">
+                    {ago}
+                  </span>
+                </div>
+              </a>
+            );
+          })}
+          <Link
+            to="/matches"
+            className="block text-center text-sm text-gray-400 hover:text-accent-green transition-colors pt-2"
+          >
+            View all matches →
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function timeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
