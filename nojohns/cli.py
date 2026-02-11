@@ -163,7 +163,11 @@ def cmd_setup(args):
     elif target in (["wallet"], ["monad"]):  # "monad" kept as alias
         return _setup_monad()
     elif target == ["identity"]:
-        return _setup_identity()
+        return _setup_identity(
+            name=getattr(args, "name", None),
+            description=getattr(args, "description", None),
+            yes=getattr(args, "yes", False),
+        )
     else:
         logger.error(f"Unknown setup target: {' '.join(target)}")
         logger.error("Usage: nojohns setup [melee [phillip] | wallet | identity]")
@@ -555,8 +559,14 @@ def _setup_monad():
     return 0
 
 
-def _setup_identity():
-    """Register agent on ERC-8004 IdentityRegistry."""
+def _setup_identity(name=None, description=None, yes=False):
+    """Register agent on ERC-8004 IdentityRegistry.
+
+    Args:
+        name: Agent name (default: NoJohnsAgent). Skips interactive prompt.
+        description: Agent description. Skips interactive prompt.
+        yes: Skip all confirmation prompts (for non-interactive/agent use).
+    """
     import base64
     import json
     import tomllib
@@ -581,10 +591,13 @@ def _setup_identity():
     # Check if already registered
     if chain_data.get("agent_id"):
         print(f"Already registered as agent #{chain_data['agent_id']}")
-        print()
-        overwrite = input("Register a new agent? [y/N]: ").strip().lower()
-        if overwrite != "y":
-            return 0
+        if yes:
+            print("Re-registering (--yes)")
+        else:
+            print()
+            overwrite = input("Register a new agent? [y/N]: ").strip().lower()
+            if overwrite != "y":
+                return 0
 
     # Get melee config for connect code
     melee_data = existing_raw.get("games", {}).get("melee", {})
@@ -603,14 +616,21 @@ def _setup_identity():
         print("Network: Monad testnet")
     print()
 
-    # Prompt for agent details
+    # Resolve agent details: CLI flags > interactive > defaults
     default_name = "NoJohnsAgent"
-    name = input(f"Agent name [{default_name}]: ").strip() or default_name
-
     default_desc = "Melee competitor on No Johns arena"
-    description = input(f"Description [{default_desc}]: ").strip() or default_desc
 
-    if not connect_code:
+    if name is None and not yes:
+        name = input(f"Agent name [{default_name}]: ").strip() or default_name
+    else:
+        name = name or default_name
+
+    if description is None and not yes:
+        description = input(f"Description [{default_desc}]: ").strip() or default_desc
+    else:
+        description = description or default_desc
+
+    if not connect_code and not yes:
         connect_code = input("Slippi connect code (e.g. SCAV#382): ").strip()
 
     # Build registration JSON
@@ -638,10 +658,11 @@ def _setup_identity():
     print(json.dumps(registration, indent=2))
     print()
 
-    confirm = input("Register this agent onchain? [Y/n]: ").strip().lower()
-    if confirm == "n":
-        print("Cancelled.")
-        return 0
+    if not yes:
+        confirm = input("Register this agent onchain? [Y/n]: ").strip().lower()
+        if confirm == "n":
+            print("Cancelled.")
+            return 0
 
     # Call register() on IdentityRegistry
     try:
@@ -772,18 +793,21 @@ def _update_config_identity(existing_raw: dict, agent_id: int, identity_registry
     lines.append(f'private_key = "{wallet_data.get("private_key", "")}"')
     lines.append("")
 
-    # [chain] with identity info
+    # [chain] with identity info — preserve all existing fields
     chain_data = existing_raw.get("chain", {})
+    # Update with new identity values
+    chain_data["identity_registry"] = identity_registry
+    chain_data["reputation_registry"] = reputation_registry
+    chain_data["agent_id"] = agent_id
+    chain_data.setdefault("chain_id", chain_id)
+    chain_data.setdefault("rpc_url", "https://testnet-rpc.monad.xyz")
+
     lines.append("[chain]")
-    lines.append(f"chain_id = {chain_data.get('chain_id', chain_id)}")
-    lines.append(f'rpc_url = "{chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz")}"')
-    if chain_data.get("match_proof"):
-        lines.append(f'match_proof = "{chain_data["match_proof"]}"')
-    if chain_data.get("wager"):
-        lines.append(f'wager = "{chain_data["wager"]}"')
-    lines.append(f'identity_registry = "{identity_registry}"')
-    lines.append(f'reputation_registry = "{reputation_registry}"')
-    lines.append(f"agent_id = {agent_id}")
+    for k, v in chain_data.items():
+        if isinstance(v, str):
+            lines.append(f'{k} = "{v}"')
+        else:
+            lines.append(f"{k} = {v}")
     lines.append("")
 
     CONFIG_PATH.write_text("\n".join(lines))
@@ -2674,6 +2698,18 @@ def main():
     setup_parser.add_argument(
         "setup_target", nargs="*", default=[],
         help="What to set up: melee=game, wallet=onchain, identity=ERC-8004 registration",
+    )
+    setup_parser.add_argument(
+        "--name", default=None,
+        help="Agent name for identity registration (default: NoJohnsAgent)",
+    )
+    setup_parser.add_argument(
+        "--description", default=None,
+        help="Agent description for identity registration",
+    )
+    setup_parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Skip confirmation prompts (for non-interactive/agent use)",
     )
     setup_parser.set_defaults(func=cmd_setup)
 
