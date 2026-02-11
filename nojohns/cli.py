@@ -1862,8 +1862,8 @@ def cmd_auto(args):
                     print(f"Below min bankroll ({min_bankroll} MON). Stopping.")
                     break
 
-            # 2. Join queue and get matched (wager decision happens after we know opponent)
-            # For now, run match without wager — we'll decide after scouting
+            # 2. Join queue and get matched
+            wager_amount = args.wager if not args.no_wager else None
             result = _run_single_match(
                 fighter_name=args.fighter,
                 fighter=fighter,
@@ -1873,7 +1873,7 @@ def cmd_auto(args):
                 _post=_post,
                 _get=_get,
                 _delete=_delete,
-                wager_amount=None,  # Decided dynamically below
+                wager_amount=wager_amount,
             )
 
             if result is None:
@@ -2809,6 +2809,7 @@ def main():
     auto_parser.add_argument("--max-matches", type=int, default=None, help="Stop after N matches")
     auto_parser.add_argument("--min-bankroll", type=float, default=None, help="MON stop threshold")
     auto_parser.add_argument("--cooldown", type=int, default=None, help="Seconds between matches")
+    auto_parser.add_argument("--wager", type=float, default=None, help="Wager this amount of MON per match")
     auto_parser.add_argument("--no-wager", action="store_true", help="Play without wagering")
     auto_parser.set_defaults(func=cmd_auto)
 
