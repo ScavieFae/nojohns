@@ -1187,7 +1187,7 @@ def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, c
     match_id_bytes = hashlib.sha256(match_id.encode()).digest()
 
     pot_mon = (wager_amount or 0) * 2 / 10**18
-    print(f"  Settling wager {wager_id} ({pot_mon} MON pot)...", end="", flush=True)
+    print(f"[WAGER] Settling {pot_mon} MON pot...", end="", flush=True)
 
     try:
         tx_hash = settle_wager(
@@ -1197,14 +1197,15 @@ def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, c
             wager_id=wager_id,
             match_id=match_id_bytes,
         )
-        print(f" settled! TX: {tx_hash[:16]}...")
+        print(f" done! TX: {tx_hash[:16]}...")
+        print(f"[WAGER] SETTLED -- {pot_mon} MON paid to winner")
     except Exception as e:
         # Settlement might fail if opponent already settled, or match not recorded yet
         if "already" in str(e).lower():
             print(" already settled.")
         else:
             print(f" failed: {e}")
-            print(f"  Settle manually: nojohns wager settle {wager_id} {match_id_clean}")
+            print(f"[WAGER] Settle manually: nojohns wager settle {wager_id} {match_id}")
 
 
 def _negotiate_wager(
@@ -1263,7 +1264,7 @@ def _negotiate_wager(
     amount_wei = max_amount_wei
     amount_mon = wager_amount
 
-    print(f"Proposing {amount_mon} MON wager...")
+    print(f"[WAGER] Proposing {amount_mon} MON wager...")
     try:
         tx_hash, wager_id = propose_wager(
             account=account,
@@ -1274,10 +1275,10 @@ def _negotiate_wager(
             amount_wei=amount_wei,
         )
     except Exception as e:
-        print(f"Failed to propose wager: {e}")
+        print(f"[WAGER] Failed to propose: {e}")
         return None, None
 
-    print(f"Wager proposed (ID: {wager_id})")
+    print(f"[WAGER] Proposed (ID: {wager_id}, escrowed {amount_mon} MON)")
 
     # Tell arena about the proposal
     try:
@@ -1287,30 +1288,37 @@ def _negotiate_wager(
             "wager_id": wager_id,
         })
     except urllib.error.URLError as e:
-        print(f"Warning: couldn't register wager with arena: {e}")
+        print(f"[WAGER] Warning: couldn't register with arena: {e}")
 
     # Wait for opponent to accept (30s timeout)
-    print("Waiting for opponent to accept (30s)...", end="", flush=True)
+    print("[WAGER] Waiting for opponent", end="", flush=True)
     deadline = time.time() + 30
+    elapsed = 0
     while time.time() < deadline:
         time.sleep(1)
-        print(".", end="", flush=True)
+        elapsed += 1
+        if elapsed % 5 == 0:
+            remaining = int(deadline - time.time())
+            print(f" {remaining}s", end="", flush=True)
+        else:
+            print(".", end="", flush=True)
         try:
             wager_info = _get(f"/matches/{match_id}/wager")
             status = wager_info.get("wager_status")
             if status == "accepted":
-                print(" accepted!")
-                print(f"Wager locked! Pot: {amount_mon * 2} MON")
+                print()
+                print(f"[WAGER] LOCKED -- {amount_mon * 2} MON pot (ID: {wager_id})")
                 return wager_id, amount_wei
             elif status == "declined":
-                print(" declined.")
+                print()
+                print(f"[WAGER] Opponent declined.")
                 # Cancel the onchain wager to get refund
                 try:
                     from nojohns.wallet import cancel_wager
                     cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
-                    print("Wager cancelled, MON refunded.")
+                    print("[WAGER] Cancelled, MON refunded.")
                 except Exception:
-                    print(f"Warning: cancel wager {wager_id} manually to get refund.")
+                    print(f"[WAGER] Cancel wager {wager_id} manually to get refund.")
                 return None, None
 
             # Check if opponent also proposed — auto-accept if within our max
@@ -1320,8 +1328,9 @@ def _negotiate_wager(
             if (opponent_wager_id and opponent_wager_id != wager_id and
                 proposer != account.address and opponent_amount is not None):
                 if opponent_amount <= max_amount_wei:
-                    print(f" opponent proposed {opponent_amount / 10**18} MON!")
-                    print("Auto-accepting opponent's wager...")
+                    opp_mon = opponent_amount / 10**18
+                    print()
+                    print(f"[WAGER] Opponent counter-proposed {opp_mon} MON — accepting...")
                     try:
                         from nojohns.wallet import accept_wager, cancel_wager
                         accept_wager(
@@ -1334,14 +1343,15 @@ def _negotiate_wager(
                         # Cancel our own wager to get refund
                         cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
                         pot_mon = opponent_amount * 2 / 10**18
-                        print(f"Wager locked! Pot: {pot_mon} MON")
+                        print(f"[WAGER] LOCKED -- {pot_mon} MON pot (ID: {opponent_wager_id})")
                         _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
                         return opponent_wager_id, opponent_amount
                     except Exception as e:
-                        print(f"Auto-accept failed: {e}")
+                        print(f"[WAGER] Auto-accept failed: {e}")
                 else:
-                    print(f" opponent wants {opponent_amount / 10**18} MON (> our max {wager_amount}).")
-                    print("Declining opponent's wager.")
+                    opp_mon = opponent_amount / 10**18
+                    print()
+                    print(f"[WAGER] Opponent wants {opp_mon} MON (> our max {wager_amount}) — declining.")
                     try:
                         _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
                     except urllib.error.URLError:
@@ -1350,14 +1360,15 @@ def _negotiate_wager(
         except urllib.error.URLError:
             continue
 
-    print(" timeout.")
+    print()
+    print("[WAGER] Negotiation timed out.")
     # Cancel the onchain wager
     try:
         from nojohns.wallet import cancel_wager
         cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
-        print("Wager cancelled, MON refunded.")
+        print("[WAGER] Cancelled, MON refunded.")
     except Exception:
-        print(f"Warning: cancel wager {wager_id} manually to get refund.")
+        print(f"[WAGER] Cancel wager {wager_id} manually to get refund.")
     return None, None
 
 
@@ -1384,12 +1395,12 @@ def _respond_to_wager(
     wager_id = wager_info.get("wager_id")
     amount_mon = amount_wei / 10**18
 
-    print(f"Opponent proposed {amount_mon} MON wager.")
+    print(f"[WAGER] Opponent proposed {amount_mon} MON wager.")
 
     # Decline if over our max (or no max configured)
     if max_amount_wei is None or amount_wei > max_amount_wei:
         max_mon = max_amount_wei / 10**18 if max_amount_wei else 0
-        print(f"Declining — exceeds our max ({max_mon} MON).")
+        print(f"[WAGER] Declining — {amount_mon} MON exceeds our max ({max_mon} MON).")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
         except urllib.error.URLError:
@@ -1397,7 +1408,7 @@ def _respond_to_wager(
         return None, None
 
     # Accept onchain
-    print(f"Auto-accepting {amount_mon} MON wager...")
+    print(f"[WAGER] Accepting {amount_mon} MON...")
     try:
         tx_hash = accept_wager(
             account=account,
@@ -1407,7 +1418,7 @@ def _respond_to_wager(
             amount_wei=amount_wei,
         )
     except Exception as e:
-        print(f"Failed to accept wager: {e}")
+        print(f"[WAGER] Accept failed: {e}")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
         except urllib.error.URLError:
@@ -1418,9 +1429,9 @@ def _respond_to_wager(
     try:
         _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
     except urllib.error.URLError as e:
-        print(f"Warning: couldn't confirm acceptance with arena: {e}")
+        print(f"[WAGER] Warning: couldn't confirm with arena: {e}")
 
-    print(f"Wager accepted! Pot: {amount_mon * 2} MON")
+    print(f"[WAGER] LOCKED -- {amount_mon * 2} MON pot (ID: {wager_id})")
     return wager_id, amount_wei
 
 
@@ -1695,7 +1706,14 @@ def _print_match_summary(
         print(f"  Signed: FAILED  |  Wallet: {nj_cfg.wallet.address[:10]}...")
     if result.wager_id is not None:
         pot_mon = (result.wager_amount_wei or 0) * 2 / 10**18
-        print(f"  Wager: {pot_mon} MON pot  |  ID: {result.wager_id}")
+        stake_mon = (result.wager_amount_wei or 0) / 10**18
+        if result.outcome == "COMPLETED":
+            if result.we_won:
+                print(f"  Wager: WON +{stake_mon} MON  ({pot_mon} MON pot)")
+            else:
+                print(f"  Wager: LOST -{stake_mon} MON  ({pot_mon} MON pot)")
+        else:
+            print(f"  Wager: {pot_mon} MON pot  (unsettled — {result.outcome})")
     print("=" * 44)
     print()
 
