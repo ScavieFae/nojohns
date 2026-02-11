@@ -98,12 +98,13 @@ class ChainConfig:
 
     chain_id: int = 143  # Monad mainnet
     rpc_url: str = "https://rpc.monad.xyz"
-    match_proof: str | None = None  # MatchProof contract address
-    wager: str | None = None  # Wager contract address
-    prediction_pool: str | None = None  # PredictionPool contract address
-    # ERC-8004 registries (deployed singletons)
-    identity_registry: str | None = None  # IdentityRegistry address
-    reputation_registry: str | None = None  # ReputationRegistry address
+    # Contract addresses — mainnet defaults from contracts/deployments.json
+    match_proof: str = "0x1CC748475F1F666017771FB49131708446B9f3DF"
+    wager: str = "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d"
+    prediction_pool: str = "0x33E65E300575D11a42a579B2675A63cb4374598D"
+    # ERC-8004 registries (deployed singletons on mainnet)
+    identity_registry: str = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+    reputation_registry: str = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
     agent_id: int | None = None  # Our registered agent NFT token ID
 
 
@@ -212,14 +213,15 @@ def load_config(path: Path | None = None) -> NojohnsConfig:
     chain = None
     if "chain" in raw and isinstance(raw["chain"], dict):
         chain_data = raw["chain"]
+        _defaults = ChainConfig()
         chain = ChainConfig(
-            chain_id=chain_data.get("chain_id", 143),
-            rpc_url=chain_data.get("rpc_url", "https://rpc.monad.xyz"),
-            match_proof=chain_data.get("match_proof"),
-            wager=chain_data.get("wager"),
-            prediction_pool=chain_data.get("prediction_pool"),
-            identity_registry=chain_data.get("identity_registry"),
-            reputation_registry=chain_data.get("reputation_registry"),
+            chain_id=chain_data.get("chain_id", _defaults.chain_id),
+            rpc_url=chain_data.get("rpc_url", _defaults.rpc_url),
+            match_proof=chain_data.get("match_proof", _defaults.match_proof),
+            wager=chain_data.get("wager", _defaults.wager),
+            prediction_pool=chain_data.get("prediction_pool", _defaults.prediction_pool),
+            identity_registry=chain_data.get("identity_registry", _defaults.identity_registry),
+            reputation_registry=chain_data.get("reputation_registry", _defaults.reputation_registry),
             agent_id=chain_data.get("agent_id"),
         )
 

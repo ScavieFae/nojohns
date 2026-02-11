@@ -93,9 +93,9 @@ MATCH_PROOF_ABI = [
     },
 ]
 
-# Default address from contracts/deployments.json
-# Updated to mainnet after deploy; override via config.toml [chain] section
-DEFAULT_MATCH_PROOF = "0x1CC748475F1F666017771FB49131708446B9f3DF"  # TODO: update after mainnet deploy
+# Mainnet defaults from contracts/deployments.json
+# Override via config.toml [chain] section
+DEFAULT_MATCH_PROOF = "0x1CC748475F1F666017771FB49131708446B9f3DF"  # mainnet (same addr as testnet)
 DEFAULT_RPC_URL = "https://rpc.monad.xyz"
 
 

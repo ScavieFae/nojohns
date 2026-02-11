@@ -248,7 +248,8 @@ class TestConfigParsing:
         assert cfg.chain.chain_id == 143
         assert cfg.chain.rpc_url == "https://rpc.monad.xyz"
         assert cfg.chain.match_proof == "0x1111111111111111111111111111111111111111"
-        assert cfg.chain.wager is None
+        # wager not set in toml → falls through to mainnet default
+        assert cfg.chain.wager == "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d"
 
     def test_chain_defaults(self, tmp_path):
         from nojohns.config import load_config

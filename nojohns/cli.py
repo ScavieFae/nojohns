@@ -433,10 +433,12 @@ def _setup_monad():
         rpc_url = "https://rpc.monad.xyz"
         print("  Using Monad mainnet (chain 143)")
 
-    # Contract addresses (optional — ScavieFae deploys these)
-    match_proof = current_chain.get("match_proof", "")
-    wager = current_chain.get("wager", "")
-    prediction_pool = current_chain.get("prediction_pool", "")
+    # Contract addresses — mainnet defaults, override from existing config
+    from nojohns.config import ChainConfig
+    _defaults = ChainConfig()
+    match_proof = current_chain.get("match_proof", _defaults.match_proof if chain_id == 143 else "")
+    wager = current_chain.get("wager", _defaults.wager if chain_id == 143 else "")
+    prediction_pool = current_chain.get("prediction_pool", _defaults.prediction_pool if chain_id == 143 else "")
 
     # Build updated config, preserving existing sections
     lines = ["# No Johns configuration\n"]
