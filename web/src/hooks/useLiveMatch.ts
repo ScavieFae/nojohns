@@ -100,6 +100,11 @@ export function useLiveMatch(
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
+  // Reconnection state
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const endedRef = useRef(false);
+
   // Circular frame buffer for smooth playback
   const frameBufferRef = useRef<RingBuffer<MatchFrame>>(createRing(BUFFER_CAPACITY));
   const playingRef = useRef(false);
@@ -282,6 +287,7 @@ export function useLiveMatch(
             break;
 
           case "match_end":
+            endedRef.current = true;
             setState((prev) => ({
               ...prev,
               status: "ended",
@@ -306,7 +312,7 @@ export function useLiveMatch(
     [convertPlayerFrame, startPlayback],
   );
 
-  // Connect/disconnect based on matchId
+  // Connect/disconnect based on matchId — with auto-reconnect
   useEffect(() => {
     if (!matchId) {
       stopPlayback();
@@ -314,6 +320,12 @@ export function useLiveMatch(
         wsRef.current.close();
         wsRef.current = null;
       }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      reconnectAttemptRef.current = 0;
+      endedRef.current = false;
       setState({
         status: "disconnected",
         matchInfo: null,
@@ -325,53 +337,92 @@ export function useLiveMatch(
       return;
     }
 
-    const wsUrl = ARENA_URL.replace(/^http/, "ws") + `/ws/match/${matchId}`;
-    setState((prev) => ({ ...prev, status: "connecting", error: null }));
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const RECONNECT_BASE_MS = 1000; // 1s, 2s, 4s... up to 30s
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    function connect() {
+      const wsUrl = ARENA_URL.replace(/^http/, "ws") + `/ws/match/${matchId}`;
+      setState((prev) => ({ ...prev, status: "connecting", error: null }));
 
-    ws.onopen = () => {
-      console.log(`[useLiveMatch] Connected to ${wsUrl}`);
-      const timeout = setTimeout(() => {
-        setState((prev) => {
-          if (prev.status === "connecting") {
-            return { ...prev, status: "ended", error: "Match has already ended" };
-          }
-          return prev;
-        });
-      }, 5000);
-      (
-        ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> }
-      )._connectTimeout = timeout;
-    };
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
-    ws.onmessage = handleMessage;
+      ws.onopen = () => {
+        console.log(`[useLiveMatch] Connected to ${wsUrl}`);
+        reconnectAttemptRef.current = 0; // Reset on successful connect
+        const timeout = setTimeout(() => {
+          setState((prev) => {
+            if (prev.status === "connecting") {
+              return { ...prev, status: "ended", error: "Match has already ended" };
+            }
+            return prev;
+          });
+        }, 5000);
+        (
+          ws as WebSocket & { _connectTimeout?: ReturnType<typeof setTimeout> }
+        )._connectTimeout = timeout;
+      };
 
-    ws.onerror = () => {
-      setState((prev) => ({ ...prev, status: "error", error: "Connection error" }));
-    };
+      ws.onmessage = handleMessage;
 
-    ws.onclose = (event) => {
-      console.log(`[useLiveMatch] Disconnected: ${event.code} ${event.reason}`);
-      if (wsRef.current === ws) {
-        setState((prev) => ({
-          ...prev,
-          status: prev.status === "ended" ? "ended" : "disconnected",
-        }));
-      }
-    };
+      ws.onerror = () => {
+        setState((prev) => ({ ...prev, status: "error", error: "Connection error" }));
+      };
+
+      ws.onclose = (event) => {
+        console.log(`[useLiveMatch] Disconnected: ${event.code} ${event.reason}`);
+        if (wsRef.current !== ws) return; // Stale socket
+
+        // Don't reconnect if match ended normally or was explicitly closed
+        if (endedRef.current || event.code === 4004) {
+          setState((prev) => ({ ...prev, status: "ended" }));
+          return;
+        }
+
+        // Attempt reconnect with exponential backoff
+        if (reconnectAttemptRef.current < MAX_RECONNECT_ATTEMPTS) {
+          const delay = Math.min(
+            RECONNECT_BASE_MS * Math.pow(2, reconnectAttemptRef.current),
+            30_000,
+          );
+          reconnectAttemptRef.current++;
+          console.log(
+            `[useLiveMatch] Reconnecting in ${delay}ms (attempt ${reconnectAttemptRef.current}/${MAX_RECONNECT_ATTEMPTS})`,
+          );
+          setState((prev) => ({
+            ...prev,
+            status: "connecting",
+            error: `Reconnecting (${reconnectAttemptRef.current}/${MAX_RECONNECT_ATTEMPTS})...`,
+          }));
+          reconnectTimerRef.current = setTimeout(connect, delay);
+        } else {
+          setState((prev) => ({
+            ...prev,
+            status: "disconnected",
+            error: "Connection lost",
+          }));
+        }
+      };
+    }
+
+    connect();
 
     return () => {
-      const wsWithTimeout = ws as WebSocket & {
-        _connectTimeout?: ReturnType<typeof setTimeout>;
-      };
-      if (wsWithTimeout._connectTimeout) {
-        clearTimeout(wsWithTimeout._connectTimeout);
+      endedRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
-      stopPlayback();
-      ws.close();
-      if (wsRef.current === ws) {
+      const ws = wsRef.current;
+      if (ws) {
+        const wsWithTimeout = ws as WebSocket & {
+          _connectTimeout?: ReturnType<typeof setTimeout>;
+        };
+        if (wsWithTimeout._connectTimeout) {
+          clearTimeout(wsWithTimeout._connectTimeout);
+        }
+        stopPlayback();
+        ws.close();
         wsRef.current = null;
       }
     };
