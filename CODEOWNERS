@@ -1,0 +1,20 @@
+# CODEOWNERS — No Johns
+#
+# Protects sensitive files from modification without review.
+# External PRs to dev that touch these files require Mattie's approval.
+
+# Agent configuration — hooks execute as the agent, so these are security-sensitive
+.claude/                    @mattiefairchild
+
+# Handoff docs — agent-to-agent coordination, potential prompt injection surface
+docs/HANDOFF-SCAV.md        @mattiefairchild
+docs/HANDOFF-SCAVIEFAE.md   @mattiefairchild
+
+# Project instructions — controls agent behavior
+CLAUDE.md                   @mattiefairchild
+contracts/CLAUDE.md         @mattiefairchild
+web/CLAUDE.md               @mattiefairchild
+
+# Deploy scripts and contract source — mainnet money at stake
+contracts/script/           @mattiefairchild
+contracts/src/              @mattiefairchild
