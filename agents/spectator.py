@@ -178,6 +178,19 @@ def discover_pools(arena_url: str) -> list[dict[str, Any]]:
         return []
 
 
+def fetch_match_data(arena_url: str, match_id: str) -> dict[str, Any] | None:
+    """Fetch match details from arena. Used for port-to-wallet mapping."""
+    import urllib.request
+
+    url = f"{arena_url.rstrip('/')}/matches/{match_id}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        logger.warning(f"Failed to fetch match {match_id}: {e}")
+        return None
+
+
 def get_pool_details(
     pool_id: int, rpc_url: str, pool_address: str
 ) -> dict[str, Any] | None:
@@ -377,10 +390,17 @@ class SpectatorAgent:
         ws_url = f"{self.arena_url.replace('http', 'ws')}/ws/match/{match_id}"
         state = MatchState()
 
-        # We need to figure out which port is playerA vs playerB
-        # The arena match data tells us p1_wallet/p2_wallet
+        # Map ports to pool sides using connect codes from arena match data.
+        # playerA = p1_wallet, playerB = p2_wallet (set by _try_create_pool).
+        # The WebSocket match_start gives us port → connectCode.
+        # The arena match gives us connectCode → p1/p2 → wallet → pool side.
         port_a: int | None = None
         port_b: int | None = None
+
+        # Fetch match data for connect code → wallet mapping
+        match_data = await asyncio.to_thread(fetch_match_data, self.arena_url, match_id)
+        p1_code = (match_data or {}).get("p1_connect_code", "")
+        p2_code = (match_data or {}).get("p2_connect_code", "")
 
         try:
             async with websockets.connect(ws_url) as ws:
@@ -396,12 +416,29 @@ class SpectatorAgent:
 
                     if msg_type == "match_start":
                         state.match_started = True
-                        # Match_start has player info; map ports
-                        # We'll use the first two ports as A and B
-                        players = msg.get("players", [])
-                        if len(players) >= 2:
-                            port_a = players[0].get("port")
-                            port_b = players[1].get("port")
+                        # Map ports to pool sides via connect codes.
+                        # playerA = p1_wallet, playerB = p2_wallet.
+                        for player in msg.get("players", []):
+                            code = (player.get("connectCode") or "").upper()
+                            port = player.get("port")
+                            if port is None:
+                                continue
+                            if code and code == p1_code.upper():
+                                port_a = port  # This port is playerA (p1)
+                            elif code and code == p2_code.upper():
+                                port_b = port  # This port is playerB (p2)
+
+                        # Fallback: if connect codes didn't match (e.g. no codes
+                        # in message), use position order like before
+                        if port_a is None or port_b is None:
+                            players = msg.get("players", [])
+                            if len(players) >= 2:
+                                logger.warning(
+                                    f"Could not map ports via connect codes for {match_id}, "
+                                    "falling back to position order"
+                                )
+                                port_a = players[0].get("port")
+                                port_b = players[1].get("port")
 
                     elif msg_type == "frame":
                         state.update_from_frame(msg)
@@ -433,7 +470,7 @@ class SpectatorAgent:
 
     async def run_once(self) -> int:
         """One pass: discover pools, watch matches, bet. Returns number of bets placed."""
-        pools = discover_pools(self.arena_url)
+        pools = await asyncio.to_thread(discover_pools, self.arena_url)
         bets_placed = 0
 
         for pool_info in pools:
