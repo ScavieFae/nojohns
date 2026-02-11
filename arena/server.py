@@ -334,6 +334,51 @@ def _try_cancel_pool(match_id: str):
         logger.warning(f"Failed to cancel prediction pool {pool_id}: {e}")
 
 
+def _try_void_wager(match_id: str):
+    """Void (claimTimeout) an accepted wager on a dead match.
+
+    Called when a match expires without completing. The Wager contract requires
+    the timeout period to have elapsed before claimTimeout can be called, so
+    this may fail on recently-expired matches — that's fine, the next sweep
+    will catch it.
+    """
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        return
+
+    wager_id = match.get("wager_id")
+    wager_status = match.get("wager_status")
+    if wager_id is None or wager_status != "accepted":
+        return
+
+    account = _get_arena_account()
+    if account is None:
+        return
+
+    wager_address = os.environ.get("WAGER_CONTRACT")
+    if not wager_address:
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    try:
+        from nojohns.wallet import claim_timeout
+
+        tx_hash = claim_timeout(
+            account=account,
+            rpc_url=rpc_url,
+            contract_address=wager_address,
+            wager_id=wager_id,
+        )
+        logger.info(f"Wager {wager_id} voided for expired match {match_id}: tx={tx_hash}")
+    except ImportError:
+        logger.debug("web3 not installed — skipping wager void")
+    except Exception as e:
+        # TimeoutNotReached is expected if match just expired — next sweep will retry
+        logger.debug(f"Could not void wager {wager_id} for match {match_id}: {e}")
+
+
 def _try_resolve_pool(match_id: str):
     """Resolve a prediction pool after match is recorded onchain.
 
@@ -373,10 +418,11 @@ def _try_resolve_pool(match_id: str):
 
 
 def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
-    """Expire stale matches and cancel their prediction pools."""
+    """Expire stale matches, cancel their prediction pools, and void stuck wagers."""
     expired_ids = db.expire_stale_matches(timeout_seconds)
     for mid in expired_ids:
         _try_cancel_pool(mid)
+        _try_void_wager(mid)
 
 
 # Global DB instance — set during lifespan
@@ -440,6 +486,12 @@ def _log_startup_config():
             logger.info(f"  Prediction pool: {pool_addr}")
     else:
         logger.info("  Prediction pool: NOT configured (PREDICTION_POOL not set)")
+
+    wager_addr = os.environ.get("WAGER_CONTRACT")
+    if wager_addr:
+        logger.info(f"  Wager contract: {wager_addr}")
+    else:
+        logger.info("  Wager contract: NOT configured (dead wager voiding disabled)")
 
     if rep_registry:
         logger.info(f"  Reputation registry: {rep_registry}")
