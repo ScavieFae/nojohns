@@ -4,13 +4,13 @@ import { DEPLOY_BLOCK, MAX_LOG_RANGE } from "../config";
 import { SNAPSHOT } from "./snapshot";
 
 /** Max concurrent RPC requests (stay under Monad rate limits) */
-const CONCURRENCY = 15;
+const CONCURRENCY = 50;
 /** Retry failed requests up to this many times */
 const MAX_RETRIES = 3;
 /** Base delay for exponential backoff (ms) */
 const RETRY_BASE_MS = 1000;
 /** Max time to spend scanning per call — resumes on next call */
-const SCAN_BUDGET_MS = 15_000;
+const SCAN_BUDGET_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // localStorage cache with bigint serialization
