@@ -55,6 +55,31 @@ def _background(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
+# Lock to serialize onchain transactions from the arena wallet.
+# Multiple concurrent txs from the same wallet cause nonce collisions
+# ("An existing transaction had higher priority"). All chain ops must
+# go through _background_chain() to avoid this.
+_chain_lock = threading.Lock()
+
+
+def _background_chain(*steps):
+    """Run a sequence of onchain operations in a single background thread.
+
+    Each step is a (fn, *args) tuple. They run sequentially under _chain_lock
+    so nonces don't collide. Errors in one step don't stop subsequent steps.
+    """
+    def _run():
+        with _chain_lock:
+            for step in steps:
+                fn, *args = step
+                try:
+                    fn(*args)
+                except Exception as e:
+                    logger.warning(f"Background chain op {fn.__name__} failed: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _get_arena_account():
     """Load arena wallet from ARENA_PRIVATE_KEY env var. Returns None if not set."""
     global _arena_account
@@ -433,9 +458,12 @@ def _try_resolve_pool(match_id: str):
 def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
     """Expire stale matches, cancel their prediction pools, and void stuck wagers."""
     expired_ids = db.expire_stale_matches(timeout_seconds)
-    for mid in expired_ids:
-        _background(_try_cancel_pool, mid)
-        _background(_try_void_wager, mid)
+    if expired_ids:
+        steps = []
+        for mid in expired_ids:
+            steps.append((_try_cancel_pool, mid))
+            steps.append((_try_void_wager, mid))
+        _background_chain(*steps)
 
 
 # Global DB instance — set during lifespan
@@ -638,7 +666,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
         )
 
         # Create prediction pool for spectators to bet on (background — don't block response)
-        _background(_try_create_pool, match_id, opponent.get("wallet_address"), req.wallet_address)
+        _background_chain((_try_create_pool, match_id, opponent.get("wallet_address"), req.wallet_address))
 
         # Return matched status with opponent info
         return {
@@ -768,12 +796,15 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
     )
 
     # When both signatures received: record onchain, post Elo, resolve pool.
-    # All run in background threads so the HTTP response returns immediately —
-    # these chain ops can take 20-40s total and would trigger Railway 502s.
+    # Runs in ONE background thread, sequentially, so nonces don't collide.
+    # (Parallel _background() calls caused "existing transaction had higher
+    # priority" errors — every tx got the same nonce.)
     if count >= 2:
-        _background(_try_record_match, match_id)
-        _background(_post_elo_updates, match)
-        _background(_try_resolve_pool, match_id)
+        _background_chain(
+            (_try_record_match, match_id),
+            (_post_elo_updates, match),
+            (_try_resolve_pool, match_id),
+        )
 
     return {
         "match_id": match_id,
@@ -806,8 +837,9 @@ def admin_cleanup() -> dict[str, Any]:
     db = get_db()
     expired_queue = db.expire_stale_entries(timeout_seconds=0)
     expired_ids = db.expire_stale_matches(timeout_seconds=0)
-    for mid in expired_ids:
-        _background(_try_cancel_pool, mid)
+    if expired_ids:
+        steps = [(_try_cancel_pool, mid) for mid in expired_ids]
+        _background_chain(*steps)
     _manager.sweep_stale()
     return {
         "expired_queue_entries": expired_queue,
