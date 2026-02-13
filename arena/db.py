@@ -532,6 +532,14 @@ class ArenaDB:
                 "SELECT COUNT(*) FROM matches WHERE status = 'playing'"
             ).fetchone()[0]
 
+    def get_playing_match_ids(self) -> list[str]:
+        """IDs of matches currently playing (for live viewer recovery after restart)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM matches WHERE status = 'playing'"
+            ).fetchall()
+            return [r[0] for r in rows]
+
 
 def _now() -> str:
     """ISO timestamp in UTC."""

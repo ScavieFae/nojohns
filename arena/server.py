@@ -856,11 +856,16 @@ def health() -> dict[str, Any]:
     db = get_db()
     db.expire_stale_entries()
     _expire_matches_and_cancel_pools(db)
+    # Prefer in-memory manager (has frame data for viewers), fall back to DB
+    # after restarts when manager state is lost but DB still has playing matches
+    live_ids = list(_manager.match_info.keys())
+    if not live_ids:
+        live_ids = db.get_playing_match_ids()
     return {
         "status": "ok",
         "queue_size": db.queue_size(),
         "active_matches": db.active_matches(),
-        "live_match_ids": list(_manager.match_info.keys()),
+        "live_match_ids": live_ids,
     }
 
 
