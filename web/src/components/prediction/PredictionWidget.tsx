@@ -1,4 +1,5 @@
 import { formatEther } from "viem";
+import { truncateAddress } from "../../lib/addresses";
 import { OddsBar } from "./OddsBar";
 import { BetForm } from "./BetForm";
 import {
@@ -15,7 +16,7 @@ interface PredictionWidgetProps {
 }
 
 export function PredictionWidget({ matchId }: PredictionWidgetProps) {
-  const { account, connect, connecting, hasProvider } = useWallet();
+  const { account } = useWallet();
   const { pool, poolId, isLoading, hasPool } = usePredictionPool(matchId);
   const position = useUserPosition(poolId, account);
   const { placeBet, isPending: betPending, error: betError } = usePlaceBet();
@@ -87,6 +88,17 @@ export function PredictionWidget({ matchId }: PredictionWidgetProps) {
         </span>
       </div>
 
+      {/* Winner announcement */}
+      {isResolved && pool.winner !== "0x0000000000000000000000000000000000000000" && (
+        <div className={`text-center py-2 rounded text-sm font-bold ${
+          pool.winner.toLowerCase() === pool.playerA.toLowerCase()
+            ? "bg-accent-green/20 text-accent-green"
+            : "bg-purple-500/20 text-purple-400"
+        }`}>
+          Winner: {truncateAddress(pool.winner)}
+        </div>
+      )}
+
       {/* Odds */}
       <OddsBar
         playerA={pool.playerA}
@@ -105,7 +117,7 @@ export function PredictionWidget({ matchId }: PredictionWidgetProps) {
             </p>
           )}
           {position.betOnB > 0n && (
-            <p className="text-xs text-red-400">
+            <p className="text-xs text-purple-400">
               {formatEther(position.betOnB)} MON on Player B
             </p>
           )}
@@ -131,17 +143,19 @@ export function PredictionWidget({ matchId }: PredictionWidgetProps) {
 
       {/* Actions */}
       {!account ? (
-        <button
-          onClick={connect}
-          disabled={connecting}
-          className="w-full px-4 py-2 rounded text-sm font-bold bg-accent-green/20 text-accent-green border border-accent-green/30 hover:bg-accent-green/30 transition-colors"
-        >
-          {connecting
-            ? "Connecting..."
-            : hasProvider
-            ? "Connect Wallet to Bet"
-            : "Install MetaMask"}
-        </button>
+        <div className="text-center space-y-2">
+          <p className="text-xs text-gray-400">
+            Betting is agent-only for now
+          </p>
+          <a
+            href="https://github.com/ScavieFae/nojohns#quick-start"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-xs text-accent-green hover:underline"
+          >
+            Set up an agent to bet →
+          </a>
+        </div>
       ) : isOpen ? (
         <BetForm
           playerA={pool.playerA}

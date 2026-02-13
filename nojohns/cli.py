@@ -14,6 +14,9 @@ Usage:
     nojohns auto <f>               # Autonomous agent loop
     nojohns list-fighters
     nojohns info <fighter>
+    nojohns pools                  # List active prediction pools
+    nojohns bet <pool> <side> <amt> # Bet on a prediction pool
+    nojohns spectate               # Autonomous spectator agent
 """
 
 import argparse
@@ -110,6 +113,39 @@ def _require_melee_args(args) -> bool:
     return ok
 
 
+def _preflight_melee(args) -> bool:
+    """Pre-flight validation of Dolphin/ISO paths before launching a game.
+
+    Call after _resolve_args() and _require_melee_args(). Returns True if OK.
+    """
+    ok = True
+
+    # ISO must exist
+    iso = Path(getattr(args, "iso", "") or "").expanduser()
+    if not iso.exists():
+        logger.error(f"Melee ISO not found: {iso}")
+        logger.error("Check the path in ~/.nojohns/config.toml or pass --iso")
+        ok = False
+
+    # Dolphin must exist
+    dolphin = Path(getattr(args, "dolphin", "") or "").expanduser()
+    if not dolphin.exists():
+        logger.error(f"Dolphin not found: {dolphin}")
+        logger.error("Install Slippi Launcher (slippi.gg) then run: nojohns setup melee")
+        ok = False
+    elif "netplay" not in str(dolphin).lower():
+        logger.error(f"Dolphin path must contain 'netplay': {dolphin}")
+        logger.error(
+            "libmelee requires the Slippi netplay Dolphin. Typical path:\n"
+            "  Mac: ~/Library/Application Support/Slippi Launcher/netplay\n"
+            "  Win: %APPDATA%/Slippi Launcher/netplay\n"
+            "  Linux: ~/.config/Slippi Launcher/netplay"
+        )
+        ok = False
+
+    return ok
+
+
 # ============================================================================
 # Setup Commands
 # ============================================================================
@@ -127,7 +163,11 @@ def cmd_setup(args):
     elif target in (["wallet"], ["monad"]):  # "monad" kept as alias
         return _setup_monad()
     elif target == ["identity"]:
-        return _setup_identity()
+        return _setup_identity(
+            name=getattr(args, "name", None),
+            description=getattr(args, "description", None),
+            yes=getattr(args, "yes", False),
+        )
     else:
         logger.error(f"Unknown setup target: {' '.join(target)}")
         logger.error("Usage: nojohns setup [melee [phillip] | wallet | identity]")
@@ -336,16 +376,30 @@ def _setup_melee_phillip():
     print()
     print("Verifying...")
 
-    # Check TF import
+    # Check TF import and version
     result = subprocess.run(
-        [python, "-c", "import tensorflow as tf; print(f'TensorFlow {tf.__version__}')"],
+        [python, "-c", "import tensorflow as tf; print(tf.__version__)"],
         capture_output=True,
         text=True,
     )
     if result.returncode == 0:
-        print(f"  {result.stdout.strip()} OK")
+        tf_version = result.stdout.strip()
+        print(f"  TensorFlow {tf_version} OK")
+        if not tf_version.startswith("2.18"):
+            logger.warning(
+                f"TensorFlow {tf_version} detected — Phillip requires 2.18.1.\n"
+                "  TF 2.20+ crashes on macOS ARM ('mutex lock failed').\n"
+                "  Fix: pip install tensorflow==2.18.1 tf-keras==2.18.0"
+            )
     else:
-        logger.warning(f"TensorFlow import failed: {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        if "mutex" in stderr.lower() or "invalid argument" in stderr.lower():
+            logger.error(
+                "TensorFlow crashed on import (macOS ARM + TF 2.20 bug).\n"
+                "  Fix: pip install tensorflow==2.18.1 tf-keras==2.18.0"
+            )
+        else:
+            logger.warning(f"TensorFlow import failed: {stderr}")
 
     # Check model loads
     result = subprocess.run(
@@ -433,10 +487,12 @@ def _setup_monad():
         rpc_url = "https://rpc.monad.xyz"
         print("  Using Monad mainnet (chain 143)")
 
-    # Contract addresses (optional — ScavieFae deploys these)
-    match_proof = current_chain.get("match_proof", "")
-    wager = current_chain.get("wager", "")
-    prediction_pool = current_chain.get("prediction_pool", "")
+    # Contract addresses — mainnet defaults, override from existing config
+    from nojohns.config import ChainConfig
+    _defaults = ChainConfig()
+    match_proof = current_chain.get("match_proof", _defaults.match_proof if chain_id == 143 else "")
+    wager = current_chain.get("wager", _defaults.wager if chain_id == 143 else "")
+    prediction_pool = current_chain.get("prediction_pool", _defaults.prediction_pool if chain_id == 143 else "")
 
     # Build updated config, preserving existing sections
     lines = ["# No Johns configuration\n"]
@@ -503,8 +559,14 @@ def _setup_monad():
     return 0
 
 
-def _setup_identity():
-    """Register agent on ERC-8004 IdentityRegistry."""
+def _setup_identity(name=None, description=None, yes=False):
+    """Register agent on ERC-8004 IdentityRegistry.
+
+    Args:
+        name: Agent name (default: NoJohnsAgent). Skips interactive prompt.
+        description: Agent description. Skips interactive prompt.
+        yes: Skip all confirmation prompts (for non-interactive/agent use).
+    """
     import base64
     import json
     import tomllib
@@ -529,10 +591,14 @@ def _setup_identity():
     # Check if already registered
     if chain_data.get("agent_id"):
         print(f"Already registered as agent #{chain_data['agent_id']}")
-        print()
-        overwrite = input("Register a new agent? [y/N]: ").strip().lower()
-        if overwrite != "y":
+        if yes:
+            print("Already registered — skipping (use interactive mode to re-register)")
             return 0
+        else:
+            print()
+            overwrite = input("Register a new agent? [y/N]: ").strip().lower()
+            if overwrite != "y":
+                return 0
 
     # Get melee config for connect code
     melee_data = existing_raw.get("games", {}).get("melee", {})
@@ -551,14 +617,21 @@ def _setup_identity():
         print("Network: Monad testnet")
     print()
 
-    # Prompt for agent details
+    # Resolve agent details: CLI flags > interactive > defaults
     default_name = "NoJohnsAgent"
-    name = input(f"Agent name [{default_name}]: ").strip() or default_name
-
     default_desc = "Melee competitor on No Johns arena"
-    description = input(f"Description [{default_desc}]: ").strip() or default_desc
 
-    if not connect_code:
+    if name is None and not yes:
+        name = input(f"Agent name [{default_name}]: ").strip() or default_name
+    else:
+        name = name or default_name
+
+    if description is None and not yes:
+        description = input(f"Description [{default_desc}]: ").strip() or default_desc
+    else:
+        description = description or default_desc
+
+    if not connect_code and not yes:
         connect_code = input("Slippi connect code (e.g. SCAV#382): ").strip()
 
     # Build registration JSON
@@ -586,10 +659,11 @@ def _setup_identity():
     print(json.dumps(registration, indent=2))
     print()
 
-    confirm = input("Register this agent onchain? [Y/n]: ").strip().lower()
-    if confirm == "n":
-        print("Cancelled.")
-        return 0
+    if not yes:
+        confirm = input("Register this agent onchain? [Y/n]: ").strip().lower()
+        if confirm == "n":
+            print("Cancelled.")
+            return 0
 
     # Call register() on IdentityRegistry
     try:
@@ -720,18 +794,21 @@ def _update_config_identity(existing_raw: dict, agent_id: int, identity_registry
     lines.append(f'private_key = "{wallet_data.get("private_key", "")}"')
     lines.append("")
 
-    # [chain] with identity info
+    # [chain] with identity info — preserve all existing fields
     chain_data = existing_raw.get("chain", {})
+    # Update with new identity values
+    chain_data["identity_registry"] = identity_registry
+    chain_data["reputation_registry"] = reputation_registry
+    chain_data["agent_id"] = agent_id
+    chain_data.setdefault("chain_id", chain_id)
+    chain_data.setdefault("rpc_url", "https://testnet-rpc.monad.xyz")
+
     lines.append("[chain]")
-    lines.append(f"chain_id = {chain_data.get('chain_id', chain_id)}")
-    lines.append(f'rpc_url = "{chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz")}"')
-    if chain_data.get("match_proof"):
-        lines.append(f'match_proof = "{chain_data["match_proof"]}"')
-    if chain_data.get("wager"):
-        lines.append(f'wager = "{chain_data["wager"]}"')
-    lines.append(f'identity_registry = "{identity_registry}"')
-    lines.append(f'reputation_registry = "{reputation_registry}"')
-    lines.append(f"agent_id = {agent_id}")
+    for k, v in chain_data.items():
+        if isinstance(v, str):
+            lines.append(f'{k} = "{v}"')
+        else:
+            lines.append(f"{k} = {v}")
     lines.append("")
 
     CONFIG_PATH.write_text("\n".join(lines))
@@ -1104,13 +1181,13 @@ def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, c
     if config.chain is None or config.chain.wager is None:
         return
 
-    # Convert match_id (UUID string) to bytes32
-    # Strip hyphens and pad/truncate to 32 bytes
-    match_id_clean = match_id.replace("-", "")
-    match_id_bytes = bytes.fromhex(match_id_clean.ljust(64, '0')[:64])
+    # Convert match_id (UUID string) to bytes32 — must use SHA256 to match
+    # what recordMatch() stores in MatchProof (Wager.settleWager looks it up there)
+    import hashlib
+    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
 
     pot_mon = (wager_amount or 0) * 2 / 10**18
-    print(f"  Settling wager {wager_id} ({pot_mon} MON pot)...", end="", flush=True)
+    print(f"[WAGER] Settling {pot_mon} MON pot...", end="", flush=True)
 
     try:
         tx_hash = settle_wager(
@@ -1120,14 +1197,15 @@ def _auto_settle_wager(match_id: str, wager_id: int, wager_amount: int | None, c
             wager_id=wager_id,
             match_id=match_id_bytes,
         )
-        print(f" settled! TX: {tx_hash[:16]}...")
+        print(f" done! TX: {tx_hash[:16]}...")
+        print(f"[WAGER] SETTLED -- {pot_mon} MON paid to winner")
     except Exception as e:
         # Settlement might fail if opponent already settled, or match not recorded yet
         if "already" in str(e).lower():
             print(" already settled.")
         else:
             print(f" failed: {e}")
-            print(f"  Settle manually: nojohns wager settle {wager_id} {match_id_clean}")
+            print(f"[WAGER] Settle manually: nojohns wager settle {wager_id} {match_id}")
 
 
 def _negotiate_wager(
@@ -1186,7 +1264,7 @@ def _negotiate_wager(
     amount_wei = max_amount_wei
     amount_mon = wager_amount
 
-    print(f"Proposing {amount_mon} MON wager...")
+    print(f"[WAGER] Proposing {amount_mon} MON wager...")
     try:
         tx_hash, wager_id = propose_wager(
             account=account,
@@ -1197,10 +1275,10 @@ def _negotiate_wager(
             amount_wei=amount_wei,
         )
     except Exception as e:
-        print(f"Failed to propose wager: {e}")
+        print(f"[WAGER] Failed to propose: {e}")
         return None, None
 
-    print(f"Wager proposed (ID: {wager_id})")
+    print(f"[WAGER] Proposed (ID: {wager_id}, escrowed {amount_mon} MON)")
 
     # Tell arena about the proposal
     try:
@@ -1210,30 +1288,37 @@ def _negotiate_wager(
             "wager_id": wager_id,
         })
     except urllib.error.URLError as e:
-        print(f"Warning: couldn't register wager with arena: {e}")
+        print(f"[WAGER] Warning: couldn't register with arena: {e}")
 
     # Wait for opponent to accept (30s timeout)
-    print("Waiting for opponent to accept (30s)...", end="", flush=True)
+    print("[WAGER] Waiting for opponent", end="", flush=True)
     deadline = time.time() + 30
+    elapsed = 0
     while time.time() < deadline:
         time.sleep(1)
-        print(".", end="", flush=True)
+        elapsed += 1
+        if elapsed % 5 == 0:
+            remaining = int(deadline - time.time())
+            print(f" {remaining}s", end="", flush=True)
+        else:
+            print(".", end="", flush=True)
         try:
             wager_info = _get(f"/matches/{match_id}/wager")
             status = wager_info.get("wager_status")
             if status == "accepted":
-                print(" accepted!")
-                print(f"Wager locked! Pot: {amount_mon * 2} MON")
+                print()
+                print(f"[WAGER] LOCKED -- {amount_mon * 2} MON pot (ID: {wager_id})")
                 return wager_id, amount_wei
             elif status == "declined":
-                print(" declined.")
+                print()
+                print(f"[WAGER] Opponent declined.")
                 # Cancel the onchain wager to get refund
                 try:
                     from nojohns.wallet import cancel_wager
                     cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
-                    print("Wager cancelled, MON refunded.")
+                    print("[WAGER] Cancelled, MON refunded.")
                 except Exception:
-                    print(f"Warning: cancel wager {wager_id} manually to get refund.")
+                    print(f"[WAGER] Cancel wager {wager_id} manually to get refund.")
                 return None, None
 
             # Check if opponent also proposed — auto-accept if within our max
@@ -1243,8 +1328,9 @@ def _negotiate_wager(
             if (opponent_wager_id and opponent_wager_id != wager_id and
                 proposer != account.address and opponent_amount is not None):
                 if opponent_amount <= max_amount_wei:
-                    print(f" opponent proposed {opponent_amount / 10**18} MON!")
-                    print("Auto-accepting opponent's wager...")
+                    opp_mon = opponent_amount / 10**18
+                    print()
+                    print(f"[WAGER] Opponent counter-proposed {opp_mon} MON — accepting...")
                     try:
                         from nojohns.wallet import accept_wager, cancel_wager
                         accept_wager(
@@ -1257,14 +1343,15 @@ def _negotiate_wager(
                         # Cancel our own wager to get refund
                         cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
                         pot_mon = opponent_amount * 2 / 10**18
-                        print(f"Wager locked! Pot: {pot_mon} MON")
+                        print(f"[WAGER] LOCKED -- {pot_mon} MON pot (ID: {opponent_wager_id})")
                         _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
                         return opponent_wager_id, opponent_amount
                     except Exception as e:
-                        print(f"Auto-accept failed: {e}")
+                        print(f"[WAGER] Auto-accept failed: {e}")
                 else:
-                    print(f" opponent wants {opponent_amount / 10**18} MON (> our max {wager_amount}).")
-                    print("Declining opponent's wager.")
+                    opp_mon = opponent_amount / 10**18
+                    print()
+                    print(f"[WAGER] Opponent wants {opp_mon} MON (> our max {wager_amount}) — declining.")
                     try:
                         _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
                     except urllib.error.URLError:
@@ -1273,14 +1360,15 @@ def _negotiate_wager(
         except urllib.error.URLError:
             continue
 
-    print(" timeout.")
+    print()
+    print("[WAGER] Negotiation timed out.")
     # Cancel the onchain wager
     try:
         from nojohns.wallet import cancel_wager
         cancel_wager(account, config.chain.rpc_url, config.chain.wager, wager_id)
-        print("Wager cancelled, MON refunded.")
+        print("[WAGER] Cancelled, MON refunded.")
     except Exception:
-        print(f"Warning: cancel wager {wager_id} manually to get refund.")
+        print(f"[WAGER] Cancel wager {wager_id} manually to get refund.")
     return None, None
 
 
@@ -1307,12 +1395,12 @@ def _respond_to_wager(
     wager_id = wager_info.get("wager_id")
     amount_mon = amount_wei / 10**18
 
-    print(f"Opponent proposed {amount_mon} MON wager.")
+    print(f"[WAGER] Opponent proposed {amount_mon} MON wager.")
 
     # Decline if over our max (or no max configured)
     if max_amount_wei is None or amount_wei > max_amount_wei:
         max_mon = max_amount_wei / 10**18 if max_amount_wei else 0
-        print(f"Declining — exceeds our max ({max_mon} MON).")
+        print(f"[WAGER] Declining — {amount_mon} MON exceeds our max ({max_mon} MON).")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
         except urllib.error.URLError:
@@ -1320,7 +1408,7 @@ def _respond_to_wager(
         return None, None
 
     # Accept onchain
-    print(f"Auto-accepting {amount_mon} MON wager...")
+    print(f"[WAGER] Accepting {amount_mon} MON...")
     try:
         tx_hash = accept_wager(
             account=account,
@@ -1330,7 +1418,7 @@ def _respond_to_wager(
             amount_wei=amount_wei,
         )
     except Exception as e:
-        print(f"Failed to accept wager: {e}")
+        print(f"[WAGER] Accept failed: {e}")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
         except urllib.error.URLError:
@@ -1341,9 +1429,9 @@ def _respond_to_wager(
     try:
         _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
     except urllib.error.URLError as e:
-        print(f"Warning: couldn't confirm acceptance with arena: {e}")
+        print(f"[WAGER] Warning: couldn't confirm with arena: {e}")
 
-    print(f"Wager accepted! Pot: {amount_mon * 2} MON")
+    print(f"[WAGER] LOCKED -- {amount_mon * 2} MON pot (ID: {wager_id})")
     return wager_id, amount_wei
 
 
@@ -1618,7 +1706,14 @@ def _print_match_summary(
         print(f"  Signed: FAILED  |  Wallet: {nj_cfg.wallet.address[:10]}...")
     if result.wager_id is not None:
         pot_mon = (result.wager_amount_wei or 0) * 2 / 10**18
-        print(f"  Wager: {pot_mon} MON pot  |  ID: {result.wager_id}")
+        stake_mon = (result.wager_amount_wei or 0) / 10**18
+        if result.outcome == "COMPLETED":
+            if result.we_won:
+                print(f"  Wager: WON +{stake_mon} MON  ({pot_mon} MON pot)")
+            else:
+                print(f"  Wager: LOST -{stake_mon} MON  ({pot_mon} MON pot)")
+        else:
+            print(f"  Wager: {pot_mon} MON pot  (unsettled — {result.outcome})")
     print("=" * 44)
     print()
 
@@ -1785,8 +1880,8 @@ def cmd_auto(args):
                     print(f"Below min bankroll ({min_bankroll} MON). Stopping.")
                     break
 
-            # 2. Join queue and get matched (wager decision happens after we know opponent)
-            # For now, run match without wager — we'll decide after scouting
+            # 2. Join queue and get matched
+            wager_amount = args.wager if not args.no_wager else None
             result = _run_single_match(
                 fighter_name=args.fighter,
                 fighter=fighter,
@@ -1796,7 +1891,7 @@ def cmd_auto(args):
                 _post=_post,
                 _get=_get,
                 _delete=_delete,
-                wager_amount=None,  # Decided dynamically below
+                wager_amount=wager_amount,
             )
 
             if result is None:
@@ -2197,10 +2292,17 @@ def cmd_wager_settle(args):
     wager_id = int(args.wager_id)
     match_id_hex = args.match_id
 
-    # Convert match_id to bytes32
+    # Convert match_id to bytes32 — SHA256 hash to match MatchProof storage
+    import hashlib
     if match_id_hex.startswith("0x"):
         match_id_hex = match_id_hex[2:]
-    match_id = bytes.fromhex(match_id_hex.ljust(64, '0'))
+    # If it looks like a UUID (32 hex chars or has dashes), hash it
+    # If already 64 hex chars, assume it's already a hash
+    clean = match_id_hex.replace("-", "")
+    if len(clean) == 64:
+        match_id = bytes.fromhex(clean)
+    else:
+        match_id = hashlib.sha256(match_id_hex.encode()).digest()
 
     # Get wager info
     try:
@@ -2379,6 +2481,194 @@ def cmd_wager_list(args):
 
 
 # ============================================================================
+# Prediction Pool Commands
+# ============================================================================
+
+
+def cmd_pools(args):
+    """List active prediction pools from the arena."""
+    config = load_config()
+    arena_url = getattr(args, "server", None) or config.arena_server
+
+    from agents.spectator import discover_pools
+
+    pools = discover_pools(arena_url)
+    if not pools:
+        print("No active prediction pools.")
+        return 0
+
+    print(f"{'Pool ID':>8}  {'Match Status':<12}  {'Player A':<14}  {'Player B':<14}")
+    print("-" * 56)
+
+    for p in pools:
+        pool_id = p.get("pool_id", "?")
+        status = p.get("status", "?")
+        p1 = (p.get("p1_wallet") or "none")[:12] + ".."
+        p2 = (p.get("p2_wallet") or "none")[:12] + ".."
+        print(f"{pool_id:>8}  {status:<12}  {p1:<14}  {p2:<14}")
+
+    # If wallet is configured, show onchain odds for active pools
+    if config.wallet and config.chain:
+        print()
+        active = [p for p in pools if p.get("status") == "playing" and p.get("pool_id") is not None]
+        if active:
+            print(f"{'Pool ID':>8}  {'Total A':>12}  {'Total B':>12}  {'Odds A':>8}  {'Odds B':>8}")
+            print("-" * 58)
+            for p in active[:5]:  # Limit to 5 to avoid RPC spam
+                try:
+                    from nojohns.contract import get_pool_odds
+                    odds = get_pool_odds(p["pool_id"], config.chain.rpc_url, config.chain.prediction_pool)
+                    total_a_mon = odds["totalA"] / 10**18
+                    total_b_mon = odds["totalB"] / 10**18
+                    print(
+                        f"{p['pool_id']:>8}  {total_a_mon:>12.4f}  {total_b_mon:>12.4f}  "
+                        f"{odds['impliedProbA']:>7.1%}  {odds['impliedProbB']:>7.1%}"
+                    )
+                except Exception as e:
+                    print(f"{p['pool_id']:>8}  (error: {e})")
+
+    print()
+    return 0
+
+
+def cmd_bet(args):
+    """Place a bet on a prediction pool."""
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None:
+        logger.error("No chain configured. Run: nojohns setup wallet")
+        return 1
+
+    from nojohns.wallet import load_wallet
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    pool_id = int(args.pool_id)
+    side = args.side.upper()
+    if side not in ("A", "B"):
+        logger.error("Side must be 'A' or 'B'")
+        return 1
+    bet_on_a = side == "A"
+
+    try:
+        amount_mon = float(args.amount)
+        amount_wei = int(amount_mon * 10**18)
+    except ValueError:
+        logger.error(f"Invalid amount: {args.amount}")
+        return 1
+
+    # Conflict of interest check
+    from nojohns.contract import get_pool_odds
+    from agents.spectator import is_conflict_of_interest
+
+    try:
+        pool = get_pool_odds(pool_id, config.chain.rpc_url, config.chain.prediction_pool)
+    except Exception as e:
+        logger.error(f"Failed to read pool {pool_id}: {e}")
+        return 1
+
+    if is_conflict_of_interest(pool, account.address):
+        logger.error(
+            "You're a player in this match. Use `nojohns wager` for direct wagers instead. "
+            "Players betting on their own match's prediction pool is a conflict of interest."
+        )
+        return 1
+
+    # Show pool state
+    total_a_mon = pool["totalA"] / 10**18
+    total_b_mon = pool["totalB"] / 10**18
+    print(f"Pool {pool_id}: {total_a_mon:.4f} MON on A | {total_b_mon:.4f} MON on B")
+    print(f"  Implied odds: A={pool['impliedProbA']:.1%} / B={pool['impliedProbB']:.1%}")
+    print(f"  Betting {amount_mon} MON on side {side}")
+    print(f"  From: {account.address}")
+    print()
+
+    try:
+        from nojohns.contract import place_bet
+        tx_hash = place_bet(
+            pool_id, bet_on_a, amount_wei,
+            account, config.chain.rpc_url, config.chain.prediction_pool,
+        )
+        print(f"Bet placed! TX: {tx_hash}")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to place bet: {e}")
+        return 1
+
+
+def cmd_spectate(args):
+    """Run the autonomous spectator agent (watch matches, bet on pools)."""
+    import asyncio
+
+    config = load_config()
+
+    if config.wallet is None or config.wallet.private_key is None:
+        logger.error("No wallet configured. Run: nojohns setup wallet")
+        return 1
+
+    if config.chain is None:
+        logger.error("No chain configured. Run: nojohns setup wallet")
+        return 1
+
+    from nojohns.wallet import load_wallet
+    account = load_wallet(config)
+    if account is None:
+        logger.error("Failed to load wallet.")
+        return 1
+
+    arena_url = getattr(args, "server", None) or config.arena_server
+    risk = args.risk or "moderate"
+    risk_params = {"conservative": (0.25, 0.03), "moderate": (0.5, 0.05), "aggressive": (1.0, 0.10)}
+    multiplier, max_pct = risk_params.get(risk, (0.5, 0.05))
+
+    from agents.spectator import SpectatorAgent
+
+    agent = SpectatorAgent(
+        arena_url=arena_url,
+        account=account,
+        rpc_url=config.chain.rpc_url,
+        pool_address=config.chain.prediction_pool,
+        multiplier=multiplier,
+        max_pct=max_pct,
+        poll_interval=args.interval or 10,
+    )
+
+    from agents.bankroll import get_mon_balance
+    balance = get_mon_balance(account.address, config.chain.rpc_url)
+    balance_mon = balance / 10**18
+
+    print(f"Spectator agent starting")
+    print(f"  Arena: {arena_url}")
+    print(f"  Wallet: {account.address}")
+    print(f"  Balance: {balance_mon:.4f} MON")
+    print(f"  Risk: {risk} (Kelly {multiplier}x, max {max_pct:.0%})")
+    print(f"  Pool: {config.chain.prediction_pool}")
+    print()
+    print("Watching for live matches with prediction pools...")
+    print("Press Ctrl+C to stop.")
+    print()
+
+    try:
+        asyncio.run(agent.run())
+    except KeyboardInterrupt:
+        agent.stop()
+        print()
+        print(f"Stopped. Placed {len(agent.bets)} bet(s) this session.")
+        if agent.bets:
+            print("Claiming any resolved payouts...")
+            txs = agent.claim_all()
+            if txs:
+                print(f"Claimed {len(txs)} payout(s).")
+    return 0
+
+
+# ============================================================================
 # Fighter Loading
 # ============================================================================
 
@@ -2404,7 +2694,23 @@ def load_fighter(name: str):
 # Main
 # ============================================================================
 
+def _check_python_version():
+    """Warn if running on Python 3.13+ where libmelee won't build."""
+    if sys.version_info >= (3, 13):
+        print(
+            f"WARNING: You're running Python {sys.version_info.major}.{sys.version_info.minor}. "
+            "libmelee requires Python 3.12 (pyenet C extensions fail on 3.13+).\n"
+            "Use the project venv:\n"
+            "  source .venv/bin/activate    # Python 3.12 with all deps\n"
+            "Or create one:\n"
+            "  python3.12 -m venv .venv && .venv/bin/pip install -e '.[wallet]'\n",
+            file=sys.stderr,
+        )
+
+
 def main():
+    _check_python_version()
+
     parser = argparse.ArgumentParser(
         prog="nojohns",
         description="Melee AI tournaments for Moltbots",
@@ -2418,6 +2724,18 @@ def main():
     setup_parser.add_argument(
         "setup_target", nargs="*", default=[],
         help="What to set up: melee=game, wallet=onchain, identity=ERC-8004 registration",
+    )
+    setup_parser.add_argument(
+        "--name", default=None,
+        help="Agent name for identity registration (default: NoJohnsAgent)",
+    )
+    setup_parser.add_argument(
+        "--description", default=None,
+        help="Agent description for identity registration",
+    )
+    setup_parser.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Skip confirmation prompts (for non-interactive/agent use)",
     )
     setup_parser.set_defaults(func=cmd_setup)
 
@@ -2509,6 +2827,7 @@ def main():
     auto_parser.add_argument("--max-matches", type=int, default=None, help="Stop after N matches")
     auto_parser.add_argument("--min-bankroll", type=float, default=None, help="MON stop threshold")
     auto_parser.add_argument("--cooldown", type=int, default=None, help="Seconds between matches")
+    auto_parser.add_argument("--wager", type=float, default=None, help="Wager this amount of MON per match")
     auto_parser.add_argument("--no-wager", action="store_true", help="Play without wagering")
     auto_parser.set_defaults(func=cmd_auto)
 
@@ -2565,6 +2884,28 @@ def main():
     wager_list.add_argument("--address", "-a", help="Wallet address (default: configured wallet)")
     wager_list.set_defaults(wager_func=cmd_wager_list)
 
+    # pools command
+    pools_parser = subparsers.add_parser("pools", help="List active prediction pools")
+    pools_parser.add_argument("--server", default=None, help="Arena server URL")
+    pools_parser.set_defaults(func=cmd_pools)
+
+    # bet command
+    bet_parser = subparsers.add_parser("bet", help="Bet on a prediction pool")
+    bet_parser.add_argument("pool_id", help="Pool ID to bet on")
+    bet_parser.add_argument("side", help="Side to bet on: A or B")
+    bet_parser.add_argument("amount", help="Amount of MON to bet (e.g. 0.01)")
+    bet_parser.set_defaults(func=cmd_bet)
+
+    # spectate command
+    spectate_parser = subparsers.add_parser(
+        "spectate", help="Autonomous spectator: watch matches, bet on prediction pools"
+    )
+    spectate_parser.add_argument("--server", default=None, help="Arena server URL")
+    spectate_parser.add_argument("--risk", choices=["conservative", "moderate", "aggressive"],
+                                 default=None, help="Risk profile (default: moderate)")
+    spectate_parser.add_argument("--interval", type=int, default=None, help="Poll interval in seconds (default: 10)")
+    spectate_parser.set_defaults(func=cmd_spectate)
+
     args = parser.parse_args()
 
     # Load config and resolve args for game commands
@@ -2575,6 +2916,8 @@ def main():
         _resolve_args(args, game_cfg, nj_cfg)
 
         if not _require_melee_args(args):
+            sys.exit(1)
+        if not _preflight_melee(args):
             sys.exit(1)
 
     sys.exit(args.func(args))

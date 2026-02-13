@@ -9,9 +9,13 @@
  * Monad testnet 100-block getLogs limit.
  */
 
-const RPC = "https://testnet-rpc.monad.xyz";
-const DEPLOY_BLOCK = 10710000;
-const MAX_RANGE = 100; // Monad testnet hard limit
+// Defaults to mainnet; pass --testnet for testnet
+const isTestnet = process.argv.includes("--testnet");
+const RPC = isTestnet
+  ? "https://testnet-rpc.monad.xyz"
+  : "https://rpc.monad.xyz";
+const DEPLOY_BLOCK = isTestnet ? 10710000 : 54717354;
+const MAX_RANGE = 100; // Monad caps getLogs at 100 blocks per request
 const CONCURRENCY = 50;
 
 const EVENTS = {
@@ -31,7 +35,9 @@ const EVENTS = {
       "0x17a11cc71694f13ce59da349be2384455ee1b564012052f6b25b315fa42dabb1",
   },
   eloFeedback: {
-    address: "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+    address: isTestnet
+      ? "0x8004B663056A597Dffe9eCcC1965A193B7388713"
+      : "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
     topic0:
       "0xf5c8dfad1418627c565486bc917258f166ee28e7d5c6a387b6fade859a4ba51a",
   },

@@ -1,0 +1,14 @@
+# Arena only needs: arena/, nojohns/, agents/, pyproject.toml, tests/
+# Exclude everything else to speed up `railway up`
+
+web/
+contracts/
+fighters/
+tournaments/
+docs/
+scripts/
+skill/
+.github/
+.claude/
+.venv/
+*.md

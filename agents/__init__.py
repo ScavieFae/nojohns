@@ -25,6 +25,13 @@ from agents.strategy import (
     WagerStrategy,
     KellyStrategy,
 )
+from agents.spectator import (
+    SpectatorAgent,
+    discover_pools,
+    estimate_win_probability,
+    kelly_parimutuel,
+    is_conflict_of_interest,
+)
 
 __all__ = [
     "BankrollState",
@@ -42,4 +49,9 @@ __all__ = [
     "SessionStats",
     "WagerStrategy",
     "KellyStrategy",
+    "SpectatorAgent",
+    "discover_pools",
+    "estimate_win_probability",
+    "kelly_parimutuel",
+    "is_conflict_of_interest",
 ]

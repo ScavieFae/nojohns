@@ -17,8 +17,10 @@ Live streaming:
 """
 
 import asyncio
+import hashlib
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -31,14 +33,51 @@ from .db import ArenaDB
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Arena Wallet (for posting Elo updates to ReputationRegistry)
+# Arena Wallet (for onchain operations)
 # =============================================================================
 # SECURITY: Arena wallet key is loaded from env var, NOT config file.
-# This wallet is used only for posting Elo updates — it cannot access
-# player funds or forge match results (those need player signatures).
+# This wallet submits recordMatch() (using player sigs), posts Elo updates,
+# creates/resolves prediction pools, but cannot forge results (needs player sigs).
 # Keep minimal MON in this wallet, just enough for gas.
 
 _arena_account = None  # Loaded lazily
+
+
+def _background(fn, *args):
+    """Run a function in a background thread (fire-and-forget for onchain ops).
+
+    Onchain operations (record match, post Elo, create/resolve/cancel pools)
+    can take 5-30s each due to Monad RPC latency and tx confirmation. Running
+    them synchronously in HTTP handlers causes Railway's proxy to 502 when the
+    response takes too long. This fires them off in daemon threads so the HTTP
+    response returns immediately.
+    """
+    threading.Thread(target=fn, args=args, daemon=True).start()
+
+
+# Lock to serialize onchain transactions from the arena wallet.
+# Multiple concurrent txs from the same wallet cause nonce collisions
+# ("An existing transaction had higher priority"). All chain ops must
+# go through _background_chain() to avoid this.
+_chain_lock = threading.Lock()
+
+
+def _background_chain(*steps):
+    """Run a sequence of onchain operations in a single background thread.
+
+    Each step is a (fn, *args) tuple. They run sequentially under _chain_lock
+    so nonces don't collide. Errors in one step don't stop subsequent steps.
+    """
+    def _run():
+        with _chain_lock:
+            for step in steps:
+                fn, *args = step
+                try:
+                    fn(*args)
+                except Exception as e:
+                    logger.warning(f"Background chain op {fn.__name__} failed: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _get_arena_account():
@@ -163,6 +202,85 @@ def _post_elo_updates(match: dict):
             logger.warning(f"Failed to post loser Elo: {e}")
 
 # =============================================================================
+# Onchain Match Recording
+# =============================================================================
+
+
+def _try_record_match(match_id: str):
+    """Submit recordMatch() to MatchProof using the arena wallet.
+
+    Called when both player signatures arrive. The arena is the submitter
+    (pays gas), using the two player EIP-712 signatures collected via the
+    /matches/{id}/signature endpoint.
+
+    Silently skips if arena wallet not configured, match_proof not set,
+    or either signature is missing.
+    """
+    account = _get_arena_account()
+    if account is None:
+        logger.debug("Arena wallet not configured — skipping match recording")
+        return
+
+    match_proof = os.environ.get("MATCH_PROOF")
+    if not match_proof:
+        logger.warning(
+            f"Match recording skipped for {match_id}: MATCH_PROOF env var not set"
+        )
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        return
+
+    winner_wallet = match.get("winner_wallet")
+    loser_wallet = match.get("loser_wallet")
+    if not winner_wallet or not loser_wallet:
+        logger.debug(f"Match {match_id} missing winner/loser wallets — skipping recording")
+        return
+
+    sigs = db.get_signatures(match_id)
+    if len(sigs) < 2:
+        logger.debug(f"Match {match_id} has {len(sigs)} signatures — need 2")
+        return
+
+    sig_a = bytes.fromhex(sigs[0]["signature"])
+    sig_b = bytes.fromhex(sigs[1]["signature"])
+
+    # Build the same MatchResult the players signed
+    match_result = {
+        "matchId": hashlib.sha256(match_id.encode()).digest(),
+        "winner": winner_wallet,
+        "loser": loser_wallet,
+        "gameId": "melee",
+        "winnerScore": match.get("winner_score", 0),
+        "loserScore": match.get("loser_score", 0),
+        "replayHash": b"\x00" * 32,
+        "timestamp": match["result_timestamp"],
+    }
+
+    try:
+        from nojohns.contract import record_match, is_recorded
+
+        # Check if already recorded (idempotent — another client may have submitted)
+        if is_recorded(match_result["matchId"], rpc_url=rpc_url, contract_address=match_proof):
+            logger.info(f"Match {match_id} already recorded onchain")
+            return
+
+        tx_hash = record_match(
+            match_result, sig_a, sig_b,
+            account, rpc_url=rpc_url, contract_address=match_proof,
+        )
+        logger.info(f"Match {match_id} recorded onchain: tx={tx_hash}")
+    except ImportError:
+        logger.debug("web3 not installed — skipping match recording")
+    except Exception as e:
+        logger.warning(f"Failed to record match {match_id} onchain: {e}")
+
+
+# =============================================================================
 # Prediction Pool Lifecycle
 # =============================================================================
 
@@ -197,9 +315,9 @@ def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None
 
     rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
 
-    # Convert match_id UUID to bytes32 (same logic as wager settlement)
-    match_id_clean = match_id.replace("-", "")
-    match_id_bytes = bytes.fromhex(match_id_clean.ljust(64, "0")[:64])
+    # Convert match_id UUID to bytes32 — must match the SHA256 hash used
+    # in EIP-712 signing and recordMatch() so pools link to recorded matches
+    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
 
     try:
         from nojohns.contract import create_pool
@@ -254,6 +372,51 @@ def _try_cancel_pool(match_id: str):
         logger.warning(f"Failed to cancel prediction pool {pool_id}: {e}")
 
 
+def _try_void_wager(match_id: str):
+    """Void (claimTimeout) an accepted wager on a dead match.
+
+    Called when a match expires without completing. The Wager contract requires
+    the timeout period to have elapsed before claimTimeout can be called, so
+    this may fail on recently-expired matches — that's fine, the next sweep
+    will catch it.
+    """
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        return
+
+    wager_id = match.get("wager_id")
+    wager_status = match.get("wager_status")
+    if wager_id is None or wager_status != "accepted":
+        return
+
+    account = _get_arena_account()
+    if account is None:
+        return
+
+    wager_address = os.environ.get("WAGER_CONTRACT")
+    if not wager_address:
+        return
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    try:
+        from nojohns.wallet import claim_timeout
+
+        tx_hash = claim_timeout(
+            account=account,
+            rpc_url=rpc_url,
+            contract_address=wager_address,
+            wager_id=wager_id,
+        )
+        logger.info(f"Wager {wager_id} voided for expired match {match_id}: tx={tx_hash}")
+    except ImportError:
+        logger.debug("web3 not installed — skipping wager void")
+    except Exception as e:
+        # TimeoutNotReached is expected if match just expired — next sweep will retry
+        logger.debug(f"Could not void wager {wager_id} for match {match_id}: {e}")
+
+
 def _try_resolve_pool(match_id: str):
     """Resolve a prediction pool after match is recorded onchain.
 
@@ -293,10 +456,14 @@ def _try_resolve_pool(match_id: str):
 
 
 def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
-    """Expire stale matches and cancel their prediction pools."""
+    """Expire stale matches, cancel their prediction pools, and void stuck wagers."""
     expired_ids = db.expire_stale_matches(timeout_seconds)
-    for mid in expired_ids:
-        _try_cancel_pool(mid)
+    if expired_ids:
+        steps = []
+        for mid in expired_ids:
+            steps.append((_try_cancel_pool, mid))
+            steps.append((_try_void_wager, mid))
+        _background_chain(*steps)
 
 
 # Global DB instance — set during lifespan
@@ -344,6 +511,12 @@ def _log_startup_config():
         logger.warning("  Arena wallet: NOT configured (ARENA_PRIVATE_KEY missing)")
         logger.warning("  → Prediction pools, Elo posting DISABLED")
 
+    match_proof = os.environ.get("MATCH_PROOF")
+    if match_proof:
+        logger.info(f"  MatchProof: {match_proof}")
+    else:
+        logger.info("  MatchProof: NOT configured (MATCH_PROOF not set — arena won't record matches)")
+
     if pool_addr:
         if not arena_key:
             logger.error(
@@ -354,6 +527,12 @@ def _log_startup_config():
             logger.info(f"  Prediction pool: {pool_addr}")
     else:
         logger.info("  Prediction pool: NOT configured (PREDICTION_POOL not set)")
+
+    wager_addr = os.environ.get("WAGER_CONTRACT")
+    if wager_addr:
+        logger.info(f"  Wager contract: {wager_addr}")
+    else:
+        logger.info("  Wager contract: NOT configured (dead wager voiding disabled)")
 
     if rep_registry:
         logger.info(f"  Reputation registry: {rep_registry}")
@@ -486,8 +665,8 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
             f"Matched! {opponent['connect_code']} vs {req.connect_code} -> {match_id}"
         )
 
-        # Create prediction pool for spectators to bet on
-        _try_create_pool(match_id, opponent.get("wallet_address"), req.wallet_address)
+        # Create prediction pool for spectators to bet on (background — don't block response)
+        _background_chain((_try_create_pool, match_id, opponent.get("wallet_address"), req.wallet_address))
 
         # Return matched status with opponent info
         return {
@@ -616,17 +795,16 @@ def submit_signature(match_id: str, req: SignatureRequest) -> dict[str, Any]:
         f"Signature for {match_id} from {req.address} ({count}/2 received)"
     )
 
-    # When both signatures received, post Elo updates and resolve pool
+    # When both signatures received: record onchain, post Elo, resolve pool.
+    # Runs in ONE background thread, sequentially, so nonces don't collide.
+    # (Parallel _background() calls caused "existing transaction had higher
+    # priority" errors — every tx got the same nonce.)
     if count >= 2:
-        try:
-            _post_elo_updates(match)
-        except Exception as e:
-            logger.warning(f"Elo posting failed (non-critical): {e}")
-
-        try:
-            _try_resolve_pool(match_id)
-        except Exception as e:
-            logger.warning(f"Pool resolution failed (non-critical): {e}")
+        _background_chain(
+            (_try_record_match, match_id),
+            (_post_elo_updates, match),
+            (_try_resolve_pool, match_id),
+        )
 
     return {
         "match_id": match_id,
@@ -659,8 +837,9 @@ def admin_cleanup() -> dict[str, Any]:
     db = get_db()
     expired_queue = db.expire_stale_entries(timeout_seconds=0)
     expired_ids = db.expire_stale_matches(timeout_seconds=0)
-    for mid in expired_ids:
-        _try_cancel_pool(mid)
+    if expired_ids:
+        steps = [(_try_cancel_pool, mid) for mid in expired_ids]
+        _background_chain(*steps)
     _manager.sweep_stale()
     return {
         "expired_queue_entries": expired_queue,
@@ -677,11 +856,16 @@ def health() -> dict[str, Any]:
     db = get_db()
     db.expire_stale_entries()
     _expire_matches_and_cancel_pools(db)
+    # Prefer in-memory manager (has frame data for viewers), fall back to DB
+    # after restarts when manager state is lost but DB still has playing matches
+    live_ids = list(_manager.match_info.keys())
+    if not live_ids:
+        live_ids = db.get_playing_match_ids()
     return {
         "status": "ok",
         "queue_size": db.queue_size(),
         "active_matches": db.active_matches(),
-        "live_match_ids": list(_manager.match_info.keys()),
+        "live_match_ids": live_ids,
     }
 
 
@@ -1152,4 +1336,19 @@ def get_match_pool(match_id: str) -> dict[str, Any]:
     return {
         "match_id": match_id,
         "pool_id": match.get("pool_id"),
+    }
+
+
+@app.get("/pools")
+def list_pools() -> dict[str, Any]:
+    """List all matches with active prediction pools.
+
+    Spectator agents use this to discover bettable pools.
+    Returns matches where pool_id is set, ordered by newest first.
+    """
+    db = get_db()
+    pools = db.get_matches_with_pools()
+    return {
+        "pools": pools,
+        "count": len(pools),
     }

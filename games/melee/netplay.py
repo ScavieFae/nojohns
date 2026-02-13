@@ -279,27 +279,48 @@ class MatchStreamer:
             self._loop = None
 
     async def _ws_connect(self):
-        """Connect to arena WebSocket upload endpoint."""
+        """Connect to arena WebSocket upload endpoint with reconnection."""
         ws_url = self.arena_url.replace("https://", "wss://").replace("http://", "ws://")
         ws_url = f"{ws_url}/ws/stream/{self.match_id}"
-        try:
-            self._ws = await websockets.connect(ws_url, close_timeout=2)
-            self._ws_connected = True
-            logger.info(f"WebSocket connected to {ws_url}")
-            # Keep alive until stopped
-            while not self._stop.is_set():
-                await asyncio.sleep(0.1)
-        except Exception as e:
-            logger.warning(f"WebSocket connect failed: {e}")
-            self._ws_connected = False
-        finally:
-            self._ws_connected = False
-            if self._ws:
-                try:
-                    await self._ws.close()
-                except Exception:
-                    pass
-                self._ws = None
+        max_retries = 10
+        attempt = 0
+
+        while not self._stop.is_set() and attempt < max_retries:
+            try:
+                self._ws = await websockets.connect(ws_url, close_timeout=2)
+                self._ws_connected = True
+                if attempt > 0:
+                    logger.info(f"WebSocket reconnected to {ws_url} (after {attempt} retries)")
+                else:
+                    logger.info(f"WebSocket connected to {ws_url}")
+                attempt = 0  # Reset on successful connect
+                # Keep alive — ping to detect dropped connections
+                while not self._stop.is_set():
+                    try:
+                        await asyncio.wait_for(self._ws.ping(), timeout=10)
+                    except Exception:
+                        logger.warning("WebSocket connection lost, reconnecting...")
+                        break
+                    await asyncio.sleep(2)
+            except Exception as e:
+                self._ws_connected = False
+                attempt += 1
+                if self._stop.is_set():
+                    break
+                delay = min(2 ** attempt, 30)
+                logger.warning(f"WebSocket connect failed (attempt {attempt}/{max_retries}), retrying in {delay}s: {e}")
+                await asyncio.sleep(delay)
+            finally:
+                self._ws_connected = False
+                if self._ws:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
+
+        if attempt >= max_retries:
+            logger.error(f"WebSocket gave up after {max_retries} attempts")
 
     def _ws_send(self, msg: dict):
         """Send a message over the WebSocket from the sync game loop."""

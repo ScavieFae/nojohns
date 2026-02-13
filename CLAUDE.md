@@ -36,18 +36,37 @@ If unclear, ask Mattie.
 
 **Do not edit files in another agent's directories.** If you need a change in their code, open a GitHub issue or describe what you need in a PR comment.
 
+### Branches
+
+Two long-lived branches:
+
+| Branch | Purpose | Who sees it |
+|--------|---------|-------------|
+| **`main`** | Public-facing. Clean commits, no internal docs. | Users, judges, the world |
+| **`dev`** | Integration branch. All agent work lands here first. | The three agents + Mattie |
+
+**Workflow:**
+1. Agents work on prefixed branches (`scav/`, `scaviefae/`, `scavbug/`) off `dev`
+2. PRs merge into `dev`
+3. Curated releases from `dev` → `main` via `scripts/release-to-main.sh` (strips internal files)
+
+**Files that live on `dev` only** (stripped on release to main):
+- `docs/HANDOFF-SCAV.md`, `docs/HANDOFF-SCAVIEFAE.md` — agent-to-agent coordination
+- `.claude/hooks/`, `.claude/settings.json` — agent configuration and hooks
+
+**Handoff docs** are for planning changes, unanswered questions, and blockers — NOT status updates. A post-pull hook reminds agents to check them.
+
+**CODEOWNERS** protects `.claude/`, handoff docs, CLAUDE.md files, and contract source from unauthorized modification. External PRs touching these files require Mattie's review.
+
 ### Coordination
 
-- **Branches:** Each agent works on prefixed branches, PRs into `main`.
 - **Shared schema:** The `MatchResult` struct (defined in `contracts/CLAUDE.md` and `docs/HANDOFF-SCAVIEFAE.md`) is the contract between the Python and Solidity sides. Changes require coordination.
 - **Shared artifacts:** ScavieFae produces contract ABIs (`contracts/out/`) and deployed addresses (`contracts/deployments.json`). Scav produces arena API endpoints and Python signing code.
-- **Integration checkpoint:** Day 3-4 — deploy contracts to testnet, wire Python, run end-to-end test.
 
 ### Code Review
 
 - **Contracts before mainnet deploy:** Non-negotiable. ScavieFae opens a PR, the other agent runs `/review-pr` before we deploy with real MON. Testnet deploys can skip review.
-- **Everything else merges freely.** Directory ownership prevents conflicts. Don't gate on review when we have 11 days.
-- **Integration checkpoint (day 3-4):** Both agents read each other's code when wiring Python to contracts. This is the most useful review — reading with intent to *use* the code.
+- **Everything else merges freely.** Directory ownership prevents conflicts.
 - **Spotted something in the other agent's directory?** Open a GitHub issue, don't edit the file.
 - **Mechanism:** GitHub PRs via `gh`. Use `/review-pr` skill for structured review.
 
