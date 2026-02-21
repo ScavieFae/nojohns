@@ -1250,7 +1250,7 @@ def _negotiate_wager(
     # Check current wager status
     try:
         wager_info = _get(f"/matches/{match_id}/wager")
-    except urllib.error.URLError:
+    except (urllib.error.URLError, TimeoutError, OSError):
         return None, None
 
     # If opponent already proposed, respond automatically
@@ -1287,7 +1287,7 @@ def _negotiate_wager(
             "amount_wei": amount_wei,
             "wager_id": wager_id,
         })
-    except urllib.error.URLError:
+    except (urllib.error.URLError, TimeoutError, OSError):
         pass  # Race condition — opponent may have proposed first; polling loop handles it
 
     # Wait for opponent to accept (30s timeout)
@@ -1354,10 +1354,10 @@ def _negotiate_wager(
                     print(f"[WAGER] Opponent wants {opp_mon} MON (> our max {wager_amount}) — declining.")
                     try:
                         _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
-                    except urllib.error.URLError:
+                    except (urllib.error.URLError, TimeoutError, OSError):
                         pass
 
-        except urllib.error.URLError:
+        except (urllib.error.URLError, TimeoutError, OSError):
             continue
 
     print()
@@ -1403,7 +1403,7 @@ def _respond_to_wager(
         print(f"[WAGER] Declining — {amount_mon} MON exceeds our max ({max_mon} MON).")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
-        except urllib.error.URLError:
+        except (urllib.error.URLError, TimeoutError, OSError):
             pass
         return None, None
 
@@ -1421,14 +1421,14 @@ def _respond_to_wager(
         print(f"[WAGER] Accept failed: {e}")
         try:
             _post(f"/matches/{match_id}/wager/decline", {"queue_id": queue_id})
-        except urllib.error.URLError:
+        except (urllib.error.URLError, TimeoutError, OSError):
             pass
         return None, None
 
     # Tell arena we accepted
     try:
         _post(f"/matches/{match_id}/wager/accept", {"queue_id": queue_id})
-    except urllib.error.URLError as e:
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
         print(f"[WAGER] Warning: couldn't confirm with arena: {e}")
 
     print(f"[WAGER] LOCKED -- {amount_mon * 2} MON pot (ID: {wager_id})")
@@ -1533,7 +1533,7 @@ def _run_single_match(
             if our_agent_id:
                 join_body["agent_id"] = our_agent_id
             result = _post("/queue/join", join_body)
-        except urllib.error.URLError as e:
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
             logger.error(f"Cannot reach arena server at {server}: {e}")
             return None
 
@@ -1569,7 +1569,7 @@ def _run_single_match(
                         logger.error("Too many consecutive arena errors, giving up.")
                         return None
                     continue
-                except urllib.error.URLError:
+                except (urllib.error.URLError, TimeoutError, OSError):
                     consecutive_errors += 1
                     logger.warning(f"Lost connection to arena (attempt {consecutive_errors}), retrying...")
                     if consecutive_errors >= 10:
@@ -1588,7 +1588,7 @@ def _run_single_match(
                 logger.error("Queue timed out — no opponent found.")
                 try:
                     _delete(f"/queue/{queue_id}")
-                except urllib.error.URLError:
+                except (urllib.error.URLError, TimeoutError, OSError):
                     pass  # Best-effort cleanup
                 return None
 
@@ -1671,7 +1671,7 @@ def _run_single_match(
                 "stocks_remaining": our_stocks,
                 "opponent_stocks": their_stocks,
             })
-        except urllib.error.URLError as e:
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
             logger.warning(f"Failed to report result: {e}")
 
         # --- Step 5: Sign canonical match result ---
