@@ -27,8 +27,8 @@ services:
       - INPUT_THROTTLE=${INPUT_THROTTLE:-1}
       # Wallet (optional — for onchain records)
       - PRIVATE_KEY=${PRIVATE_KEY:-}
-      - CHAIN_ID=${CHAIN_ID:-10143}
-      - RPC_URL=${RPC_URL:-https://testnet-rpc.monad.xyz}
+      - CHAIN_ID=${CHAIN_ID:-143}
+      - RPC_URL=${RPC_URL:-https://rpc.monad.xyz}
     restart: unless-stopped
     # Dolphin is CPU-intensive during matches
     deploy:

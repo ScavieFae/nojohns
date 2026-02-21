@@ -554,7 +554,7 @@ def _setup_monad():
     print("           Back it up securely. Do not commit it to git.")
     print()
     print("Next steps:")
-    print("  1. Fund your agent wallet with testnet MON")
+    print("  1. Fund your agent wallet with MON")
     print("  2. Contract addresses will be added after deploy")
     return 0
 
@@ -586,7 +586,7 @@ def _setup_identity(name=None, description=None, yes=False):
         return 1
 
     chain_data = existing_raw.get("chain", {})
-    chain_id = chain_data.get("chain_id", 10143)
+    chain_id = chain_data.get("chain_id", 143)
 
     # Check if already registered
     if chain_data.get("agent_id"):
@@ -673,7 +673,7 @@ def _setup_identity(name=None, description=None, yes=False):
         logger.error("web3 and eth-account required: pip install nojohns[wallet]")
         return 1
 
-    rpc_url = chain_data.get("rpc_url", "https://testnet-rpc.monad.xyz")
+    rpc_url = chain_data.get("rpc_url", "https://rpc.monad.xyz")
     w3 = Web3(Web3.HTTPProvider(rpc_url))
 
     if not w3.is_connected():
@@ -801,7 +801,7 @@ def _update_config_identity(existing_raw: dict, agent_id: int, identity_registry
     chain_data["reputation_registry"] = reputation_registry
     chain_data["agent_id"] = agent_id
     chain_data.setdefault("chain_id", chain_id)
-    chain_data.setdefault("rpc_url", "https://testnet-rpc.monad.xyz")
+    chain_data.setdefault("rpc_url", "https://rpc.monad.xyz")
 
     lines.append("[chain]")
     for k, v in chain_data.items():
@@ -1287,8 +1287,8 @@ def _negotiate_wager(
             "amount_wei": amount_wei,
             "wager_id": wager_id,
         })
-    except urllib.error.URLError as e:
-        print(f"[WAGER] Warning: couldn't register with arena: {e}")
+    except urllib.error.URLError:
+        pass  # Race condition — opponent may have proposed first; polling loop handles it
 
     # Wait for opponent to accept (30s timeout)
     print("[WAGER] Waiting for opponent", end="", flush=True)
@@ -1457,6 +1457,8 @@ def _make_arena_helpers(server: str):
     import json
     import urllib.request
 
+    TIMEOUT = 10  # seconds — prevents hanging on Railway edge drops
+
     def _post(path: str, body: dict) -> dict:
         data = json.dumps(body).encode()
         req = urllib.request.Request(
@@ -1465,17 +1467,17 @@ def _make_arena_helpers(server: str):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read())
 
     def _get(path: str) -> dict:
         req = urllib.request.Request(f"{server}{path}")
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read())
 
     def _delete(path: str) -> dict:
         req = urllib.request.Request(f"{server}{path}", method="DELETE")
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             return json.loads(resp.read())
 
     return _post, _get, _delete
@@ -1549,14 +1551,30 @@ def _run_single_match(
 
             # --- Step 2: Poll for match ---
             poll_count = 0
+            consecutive_errors = 0
             max_polls = 150  # 5 minutes at 2-second intervals
             while status == "waiting" and poll_count < max_polls:
                 time.sleep(2)
                 poll_count += 1
                 try:
                     result = _get(f"/queue/{queue_id}")
+                    consecutive_errors = 0
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        logger.error("Queue entry expired on server (404). Re-queuing may be needed.")
+                        return None
+                    logger.warning(f"Arena returned HTTP {e.code}, retrying...")
+                    consecutive_errors += 1
+                    if consecutive_errors >= 10:
+                        logger.error("Too many consecutive arena errors, giving up.")
+                        return None
+                    continue
                 except urllib.error.URLError:
-                    logger.warning("Lost connection to arena, retrying...")
+                    consecutive_errors += 1
+                    logger.warning(f"Lost connection to arena (attempt {consecutive_errors}), retrying...")
+                    if consecutive_errors >= 10:
+                        logger.error("Too many consecutive connection failures, giving up.")
+                        return None
                     continue
 
                 status = result["status"]
@@ -1568,7 +1586,10 @@ def _run_single_match(
 
             if status != "matched":
                 logger.error("Queue timed out — no opponent found.")
-                _delete(f"/queue/{queue_id}")
+                try:
+                    _delete(f"/queue/{queue_id}")
+                except urllib.error.URLError:
+                    pass  # Best-effort cleanup
                 return None
 
         # --- Step 2.5: Wager negotiation ---

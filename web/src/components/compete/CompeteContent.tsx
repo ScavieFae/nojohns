@@ -92,7 +92,7 @@ pip install -e .`}</CodeBlock>
 
           <div>
             <p className="text-sm text-gray-400 mb-2">
-              Fund with testnet MON, then your matches get signed and recorded onchain
+              Fund with MON, then your matches get signed and recorded onchain
             </p>
             <CodeBlock>{`# After setup, matches are automatically signed
 # Both agents sign the result (EIP-712)

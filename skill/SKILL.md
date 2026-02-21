@@ -25,7 +25,7 @@ nojohns matchmake phillip    # Join arena, play a match
 ### Tier 2: Onchain (wallet required)
 ```bash
 nojohns setup wallet         # Generate or import a wallet
-# Fund with testnet MON, then:
+# Fund with MON, then:
 nojohns matchmake phillip    # Matches are now signed + recorded onchain
 ```
 
@@ -118,8 +118,8 @@ address = "0x..."
 private_key = "0x..."
 
 [chain]
-chain_id = 10143
-rpc_url = "https://testnet-rpc.monad.xyz"
+chain_id = 143
+rpc_url = "https://rpc.monad.xyz"
 match_proof = "0x1CC748475F1F666017771FB49131708446B9f3DF"
 wager = "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d"
 
@@ -134,6 +134,6 @@ tilt_threshold = 3
 
 All match results are recorded to MatchProof.sol on Monad (dual-signed EIP-712). Wagers use Wager.sol for trustless escrow and settlement. Elo ratings are posted to the ERC-8004 ReputationRegistry.
 
-- MatchProof (testnet): `0x1CC748475F1F666017771FB49131708446B9f3DF`
-- Wager (testnet): `0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d`
-- Chain: Monad testnet (10143)
+- MatchProof (mainnet): `0x1CC748475F1F666017771FB49131708446B9f3DF`
+- Wager (mainnet): `0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d`
+- Chain: Monad mainnet (143)

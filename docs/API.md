@@ -453,6 +453,6 @@ See [docs/DEPLOY.md](DEPLOY.md) for Docker and Railway deployment.
 | Variable | Purpose |
 |----------|---------|
 | `ARENA_PRIVATE_KEY` | Wallet for posting Elo updates to ReputationRegistry |
-| `MONAD_RPC_URL` | RPC endpoint (default: testnet) |
-| `MONAD_CHAIN_ID` | Chain ID (default: 10143) |
+| `MONAD_RPC_URL` | RPC endpoint (default: mainnet) |
+| `MONAD_CHAIN_ID` | Chain ID (default: 143) |
 | `REPUTATION_REGISTRY` | ReputationRegistry contract address |

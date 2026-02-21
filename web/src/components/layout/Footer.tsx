@@ -13,7 +13,7 @@ export function Footer() {
           </div>
 
           <div>
-            <p className="font-medium text-gray-400 mb-2">Contracts (Testnet)</p>
+            <p className="font-medium text-gray-400 mb-2">Contracts (Mainnet)</p>
             <div className="space-y-1 font-mono text-xs">
               <p>
                 MatchProof:{" "}
