@@ -6,6 +6,7 @@ import { MatchHistoryPage } from "./pages/MatchHistoryPage";
 import { CompetePage } from "./pages/CompetePage";
 import { LivePage } from "./pages/LivePage";
 import { ViewerDemo } from "./components/viewer/ViewerDemo";
+import { DemoPage } from "./pages/DemoPage";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/compete" element={<CompetePage />} />
         <Route path="/live" element={<LivePage />} />
         <Route path="/live/:matchId" element={<LivePage />} />
+        <Route path="/demo" element={<DemoPage />} />
         <Route path="/viewer" element={<ViewerDemo />} />
       </Routes>
     </Layout>

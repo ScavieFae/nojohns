@@ -4,6 +4,7 @@ import { useArenaHealth } from "../../hooks/useArenaHealth";
 const NAV_ITEMS = [
   { path: "/", label: "Home" },
   { path: "/live", label: "Live" },
+  { path: "/demo", label: "Demo" },
   { path: "/leaderboard", label: "Leaderboard" },
   { path: "/matches", label: "Matches" },
   { path: "/compete", label: "Compete" },
