@@ -3,25 +3,30 @@ import { useQuery } from "@tanstack/react-query";
 import { formatEther } from "viem";
 import { useMatchEvents } from "./useMatchEvents";
 import { useWagerEvents } from "./useWagerEvents";
-import { publicClient } from "../viem";
 import { CONTRACTS } from "../config";
 import { predictionPoolAbi } from "../abi/predictionPool";
+import { getBatchedLogs } from "../lib/getLogs";
 import type { ProtocolStats } from "../types";
+
+const betPlacedEvent = predictionPoolAbi.find(
+  (e) => e.type === "event" && e.name === "BetPlaced",
+)!;
 
 function usePredictionVolume() {
   return useQuery({
     queryKey: ["predictionVolume"],
     queryFn: async () => {
-      const address = CONTRACTS.predictionPool as `0x${string}`;
-      const balance = await publicClient.getBalance({ address });
-      const poolCount = await publicClient.readContract({
-        address,
-        abi: predictionPoolAbi,
-        functionName: "poolCount",
-      }) as bigint;
-      return { balance, poolCount };
+      const { logs } = await getBatchedLogs({
+        address: CONTRACTS.predictionPool,
+        event: betPlacedEvent,
+        cacheKey: "betPlaced",
+      });
+      const totalVolume = logs.reduce(
+        (sum: bigint, log: Record<string, any>) => sum + (log.args.amount ?? 0n),
+        0n,
+      );
+      return { totalVolume, betCount: logs.length };
     },
-    staleTime: 30_000,
     refetchInterval: 30_000,
   });
 }
@@ -36,8 +41,8 @@ export function useStats(): ProtocolStats & { isLoading: boolean; isError: boole
 
     const totalWagered = wagers?.reduce((sum, w) => sum + w.amount, 0n) ?? 0n;
 
-    const predictionMon = prediction?.balance
-      ? Number(formatEther(prediction.balance)).toFixed(2)
+    const predictionMon = prediction?.totalVolume
+      ? Number(formatEther(prediction.totalVolume)).toFixed(2)
       : "0.00";
 
     return {
