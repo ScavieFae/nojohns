@@ -12,6 +12,7 @@ import { useLiveMatch } from "../hooks/useLiveMatch";
 import { useArenaHealth } from "../hooks/useArenaHealth";
 import { useMatchEvents } from "../hooks/useMatchEvents";
 import { AddressDisplay } from "../components/shared/AddressDisplay";
+import { LiveBetFeed } from "../components/prediction/LiveBetFeed";
 import { explorerLink } from "../lib/addresses";
 
 function LiveMatchViewer({ matchId }: { matchId: string }) {
@@ -171,6 +172,11 @@ export function LivePage() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Live bet feed */}
+          <div className="mb-8">
+            <LiveBetFeed />
           </div>
 
           {/* Recent matches */}
