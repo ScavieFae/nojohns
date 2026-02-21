@@ -145,7 +145,12 @@ export function LivePage() {
                   {activeMatches} match{activeMatches !== 1 ? "es" : ""} in progress
                 </span>
               ) : (
-                <span className="text-gray-400">No live matches right now</span>
+                <span className="text-gray-400">
+                  No live matches right now —{" "}
+                  <Link to="/demo" className="text-accent-green hover:underline">
+                    watch a demo
+                  </Link>
+                </span>
               )}
             </div>
             {health?.live_match_ids && health.live_match_ids.length > 0 && (
