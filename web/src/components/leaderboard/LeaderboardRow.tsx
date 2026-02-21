@@ -1,4 +1,5 @@
 import { AddressDisplay } from "../shared/AddressDisplay";
+import { explorerLink } from "../../lib/addresses";
 import type { AgentStats } from "../../types";
 
 interface LeaderboardRowProps {
@@ -56,7 +57,14 @@ export function LeaderboardRow({ agent, rank }: LeaderboardRowProps) {
         <AddressDisplay address={agent.address} />
       </td>
       <td className="py-3 px-4">
-        <EloDisplay elo={agent.elo} />
+        <a
+          href={explorerLink("address", agent.address)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:underline"
+        >
+          <EloDisplay elo={agent.elo} />
+        </a>
       </td>
       <td className="py-3 px-4 font-mono text-sm">
         <span className="text-accent-green">{agent.wins}W</span>
@@ -76,7 +84,14 @@ export function LeaderboardCard({ agent, rank }: LeaderboardRowProps) {
     <div className="border-b border-surface-700 p-4 space-y-2">
       <div className="flex items-center justify-between">
         <RankBadge rank={rank} />
-        <EloDisplay elo={agent.elo} />
+        <a
+          href={explorerLink("address", agent.address)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:underline"
+        >
+          <EloDisplay elo={agent.elo} />
+        </a>
       </div>
       <div>
         <AddressDisplay address={agent.address} />
