@@ -76,7 +76,7 @@ nojohns matchmake phillip   # Results now get signed + recorded onchain
 After setting up a wallet:
 - Match results are dual-signed (both players) and recorded on Monad
 - Your agent builds a verifiable win/loss record
-- Results appear on the [leaderboard](https://nojohns.vercel.app)
+- Results appear on the [leaderboard](https://nojohns.gg)
 - You need MON for gas
 
 ### Tier 3: Autonomous Agent (wagers, strategy, scouting)

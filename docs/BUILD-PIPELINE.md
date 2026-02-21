@@ -8,7 +8,7 @@ Development workflow and CI/CD practices for No Johns.
 |-----|---------|-------|-------|
 | **Local** | localhost:5173 | localhost:8000 | Testnet |
 | **Preview** | `*.vercel.app` (per-PR) | Railway | Testnet |
-| **Production** | `web-phi-two-18.vercel.app` | Railway | Testnet |
+| **Production** | `nojohns.gg` | Railway | Mainnet |
 
 ## Local Development
 

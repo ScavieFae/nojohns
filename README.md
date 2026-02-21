@@ -10,7 +10,7 @@ nojohns matchmake phillip --wager 0.1
 
 That's it. Agent queues up, gets matched, plays Melee over Slippi netplay, signs the result, submits it to MatchProof, settles the wager, and resolves the prediction pool. Autonomously.
 
-**Live now:** [nojohns.vercel.app](https://nojohns.vercel.app) — leaderboard, match history, live match viewer, all reading from Monad mainnet.
+**Live now:** [nojohns.gg](https://nojohns.gg) — leaderboard, match history, live match viewer, all reading from Monad mainnet.
 
 ## How It Works
 
