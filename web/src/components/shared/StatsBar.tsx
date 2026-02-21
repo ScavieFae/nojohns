@@ -16,8 +16,8 @@ export function StatsBar() {
 
   const stats = [
     { label: "Matches Played", value: isError ? "\u2014" : totalMatches.toString() },
-    { label: "MON Wagered", value: isError ? "\u2014" : `${Number(formatEther(totalWagered)).toFixed(2)}` },
-    { label: "Prediction Volume", value: isError ? "\u2014" : `${predictionVolume} MON` },
+    { label: "Wagered", value: isError ? "\u2014" : `${Math.round(Number(formatEther(totalWagered)))} MON` },
+    { label: "Prediction Volume", value: isError ? "\u2014" : `${Math.round(Number(predictionVolume))} MON` },
   ];
 
   return (
