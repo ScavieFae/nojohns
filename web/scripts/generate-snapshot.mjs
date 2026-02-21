@@ -16,7 +16,9 @@ const RPC = isTestnet
   : "https://rpc.monad.xyz";
 const DEPLOY_BLOCK = isTestnet ? 10710000 : 54717354;
 const MAX_RANGE = 100; // Monad caps getLogs at 100 blocks per request
-const CONCURRENCY = 50;
+const CONCURRENCY = 10; // Lower to avoid Monad rate limits (was 50, caused silent drops)
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 500;
 
 const EVENTS = {
   matchRecorded: {
@@ -33,6 +35,11 @@ const EVENTS = {
     address: "0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d",
     topic0:
       "0x17a11cc71694f13ce59da349be2384455ee1b564012052f6b25b315fa42dabb1",
+  },
+  betPlaced: {
+    address: "0x33E65E300575D11a42a579B2675A63cb4374598D",
+    topic0:
+      "0x4af71b021e799c62c158bd54636ca8da2fa26115a21a2dc6efe486ec104fd15f",
   },
   eloFeedback: {
     address: isTestnet
@@ -70,14 +77,24 @@ async function getBlockNumber() {
 }
 
 async function getLogs(address, topic0, from, to) {
-  return rpc("eth_getLogs", [
-    {
-      address,
-      topics: [topic0],
-      fromBlock: hex(from),
-      toBlock: hex(to),
-    },
-  ]);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await rpc("eth_getLogs", [
+        {
+          address,
+          topics: [topic0],
+          fromBlock: hex(from),
+          toBlock: hex(to),
+        },
+      ]);
+    } catch (err) {
+      if (attempt === MAX_RETRIES) {
+        process.stderr.write(`\n  WARN: getLogs failed after ${MAX_RETRIES} retries (${hex(from)}-${hex(to)}): ${err.message}\n`);
+        return [];
+      }
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +116,7 @@ async function scanEvent(name, { address, topic0 }, latest) {
     const batch = ranges.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       batch.map(({ from, to }) =>
-        getLogs(address, topic0, from, to).catch(() => []),
+        getLogs(address, topic0, from, to),
       ),
     );
     for (const logs of results) {

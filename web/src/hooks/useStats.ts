@@ -12,6 +12,38 @@ const betPlacedEvent = predictionPoolAbi.find(
   (e) => e.type === "event" && e.name === "BetPlaced",
 )!;
 
+// ---------------------------------------------------------------------------
+// High-water mark — stats should never decrease (partial scans, stale cache)
+// ---------------------------------------------------------------------------
+
+const HWM_KEY = "nj:stats-hwm";
+
+interface HighWaterMark {
+  totalMatches: number;
+  totalWageredWei: string; // bigint as string
+  predictionVolumeWei: string;
+}
+
+function loadHWM(): HighWaterMark {
+  try {
+    const raw = localStorage.getItem(HWM_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return { totalMatches: 0, totalWageredWei: "0", predictionVolumeWei: "0" };
+}
+
+function saveHWM(hwm: HighWaterMark): void {
+  try {
+    localStorage.setItem(HWM_KEY, JSON.stringify(hwm));
+  } catch { /* ignore */ }
+}
+
+function maxBigint(a: bigint, b: bigint): bigint {
+  return a > b ? a : b;
+}
+
+// ---------------------------------------------------------------------------
+
 function usePredictionVolume() {
   return useQuery({
     queryKey: ["predictionVolume"],
@@ -37,12 +69,37 @@ export function useStats(): ProtocolStats & { isLoading: boolean; isError: boole
   const { data: prediction, isLoading: predictionLoading } = usePredictionVolume();
 
   const stats = useMemo(() => {
-    const totalMatches = matches?.length ?? 0;
+    const hwm = loadHWM();
 
-    const totalWagered = wagers?.reduce((sum, w) => sum + w.amount, 0n) ?? 0n;
+    const rawMatches = matches?.length ?? 0;
+    const rawWagered = wagers?.reduce((sum, w) => sum + w.amount, 0n) ?? 0n;
+    const rawPrediction = prediction?.totalVolume ?? 0n;
 
-    const predictionMon = prediction?.totalVolume
-      ? Number(formatEther(prediction.totalVolume)).toFixed(2)
+    // Apply high-water mark — never show less than we've shown before
+    const totalMatches = Math.max(rawMatches, hwm.totalMatches);
+    const totalWagered = maxBigint(rawWagered, BigInt(hwm.totalWageredWei));
+    const predictionVolume = maxBigint(rawPrediction, BigInt(hwm.predictionVolumeWei));
+
+    // Warn if we regressed (partial scan)
+    if (rawMatches < hwm.totalMatches || rawWagered < BigInt(hwm.totalWageredWei) || rawPrediction < BigInt(hwm.predictionVolumeWei)) {
+      console.warn("[useStats] Partial scan detected — using high-water mark. Raw:", {
+        matches: rawMatches,
+        wagered: rawWagered.toString(),
+        prediction: rawPrediction.toString(),
+      });
+    }
+
+    // Update high-water mark if any value increased
+    if (totalMatches > hwm.totalMatches || totalWagered > BigInt(hwm.totalWageredWei) || predictionVolume > BigInt(hwm.predictionVolumeWei)) {
+      saveHWM({
+        totalMatches,
+        totalWageredWei: totalWagered.toString(),
+        predictionVolumeWei: predictionVolume.toString(),
+      });
+    }
+
+    const predictionMon = predictionVolume > 0n
+      ? Number(formatEther(predictionVolume)).toFixed(2)
       : "0.00";
 
     return {

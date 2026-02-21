@@ -10,7 +10,7 @@ const MAX_RETRIES = 3;
 /** Base delay for exponential backoff (ms) */
 const RETRY_BASE_MS = 1000;
 /** Max time to spend scanning per call — resumes on next call */
-const SCAN_BUDGET_MS = 30_000;
+const SCAN_BUDGET_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // localStorage cache with bigint serialization

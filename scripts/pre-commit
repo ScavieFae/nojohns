@@ -16,8 +16,14 @@ set -euo pipefail
 BLOCKED=0
 
 # Known test keys that are safe to commit (from eth-account docs / test fixtures)
+# Event topic hashes (keccak256 of event signatures) are NOT private keys
 ALLOWLIST=(
     "4c0883a69102937d6231471b5dbb6204fe512961708279f3a3e6d8b4f8e2c7e1"
+    "85577f91f88e7f39d7e011ec5acc580d01b464a746a050601a5ac73042f43566"
+    "1f4b3c2984c1abae822b24ee17eaf2f1dae5338c5da04a753d15a6af1c94f365"
+    "17a11cc71694f13ce59da349be2384455ee1b564012052f6b25b315fa42dabb1"
+    "4af71b021e799c62c158bd54636ca8da2fa26115a21a2dc6efe486ec104fd15f"
+    "f5c8dfad1418627c565486bc917258f166ee28e7d5c6a387b6fade859a4ba51a"
 )
 
 blocked() {
@@ -53,6 +59,11 @@ done
 
 # --- Check 2: File contents for secret patterns ---
 for file in $STAGED; do
+    # Skip auto-generated files (contain thousands of public onchain hashes)
+    case "$file" in
+        */snapshot.ts) continue ;;
+    esac
+
     # Skip binary files
     if ! git show ":$file" 2>/dev/null | file - | grep -q text; then
         continue
