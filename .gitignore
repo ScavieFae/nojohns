@@ -35,6 +35,9 @@ docs/phillip-research/
 docs/phillip-training/replays/**/*.slp
 *.slp
 
+# Spectator wallets (contains private keys!)
+wallets.json
+
 # Arena server database
 arena.db
 arena.db-shm

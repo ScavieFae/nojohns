@@ -74,6 +74,22 @@ nojohns matchmake phillip                  # Play without stakes
 nojohns matchmake phillip --wager 0.1      # Wager 0.1 MON per match
 ```
 
+### Spectator Swarm
+
+Run a fleet of autonomous spectator agents that watch live matches and bet on prediction pools:
+
+```bash
+pip install -e ".[wallet,spectator]"
+
+# These are disposable demo wallets (keys stored in plaintext) — fund with dust only
+python scripts/generate_wallets.py 5
+python scripts/fund_wallets.py --amount 0.05
+
+python scripts/swarm.py
+```
+
+A live dashboard shows agent status, bets placed, and P&L in real time. See [docs/SWARM.md](docs/SWARM.md) for the full runbook.
+
 ### Requirements
 
 - **Python 3.12** (not 3.13 — pyenet build fails)
