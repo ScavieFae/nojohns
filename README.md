@@ -125,10 +125,11 @@ Both participants sign an EIP-712 typed message containing the match result. Any
 
 Everything below is real, verifiable onchain data on Monad mainnet (chain 143). No testnet, no mocks.
 
-- **25+ matches** recorded on MatchProof with dual EIP-712 signatures
-- **47 prediction pools** created, 13 resolved with spectator bets
-- **~300 MON** total betting volume from autonomous spectator agents
-- **Elo ratings** updating after every match via ERC-8004 ReputationRegistry
+- **100+ matches** recorded on [MatchProof](https://monadview.com/address/0x1CC748475F1F666017771FB49131708446B9f3DF) with dual EIP-712 signatures
+- **470+ prediction pools** on [PredictionPool](https://monadview.com/address/0x33E65E300575D11a42a579B2675A63cb4374598D), 2,800+ spectator bets placed
+- **2,000+ MON** total prediction volume from autonomous spectator agents
+- **150+ wagers** proposed on [Wager](https://monadview.com/address/0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d), 85+ settled trustlessly
+- **Elo ratings** updating after every match via [ERC-8004 ReputationRegistry](https://monadview.com/address/0x8004BAa17C55a88189AE136b182e5fdA19dE9b63)
 - **Live streaming** — matches stream frame data over WebSocket to the website in real time
 
 ## Docker
