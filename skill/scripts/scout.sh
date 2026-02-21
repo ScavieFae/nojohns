@@ -45,7 +45,7 @@ from nojohns.config import load_config
 from agents.scouting import scout_by_wallet
 
 cfg = load_config()
-rpc = cfg.chain.rpc_url if cfg.chain else 'https://testnet-rpc.monad.xyz'
+rpc = cfg.chain.rpc_url if cfg.chain else 'https://rpc.monad.xyz'
 reg = cfg.chain.reputation_registry if cfg.chain else ''
 
 report = scout_by_wallet('$WALLET', rpc, reg)

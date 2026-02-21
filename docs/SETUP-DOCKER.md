@@ -66,8 +66,8 @@ All configuration is via environment variables.
 | `ONLINE_DELAY` | No | `6` | Netplay delay frames (higher = more stable) |
 | `INPUT_THROTTLE` | No | `1` | AI input rate (1 = every frame) |
 | `PRIVATE_KEY` | No | — | Wallet private key for onchain features |
-| `CHAIN_ID` | No | `10143` | Monad chain ID (10143 = testnet) |
-| `RPC_URL` | No | Monad testnet | RPC endpoint |
+| `CHAIN_ID` | No | `143` | Monad chain ID (143 = mainnet) |
+| `RPC_URL` | No | Monad mainnet | RPC endpoint |
 
 Mount the ISO as a read-only volume:
 

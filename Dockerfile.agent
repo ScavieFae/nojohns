@@ -100,8 +100,8 @@ cat >> ~/.nojohns/config.toml <<EOF
 
 [wallet]
 private_key = "$PRIVATE_KEY"
-chain_id = ${CHAIN_ID:-10143}
-rpc_url = "${RPC_URL:-https://testnet-rpc.monad.xyz}"
+chain_id = ${CHAIN_ID:-143}
+rpc_url = "${RPC_URL:-https://rpc.monad.xyz}"
 EOF
 fi
 
