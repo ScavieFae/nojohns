@@ -41,4 +41,5 @@ export interface ProtocolStats {
   totalMatches: number;
   totalWagered: bigint;
   uniqueAgents: number;
+  predictionVolume: string;
 }

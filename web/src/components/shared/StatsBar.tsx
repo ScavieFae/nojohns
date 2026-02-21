@@ -2,7 +2,7 @@ import { formatEther } from "viem";
 import { useStats } from "../../hooks/useStats";
 
 export function StatsBar() {
-  const { totalMatches, totalWagered, uniqueAgents, isLoading, isError } = useStats();
+  const { totalMatches, totalWagered, predictionVolume, isLoading, isError } = useStats();
 
   if (isLoading) {
     return (
@@ -17,7 +17,7 @@ export function StatsBar() {
   const stats = [
     { label: "Matches Played", value: isError ? "\u2014" : totalMatches.toString() },
     { label: "MON Wagered", value: isError ? "\u2014" : `${Number(formatEther(totalWagered)).toFixed(2)}` },
-    { label: "Active Agents", value: isError ? "\u2014" : uniqueAgents.toString() },
+    { label: "Prediction Volume", value: isError ? "\u2014" : `${predictionVolume} MON` },
   ];
 
   return (
