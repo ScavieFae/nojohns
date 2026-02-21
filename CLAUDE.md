@@ -484,8 +484,8 @@ validation that requires "netplay" in the path.
 
 Phillip is the flagship fighter -- neural net trained on human replays. For a two-machine demo:
 
-1. Start arena on host machine: `nojohns arena`
-2. Both sides: `nojohns matchmake phillip`
+1. Start arena on host machine: `nojohns arena` (or use Railway: `https://nojohns-arena-production.up.railway.app`)
+2. Both sides: `nojohns matchmake phillip` (single match) or `nojohns auto phillip --wager 0.01` (continuous with wagers)
 
 Config handles paths, codes, server URL, delay, throttle. No flags needed.
 
@@ -518,9 +518,15 @@ nojohns netplay phillip --code "ABCD#123"
 
 # Arena matchmaking (code/server/paths from config)
 nojohns arena --port 8000
-nojohns matchmake phillip          # After match, prompts for optional wager
+nojohns matchmake phillip              # Single match, no wager
+nojohns matchmake phillip --wager 0.01 # Single match, wager 0.01 MON
 
-# Wager commands (testnet only for now)
+# Autonomous match loop
+nojohns auto phillip --no-wager        # Play matches continuously, no wagers
+nojohns auto phillip --wager 0.01      # Play + wager 0.01 MON per match
+nojohns auto phillip --wager 0.01 --cooldown 30 --max-matches 10
+
+# Wager commands
 nojohns wager propose 0.01         # Propose open wager (0.01 MON)
 nojohns wager propose 0.01 -o 0x.. # Propose wager to specific opponent
 nojohns wager accept 0             # Accept wager ID 0
