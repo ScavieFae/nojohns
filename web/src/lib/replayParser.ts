@@ -22,6 +22,24 @@ export interface ParsedReplay {
 /**
  * Parse a .slp file buffer into viewer-compatible frames
  */
+/**
+ * Slippi .slp files use "external" stage IDs (from Melee's stage select screen).
+ * libmelee (which feeds the live viewer) uses different "internal" IDs.
+ * Normalize to libmelee IDs so stageData.ts works for both replay and live data.
+ */
+const SLIPPI_TO_LIBMELEE_STAGE: Record<number, number> = {
+  2: 8,    // Fountain of Dreams
+  3: 18,   // Pokemon Stadium
+  8: 6,    // Yoshi's Story
+  28: 26,  // Dreamland N64
+  31: 24,  // Battlefield
+  32: 25,  // Final Destination
+};
+
+function normalizeStageId(slippiId: number): number {
+  return SLIPPI_TO_LIBMELEE_STAGE[slippiId] ?? slippiId;
+}
+
 export function parseReplay(buffer: ArrayBuffer): ParsedReplay {
   const game = new SlippiGame(buffer);
 
@@ -90,14 +108,14 @@ export function parseReplay(buffer: ArrayBuffer): ParsedReplay {
 
     return {
       frame: frameNum,
-      stageId: settings.stageId ?? 8,
+      stageId: normalizeStageId(settings.stageId ?? 8),
       players: playerFrames,
     };
   });
 
   return {
     settings: {
-      stageId: settings.stageId ?? 8,
+      stageId: normalizeStageId(settings.stageId ?? 8),
       players,
     },
     frames: parsedFrames,

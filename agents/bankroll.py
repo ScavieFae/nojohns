@@ -36,7 +36,12 @@ def get_mon_balance(address: str, rpc_url: str) -> int:
 def get_active_wager_exposure(
     address: str, rpc_url: str, wager_contract: str
 ) -> int:
-    """Sum of MON locked in open/accepted wagers (not yet settled)."""
+    """Sum of MON locked in open/accepted wagers (not yet settled).
+
+    Only checks the most recent wagers (last 20) to avoid O(n) RPC calls
+    as wager history grows. Settled/cancelled wagers at the tail are
+    overwhelmingly likely, so this is a safe approximation.
+    """
     try:
         from nojohns.wallet import get_agent_wagers, get_wager_info
     except ImportError:
@@ -49,8 +54,12 @@ def get_active_wager_exposure(
         logger.debug(f"Failed to get wagers: {e}")
         return 0
 
+    # Only check the most recent wagers — older ones are almost certainly settled.
+    # This turns O(n) RPC calls into O(1) as match count grows.
+    recent_ids = wager_ids[-20:] if len(wager_ids) > 20 else wager_ids
+
     total = 0
-    for wid in wager_ids:
+    for wid in recent_ids:
         try:
             info = get_wager_info(rpc_url, wager_contract, wid)
             # Only count Open (0) and Accepted (1) — not settled/cancelled/voided
