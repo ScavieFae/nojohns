@@ -44,7 +44,7 @@ export function Footer() {
             <p className="font-medium text-gray-400 mb-2">Links</p>
             <div className="space-y-1">
               <a
-                href="https://github.com"
+                href="https://github.com/ScavieFae/nojohns"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block hover:text-white transition-colors"
