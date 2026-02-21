@@ -264,13 +264,14 @@ function getCharacterName(externalId: number): string {
 }
 
 function getStageName(stageId: number): string {
+  // stageId is already normalized to libmelee IDs by the replay parser
   const stages: Record<number, string> = {
-    2: "Fountain of Dreams",
-    3: "Pokemon Stadium",
-    8: "Yoshi's Story",
-    28: "Dream Land",
-    31: "Battlefield",
-    32: "Final Destination",
+    8: "Fountain of Dreams",
+    18: "Pokemon Stadium",
+    6: "Yoshi's Story",
+    26: "Dream Land",
+    24: "Battlefield",
+    25: "Final Destination",
   };
   return stages[stageId] ?? `Stage ${stageId}`;
 }
