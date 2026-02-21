@@ -128,7 +128,7 @@ export function LivePage() {
           </div>
           <div className="lg:w-72 flex-shrink-0 space-y-4">
             <PredictionWidget matchId={matchId} />
-            <LiveBetFeed />
+            <LiveBetFeed compact />
           </div>
         </div>
       ) : (
