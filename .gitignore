@@ -35,6 +35,10 @@ docs/phillip-research/
 docs/phillip-training/replays/**/*.slp
 *.slp
 
+# World model checkpoints and training artifacts
+worldmodel/checkpoints/
+*.pt
+
 # Spectator wallets (contains private keys!)
 wallets.json
 
