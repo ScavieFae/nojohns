@@ -8,6 +8,8 @@ Usage:
 """
 
 import argparse
+import hashlib
+import json
 import logging
 import platform
 import subprocess
@@ -122,6 +124,11 @@ def main():
 
     logging.info("Loaded %d games", len(games))
 
+    # Build data manifest — which games, in what order
+    game_md5s = [g.meta["slp_md5"] for g in games if g.meta]
+    data_fingerprint = hashlib.sha256("|".join(sorted(game_md5s)).encode()).hexdigest()[:12]
+    logging.info("Data fingerprint: %s (%d games)", data_fingerprint, len(game_md5s))
+
     # Build datasets
     dataset = MeleeDataset(games, enc_cfg)
     context_len = cfg.get("model", {}).get("context_len", 10)
@@ -161,6 +168,7 @@ def main():
             "train_examples": len(train_ds),
             "val_examples": len(val_ds),
             "total_frames": dataset.total_frames,
+            "fingerprint": data_fingerprint,
         },
         "model_params": param_count,
         "machine": platform.node(),
@@ -216,6 +224,21 @@ def main():
         logging.info("Position MAE: %.2f game units", final.get("metric/position_mae", 0))
         if "metric/action_change_acc" in final:
             logging.info("Action-change accuracy: %.3f", final["metric/action_change_acc"])
+
+    # Save manifest alongside checkpoints
+    manifest_dir = Path(save_dir)
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "config": run_config,
+        "data_fingerprint": data_fingerprint,
+        "game_md5s": game_md5s,
+        "results": history[-1] if history else {},
+        "all_epochs": history,
+    }
+    manifest_path = manifest_dir / "manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    logging.info("Saved run manifest: %s", manifest_path)
 
     if wandb and wandb.run:
         wandb.finish()
