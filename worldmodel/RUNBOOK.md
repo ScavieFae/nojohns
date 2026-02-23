@@ -140,15 +140,55 @@ unzip -d summit-11 Summit-11.zip  # For .zip files
 
 # Real training (2000 games):
 .venv/bin/python -m worldmodel.scripts.train \
-    --dataset /path/to/nojohns-training/data/parsed \
+    --dataset ~/claude-projects/nojohns-training/data/parsed \
     --max-games 2000 --epochs 10 --batch-size 512 --device mps \
-    --save-dir /path/to/checkpoints/run1
+    --save-dir ~/claude-projects/nojohns-training/checkpoints/run1 \
+    --run-name "baseline-2k" -v
+
+# Resume from checkpoint:
+.venv/bin/python -m worldmodel.scripts.train \
+    --dataset ~/claude-projects/nojohns-training/data/parsed \
+    --max-games 2000 --epochs 20 --batch-size 512 --device mps \
+    --save-dir ~/claude-projects/nojohns-training/checkpoints/run1 \
+    --resume ~/claude-projects/nojohns-training/checkpoints/run1/best.pt \
+    --run-name "baseline-2k-continued" -v
 
 # Full dataset (all 22K games, ~6GB RAM):
 .venv/bin/python -m worldmodel.scripts.train \
-    --dataset /path/to/nojohns-training/data/parsed \
-    --epochs 10 --batch-size 512 --device mps
+    --dataset ~/claude-projects/nojohns-training/data/parsed \
+    --epochs 10 --batch-size 512 --device mps \
+    --run-name "full-22k" -v
+
+# Disable wandb (offline/testing):
+.venv/bin/python -m worldmodel.scripts.train \
+    --dataset ... --no-wandb
 ```
+
+### Remote training (ScavieFae)
+
+ScavieFae's machine: `queenmab@100.93.8.111` (Tailscale), 18GB RAM, M3 Pro.
+
+```bash
+# Start training (survives SSH disconnect):
+ssh queenmab@100.93.8.111 "cd ~/claude-projects/nojohns && nohup .venv/bin/python -m worldmodel.scripts.train \
+    --dataset ~/claude-projects/nojohns-training/data/parsed \
+    --max-games 2000 --epochs 10 --batch-size 512 --device mps \
+    --save-dir ~/claude-projects/nojohns-training/checkpoints/run1 \
+    --run-name 'scaviefae-baseline' -v \
+    > ~/claude-projects/nojohns-training/train.log 2>&1 &"
+
+# Check progress (from anywhere):
+ssh queenmab@100.93.8.111 "tail -20 ~/claude-projects/nojohns-training/train.log"
+
+# Stop training:
+ssh queenmab@100.93.8.111 "pkill -f worldmodel.scripts.train"
+```
+
+Key points:
+- `nohup` keeps training alive after SSH disconnect
+- Log file at `~/claude-projects/nojohns-training/train.log`
+- Tailscale reconnects automatically when you change networks
+- ScavieFae is ~20% faster per epoch than Scav (552s vs 692s)
 
 ### Training parameters
 
@@ -162,6 +202,53 @@ unzip -d summit-11 Summit-11.zip  # For .zip files
 | train_split | 0.9 | By game (not by frame) |
 | device | auto | MPS on Mac, CUDA on Linux |
 
+### Hyperparameter knobs
+
+These are the things worth varying between runs:
+
+| Knob | Current | What it controls | Try next |
+|------|---------|-----------------|----------|
+| batch_size | 512 | Gradient noise vs stability. Smaller = noisier but better generalization | 256 |
+| context_len | 10 | How many frames of history the model sees | 5, 20 |
+| hidden_dim | 512 | Trunk capacity. Wider = more expressive, more overfitting risk | 256, 1024 |
+| lr | 1e-3 | Optimizer step size | 3e-4 |
+| dropout | 0.1 | Regularization strength | 0.2 |
+| loss weights | 1/0.5/2/0.5 | Relative importance of each head | action=5.0 |
+| max_games | 2000 | Dataset size. More = better coverage of rare situations | 4000, all |
+
+### Experiment tracking
+
+**Wandb**: Every run logs to [wandb.ai](https://wandb.ai) project `melee-worldmodel`. Both machines are authenticated. Tracks hyperparams, loss curves, system metrics, git commit. Disable with `--no-wandb`.
+
+**Manifest**: Every run saves `manifest.json` alongside checkpoints:
+```
+checkpoints/run1/
+├── best.pt          # Best model (lowest val loss)
+├── final.pt         # Model after last epoch
+└── manifest.json    # Full record of this run
+```
+
+The manifest contains:
+- `data_fingerprint` — short hash of which games were used (quick comparison)
+- `game_md5s` — full list of every game hash (verify no overlap between runs)
+- `config` — all hyperparams, machine name, git commit
+- `all_epochs` — complete metrics history
+
+Two runs with the same `data_fingerprint` trained on the same data. Different fingerprint = different data — check `game_md5s` to see what changed.
+
+### Memory budget
+
+The dataset loads all frames into contiguous tensors in RAM:
+
+| Games | Float tensor | Int tensor | Total ~RAM |
+|-------|-------------|-----------|------------|
+| 500 | ~800 MB | ~160 MB | ~1.5 GB |
+| 2000 | ~3.1 GB | ~625 MB | ~4.1 GB |
+| 4000 | ~6.2 GB | ~1.2 GB | ~8 GB |
+| 22000 | ~34 GB | ~7 GB | won't fit |
+
+Use `--max-games` to stay within your machine's RAM. Scav (36GB) can handle ~8K games. ScavieFae (18GB) can handle ~4K.
+
 ### Performance
 
 | Dataset size | Data load | Encoding | Per epoch (MPS) |
@@ -169,19 +256,20 @@ unzip -d summit-11 Summit-11.zip  # For .zip files
 | 1 game | <1s | <1s | 0.9s |
 | 50 games | 4s | <1s | ~8s |
 | 500 games | 35s | 2s | ~80s |
-| 2000 games | 140s | 8s | ~8min |
-
-Data loading is the bottleneck for large datasets. The contiguous-tensor dataset design makes training fast — 13ms/batch at batch_size=512.
+| 2000 games | 140s | 8s | ~9min |
 
 ### Metrics to watch
 
-- **loss/total**: Should decrease monotonically
-- **metric/p0_action_acc**: Overall action prediction (>90% is mostly holds)
-- **metric/action_change_acc**: The hard metric — accuracy on frames where action changes
-- **metric/position_mae**: Game units, un-normalized. <2.0 is good.
+- **loss/total**: Should decrease monotonically. If train drops but val rises → overfitting → stop and add more data.
+- **metric/p0_action_acc**: Overall action prediction. >90% is mostly holds — easy frames inflate this.
+- **metric/action_change_acc**: The hard metric — accuracy on frames where action *changes*. This is where the model actually has to predict something non-trivial.
+- **metric/position_mae**: Game units, un-normalized. <1.0 is solid.
 - **metric/damage_mae**: Percent, un-normalized.
+- **val_loss/total**: The real measure of generalization. If this flattens while train_loss still drops, more epochs won't help — try more data.
 
-### Results (toy dataset, 1 game, 20 epochs)
+### Results
+
+**Toy dataset (1 game, 20 epochs, CPU):**
 
 | Metric | Epoch 1 | Epoch 20 |
 |--------|---------|----------|
@@ -189,6 +277,16 @@ Data loading is the bottleneck for large datasets. The contiguous-tensor dataset
 | Action acc | 39.8% | 97.0% |
 | Action-change acc | 5.9% | 67.2% |
 | Position MAE | 6.57 | 1.10 |
+
+**Real dataset (2000 games, 10 epochs, ScavieFae M3 Pro):**
+
+| Metric | Epoch 1 | Epoch 7 | Trend |
+|--------|---------|---------|-------|
+| Loss | 1.236 | 0.951 | ↓ still dropping |
+| Action acc | 86.2% | 87.9% | ↑ slow gains |
+| Action-change acc | 22.2% | 29.8% | ↑ steady improvement |
+| Position MAE | 0.91 | 0.72 | ↓ getting tighter |
+| Val loss | 1.068 | 0.930 | ↓ no overfitting yet |
 
 ## Dependencies
 
