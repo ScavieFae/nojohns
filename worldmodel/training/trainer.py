@@ -15,6 +15,11 @@ from worldmodel.model.encoding import EncodingConfig
 from worldmodel.model.mlp import FrameStackMLP
 from worldmodel.training.metrics import EpochMetrics, LossWeights, MetricsTracker
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +39,7 @@ class Trainer:
         loss_weights: Optional[LossWeights] = None,
         save_dir: Optional[str | Path] = None,
         device: Optional[str] = None,
+        resume_from: Optional[str | Path] = None,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -50,6 +56,7 @@ class Trainer:
         self.batch_size = batch_size
         self.num_epochs = num_epochs
         self.save_dir = Path(save_dir) if save_dir else None
+        self.start_epoch = 0
 
         # DataLoader — no custom collate, default stacking works with tuple returns
         self.train_loader = DataLoader(
@@ -75,6 +82,10 @@ class Trainer:
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=num_epochs)
         self.metrics = MetricsTracker(cfg, loss_weights)
         self.history: list[dict] = []
+
+        # Resume from checkpoint
+        if resume_from:
+            self._load_checkpoint(resume_from)
 
     def _train_epoch(self) -> dict[str, float]:
         self.model.train()
@@ -117,13 +128,14 @@ class Trainer:
 
     def train(self) -> list[dict]:
         logger.info(
-            "Starting training: %d epochs, %d train examples, batch_size=%d",
-            self.num_epochs, len(self.train_loader.dataset), self.batch_size,
+            "Starting training: epochs %d→%d, %d train examples, batch_size=%d",
+            self.start_epoch + 1, self.num_epochs,
+            len(self.train_loader.dataset), self.batch_size,
         )
 
         best_val_loss = float("inf")
 
-        for epoch in range(self.num_epochs):
+        for epoch in range(self.start_epoch, self.num_epochs):
             t0 = time.time()
             train_metrics = self._train_epoch()
             val_metrics = self._val_epoch()
@@ -152,6 +164,10 @@ class Trainer:
                 loss_str, acc_str, pos_str, change_str, val_str,
             )
 
+            # Log to wandb
+            if wandb and wandb.run:
+                wandb.log({**combined, "lr": self.scheduler.get_last_lr()[0]})
+
             if self.save_dir and val_metrics:
                 val_loss = val_metrics.get("val_loss/total", float("inf"))
                 if val_loss < best_val_loss:
@@ -162,6 +178,20 @@ class Trainer:
             self._save_checkpoint("final.pt", self.num_epochs - 1)
 
         return self.history
+
+    def _load_checkpoint(self, path: str | Path) -> None:
+        path = Path(path)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        self.start_epoch = checkpoint["epoch"] + 1
+        # Advance scheduler to match
+        for _ in range(self.start_epoch):
+            self.scheduler.step()
+        logger.info(
+            "Resumed from %s (epoch %d, val_loss=%.4f)",
+            path, checkpoint["epoch"] + 1, checkpoint.get("val_loss", 0),
+        )
 
     def _save_checkpoint(self, name: str, epoch: int, val_loss: float = 0.0) -> None:
         self.save_dir.mkdir(parents=True, exist_ok=True)

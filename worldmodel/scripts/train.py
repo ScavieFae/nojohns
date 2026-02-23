@@ -9,6 +9,8 @@ Usage:
 
 import argparse
 import logging
+import platform
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,6 +25,11 @@ from worldmodel.model.encoding import EncodingConfig
 from worldmodel.model.mlp import FrameStackMLP
 from worldmodel.training.metrics import LossWeights
 from worldmodel.training.trainer import Trainer
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 def load_config(config_path: str | None) -> dict:
@@ -58,6 +65,9 @@ def main():
     parser.add_argument("--max-games", type=int, default=None, help="Max games to load")
     parser.add_argument("--stage", type=int, default=None, help="Filter by stage ID")
     parser.add_argument("--character", type=int, default=None, help="Filter by character ID")
+    parser.add_argument("--resume", default=None, help="Path to checkpoint to resume from")
+    parser.add_argument("--run-name", default=None, help="Name for this run (used in wandb + save dir)")
+    parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -138,6 +148,47 @@ def main():
     loss_cfg = cfg.get("loss_weights", {})
     loss_weights = LossWeights(**loss_cfg) if loss_cfg else None
 
+    # Collect full run config for tracking
+    run_config = {
+        "model": model_cfg,
+        "training": train_cfg,
+        "loss_weights": loss_cfg,
+        "encoding": enc_cfg_dict,
+        "data": {
+            "dataset_path": args.dataset,
+            "max_games": data_cfg.get("max_games"),
+            "num_games_loaded": len(games),
+            "train_examples": len(train_ds),
+            "val_examples": len(val_ds),
+            "total_frames": dataset.total_frames,
+        },
+        "model_params": param_count,
+        "machine": platform.node(),
+        "device": train_cfg.get("device", "auto"),
+    }
+
+    # Git commit hash for reproducibility
+    try:
+        git_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        run_config["git_commit"] = git_hash
+    except Exception:
+        pass
+
+    # Init wandb
+    if wandb and not args.no_wandb:
+        wandb.init(
+            project="melee-worldmodel",
+            name=args.run_name,
+            config=run_config,
+        )
+        logging.info("Wandb run: %s", wandb.run.url)
+    elif not wandb:
+        logging.info("wandb not installed — logging to file only")
+
     trainer = Trainer(
         model=model,
         train_dataset=train_ds,
@@ -150,6 +201,7 @@ def main():
         loss_weights=loss_weights,
         save_dir=save_dir,
         device=train_cfg.get("device"),
+        resume_from=args.resume,
     )
 
     # Train
@@ -164,6 +216,9 @@ def main():
         logging.info("Position MAE: %.2f game units", final.get("metric/position_mae", 0))
         if "metric/action_change_acc" in final:
             logging.info("Action-change accuracy: %.3f", final["metric/action_change_acc"])
+
+    if wandb and wandb.run:
+        wandb.finish()
 
 
 if __name__ == "__main__":
