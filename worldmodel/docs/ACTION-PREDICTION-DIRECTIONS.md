@@ -219,10 +219,44 @@ Predictions made Feb 24, 2026 before running any experiments. Baseline: v2.2 on 
 
 If these predictions are wrong, the most likely failure modes:
 
-1. **Exp 2 (press events) shows < 2pp gain**: Would mean the model is already doing the press-vs-hold diffing effectively, and the bottleneck is elsewhere. This would shift priority toward Exp 3 (delay) and the softer-target approaches.
+1. **Exp 2 (press events) shows < 2pp gain**: Would mean the model is already doing the press-vs-hold diffing effectively, and the bottleneck is elsewhere. This would shift priority toward Exp 3 (delay) and the softer-target approaches. **← THIS HAPPENED. +1.9pp, right at the floor.**
 2. **Exp 3b (delay) shows no action improvement**: Would mean transitions genuinely resolve on the same frame and the delay just makes physics harder. Would kill the GGPO analogy.
-3. **Exp 1a (state_age) shows < 1pp gain**: Would mean interrupt windows aren't a significant error source at current accuracy levels — the model already handles them well enough from context.
+3. **Exp 1a (state_age) shows < 1pp gain**: Would mean interrupt windows aren't a significant error source at current accuracy levels — the model already handles them well enough from context. **← OPPOSITE happened. +7.2pp, beat the ceiling.**
 4. **Exp 4a (mixed model loses to Fox-only on Fox)**: Would mean cross-character training is adding noise, not signal. Would change our data strategy significantly.
+
+### Round 2 predictions (post-Round 1)
+
+Made Feb 24, 2026 after seeing Round 1 results. Updated baseline: actual measured val change_acc = **64.5%** (avg of 3 runs), not 62.4% as initially estimated.
+
+**Exp 1a+2a combined — predicted val change_acc: 72-74%**
+
+The pre-experiment prediction was 70-76% assuming both gains were additive. Now we know:
+- 1a alone = 71.7% (the big mover — state_age embed)
+- 2a alone = 66.4% (marginal — press events)
+- 2a's mechanism (explicit press detection) partially overlaps with what 1a's state_age embedding already helps with. Both improve the model's understanding of "what just happened on this frame." State_age tells the model where in an animation it is (enabling frame-exact interrupt detection), and press events flag the input trigger. But if the model already knows "frame 4 of shine" from the embedding, it can look at the context window's controller history and infer the press without the explicit feature.
+- Expecting **~2pp of additive gain** from 2a stacking on top of 1a. Less than 2a's standalone +1.9pp because 1a has already eaten some of the same error budget.
+- Prediction: **72-74%** val change_acc. The floor (72%) is basically "2a adds nothing on top of 1a." The ceiling (74%) is "gains are fully additive." Most likely outcome: ~73%, splitting the difference.
+- Physics (pos_mae): **0.78-0.80**, unchanged. Neither feature affects continuous prediction.
+- Val loss: **0.260-0.270**. Slightly better than 1a alone (0.2665) if 2a contributes; same if it doesn't.
+
+**Exp 3a (1-frame lookahead) — predicted val change_acc: 67-71%**
+
+This is the trickiest prediction because 3a changes the prediction contract, not just the encoding. The model sees ctrl(t) and ctrl(t+1), and predicts frame t+1's state.
+
+- The original pre-experiment prediction was 64-67% (+2-5pp over the 62.4% baseline). But the real baseline is 64.5%, so that's 66.5-69.5% adjusted.
+- **For:** One extra frame of input gives the model confirmation of what's happening — ctrl(t) starts a move, ctrl(t+1) shows whether the player is continuing, releasing, or pressing something new. Many transitions (shield → grab, dash → wavedash, attack → jump-cancel) are two-input sequences that a single frame of ctrl can't distinguish. The extra frame disambiguates.
+- **Against:** The target is now one frame further out, which is strictly harder for continuous prediction. Position/velocity have one more frame of divergence. And Melee's action transitions are mostly same-frame — input on frame N produces the action state recorded on frame N. The lookahead helps mainly with multi-frame sequences, not single-frame triggers.
+- **Key uncertainty:** Does the 1-frame delay actually help action prediction, or is Melee fast enough that same-frame is already resolved? The doc's Exp 3a reasoning says "modest improvement" — I agree. The big gains were predicted for 3b (3-frame) where multi-frame transitions fully resolve.
+- Prediction: **67-71%** val change_acc. The lower end is likely — most of the action change budget has already been addressed by state_age precision (1a). The extra ctrl frame helps with two-input combos but those aren't the dominant error class.
+- Physics: **0.80-0.84** pos_mae. Slightly worse than baseline (0.79). Predicting one frame further out increases continuous error, though the extra input information partially compensates.
+- Val loss: **0.290-0.320**. Likely higher than baseline (0.305) because the physics penalty outweighs the action improvement in total loss.
+
+**What a miss looks like for Round 2:**
+
+1. **1a+2a shows ≤ 71.7%** (no gain over 1a alone): 2a is fully subsumed by 1a. The press detection signal adds zero once frame-exact animation timing is available. Would make 2a a dead feature — drop it from the config going forward. Clean answer.
+2. **1a+2a shows > 75%**: Gains are super-additive — the features interact positively. Would mean press events become important *because* state_age precision lets the model use them more effectively. Exciting if true — would suggest more encoding features could compound similarly.
+3. **3a action_change improves but total val_loss increases**: Physics penalty exceeds action gain. Would mean the lookahead concept has merit for action prediction but the tradeoff isn't worth it at 1 frame. Would inform whether to try 3b (more delay = more action gain but even worse physics) or abandon the direction.
+4. **3a shows < 1pp gain on action_change**: Same-frame prediction is already optimal for Melee. The GGPO analogy doesn't apply — transitions resolve instantly. Would kill Exp 3b/3c entirely.
 
 ## Phase Gate: What Goes Where
 
