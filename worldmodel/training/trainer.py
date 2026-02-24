@@ -10,6 +10,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
+from torch.utils.data import IterableDataset
+
 from worldmodel.data.dataset import MeleeFrameDataset
 from worldmodel.model.encoding import EncodingConfig
 from worldmodel.model.mlp import FrameStackMLP
@@ -59,10 +61,12 @@ class Trainer:
         self.start_epoch = 0
 
         # DataLoader — no custom collate, default stacking works with tuple returns
+        # IterableDataset handles its own shuffling; map-style Dataset uses shuffle=True
+        is_iterable = isinstance(train_dataset, IterableDataset)
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=not is_iterable,
             num_workers=0,
             drop_last=True,
             pin_memory=(device != "cpu"),

@@ -343,6 +343,50 @@ v1 → v2 requires fresh training (input layer shape change). v1 results serve a
 
 Swapping MLP → Mamba-2 means changing only `worldmodel/model/mlp.py`. The data pipeline, encoding, loss functions, and training loop stay identical. The key change: Mamba takes `(B, T, frame_dim)` sequences instead of `(B, K*frame_dim)` flat vectors.
 
+## Future Direction: Paired (State, Video) Dataset
+
+A potential research path: create paired datasets mapping game state tensors to rendered pixel data. Melee's rendering pipeline works like this:
+
+```
+Game state (~280 bytes) → Dolphin rendering engine + game ROM assets → Raw pixels (~900 KB/frame)
+                                                                       → H.264 compressed (~3 KB/frame)
+```
+
+The game state is the "sheet music" — positions, velocities, action states, controller inputs. The renderer is the "performer" — it reads those ~280 bytes and produces a 720p frame using the game's 3D models, animations, textures, and camera logic. The mapping is deterministic: same state → same pixels, always.
+
+### Why this matters
+
+- **Visual world model**: Train a model that predicts future *pixels* from current state, not just future state. This is the "Sora for Melee" direction.
+- **State → video codec**: If you can predict the next frame's pixels from state, you don't need to store/stream video. Just send the state tensor (~280 bytes vs ~3 KB compressed video per frame).
+- **Inverse rendering**: Learn what visual features correspond to which state variables. Could enable pixel-input agents (no libmelee needed).
+
+### How to build it
+
+1. **Headless Dolphin replay** with frame dumping enabled (`--dump-frames` flag)
+2. For each .slp replay, Dolphin replays the match and dumps raw BMP frames at 60fps
+3. **ffmpeg** encodes raw frames → H.264 (or per-frame PNG for lossless)
+4. **Pair** frame N's state tensor with frame N's pixel data
+
+### Scale estimate (22K games)
+
+| Item | Per game (avg 4500 frames) | 22K games |
+|------|---------------------------|-----------|
+| Raw BMP frames | ~4 GB | ~88 TB (don't store) |
+| H.264 video | ~14 MB | ~300 GB |
+| PNG per-frame | ~50 MB | ~1.1 TB |
+| State tensors | ~500 KB | ~11 GB (already have) |
+| Wall time (1 Dolphin) | ~75s (real-time playback) | ~19 days |
+| Wall time (6 parallel) | ~75s | ~3.2 days |
+
+### Open questions
+
+- Dolphin headless frame dump quality (resolution, color space)
+- Camera angle consistency across replays
+- Whether H.264 compression artifacts matter for training
+- Storage: even H.264 is 300 GB for the full set
+
+This is a Phase 3+ direction. Not blocking current work.
+
 ## Autonomous World Model (Solana hackathon — deadline Feb 27)
 
 Research direction: decompose the monolithic model into subsystem models (movement, hit detection, damage/knockback, action transitions, shield/grab) for onchain deployment via MagicBlock ephemeral rollups + BOLT ECS.

@@ -21,7 +21,7 @@ import yaml
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from worldmodel.data.dataset import MeleeDataset
+from worldmodel.data.dataset import MeleeDataset, StreamingMeleeDataset
 from worldmodel.data.parse import load_games_from_dir
 from worldmodel.model.encoding import EncodingConfig
 from worldmodel.model.mlp import FrameStackMLP
@@ -69,6 +69,8 @@ def main():
     parser.add_argument("--character", type=int, default=None, help="Filter by character ID")
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--run-name", default=None, help="Name for this run (used in wandb + save dir)")
+    parser.add_argument("--streaming", action="store_true", help="Stream from disk (for datasets too large for RAM)")
+    parser.add_argument("--buffer-size", type=int, default=1000, help="Games per streaming buffer (default 1000)")
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
@@ -111,32 +113,98 @@ def main():
 
     # Load data
     logging.info("Loading games from %s", args.dataset)
-    games = load_games_from_dir(
-        args.dataset,
-        max_games=data_cfg.get("max_games"),
-        stage_filter=data_cfg.get("stage_filter"),
-        character_filter=data_cfg.get("character_filter"),
-    )
-
-    if not games:
-        logging.error("No games loaded! Check dataset path and filters.")
-        sys.exit(1)
-
-    logging.info("Loaded %d games", len(games))
-
-    # Build data manifest — which games, in what order
-    game_md5s = [g.meta["slp_md5"] for g in games if g.meta]
-    data_fingerprint = hashlib.sha256("|".join(sorted(game_md5s)).encode()).hexdigest()[:12]
-    logging.info("Data fingerprint: %s (%d games)", data_fingerprint, len(game_md5s))
-
-    # Build datasets
-    dataset = MeleeDataset(games, enc_cfg)
     context_len = cfg.get("model", {}).get("context_len", 10)
     train_split = train_cfg.get("train_split", 0.9)
-    train_ds = dataset.get_frame_dataset(context_len=context_len, train=True, train_split=train_split)
-    val_ds = dataset.get_frame_dataset(context_len=context_len, train=False, train_split=train_split)
+    dataset_dir = Path(args.dataset)
 
-    logging.info("Train: %d examples, Val: %d examples", len(train_ds), len(val_ds))
+    if args.streaming:
+        # Streaming mode: load meta.json for game entries, don't load all games into RAM
+        import json as json_mod
+        meta_path = dataset_dir / "meta.json"
+        with open(meta_path) as f:
+            all_entries = json_mod.load(f)
+
+        # Filter to training-eligible games
+        game_entries = []
+        for entry in all_entries:
+            if not entry.get("is_training", False):
+                continue
+            if data_cfg.get("stage_filter") is not None and entry.get("stage") != data_cfg["stage_filter"]:
+                continue
+            if data_cfg.get("character_filter") is not None:
+                players = entry.get("players", [])
+                if not all(p.get("character") == data_cfg["character_filter"] for p in players):
+                    continue
+            game_path = dataset_dir / "games" / entry["slp_md5"]
+            if game_path.exists():
+                game_entries.append(entry)
+            if data_cfg.get("max_games") and len(game_entries) >= data_cfg["max_games"]:
+                break
+
+        if not game_entries:
+            logging.error("No games found! Check dataset path and filters.")
+            sys.exit(1)
+
+        logging.info("Found %d games for streaming", len(game_entries))
+
+        game_md5s = [e["slp_md5"] for e in game_entries]
+        data_fingerprint = hashlib.sha256("|".join(sorted(game_md5s)).encode()).hexdigest()[:12]
+        logging.info("Data fingerprint: %s (%d games)", data_fingerprint, len(game_md5s))
+
+        train_ds = StreamingMeleeDataset(
+            game_entries, dataset_dir, enc_cfg,
+            context_len=context_len,
+            buffer_size=args.buffer_size,
+            train=True, train_split=train_split,
+        )
+        # Val set: load into memory (only 10% of games, fits in RAM)
+        val_entries = game_entries[int(len(game_entries) * train_split):]
+        val_games = []
+        for entry in val_entries:
+            from worldmodel.data.parse import load_game
+            try:
+                g = load_game(dataset_dir / "games" / entry["slp_md5"], entry.get("compression", "zlib"))
+                g.meta = entry
+                val_games.append(g)
+            except Exception:
+                continue
+        if val_games:
+            val_dataset = MeleeDataset(val_games, enc_cfg)
+            val_ds = val_dataset.get_frame_dataset(context_len=context_len, train=True, train_split=1.0)
+            total_frames = len(game_entries) * 4500  # approximate
+        else:
+            val_ds = None
+            total_frames = len(game_entries) * 4500
+
+        logging.info("Streaming train: ~%d games, Val: %d games (%d examples)",
+                     len(game_entries) - len(val_entries), len(val_games),
+                     len(val_ds) if val_ds else 0)
+
+    else:
+        # In-memory mode (original behavior)
+        games = load_games_from_dir(
+            args.dataset,
+            max_games=data_cfg.get("max_games"),
+            stage_filter=data_cfg.get("stage_filter"),
+            character_filter=data_cfg.get("character_filter"),
+        )
+
+        if not games:
+            logging.error("No games loaded! Check dataset path and filters.")
+            sys.exit(1)
+
+        logging.info("Loaded %d games", len(games))
+
+        game_md5s = [g.meta["slp_md5"] for g in games if g.meta]
+        data_fingerprint = hashlib.sha256("|".join(sorted(game_md5s)).encode()).hexdigest()[:12]
+        logging.info("Data fingerprint: %s (%d games)", data_fingerprint, len(game_md5s))
+
+        dataset = MeleeDataset(games, enc_cfg)
+        train_ds = dataset.get_frame_dataset(context_len=context_len, train=True, train_split=train_split)
+        val_ds = dataset.get_frame_dataset(context_len=context_len, train=False, train_split=train_split)
+        total_frames = dataset.total_frames
+
+        logging.info("Train: %d examples, Val: %d examples", len(train_ds), len(val_ds) if val_ds else 0)
 
     # Build model
     model_cfg = cfg.get("model", {})
@@ -164,11 +232,12 @@ def main():
         "data": {
             "dataset_path": args.dataset,
             "max_games": data_cfg.get("max_games"),
-            "num_games_loaded": len(games),
+            "num_games_loaded": len(game_md5s),
             "train_examples": len(train_ds),
-            "val_examples": len(val_ds),
-            "total_frames": dataset.total_frames,
+            "val_examples": len(val_ds) if val_ds else 0,
+            "total_frames": total_frames,
             "fingerprint": data_fingerprint,
+            "streaming": args.streaming,
         },
         "model_params": param_count,
         "machine": platform.node(),
