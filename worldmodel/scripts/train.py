@@ -236,8 +236,15 @@ def main():
         "all_epochs": history,
     }
     manifest_path = manifest_dir / "manifest.json"
+
+    def _json_default(obj):
+        """Handle numpy types in JSON serialization."""
+        if hasattr(obj, "item"):
+            return obj.item()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
     with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
+        json.dump(manifest, f, indent=2, default=_json_default)
     logging.info("Saved run manifest: %s", manifest_path)
 
     if wandb and wandb.run:

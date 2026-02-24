@@ -12,27 +12,54 @@ Nobody has built this before — existing Melee AI (Phillip/slippi-ai) is model-
 .slp files → peppi_py → numpy arrays → PyTorch tensors → MLP → next-frame predictions
 ```
 
-### Per-player per-frame encoding (56 dims)
+### Per-player per-frame encoding (v2: 72 dims)
+
+**Continuous (12 dims):**
 
 | Field | Type | Encoding | Dims |
 |-------|------|----------|------|
 | percent | uint16 | float × 0.01 | 1 |
 | x, y | float32 | float × 0.05 | 2 |
 | shield_strength | float32 | float × 0.01 | 1 |
-| facing | bool | float 0/1 | 1 |
-| invulnerable | bool | float 0/1 | 1 |
-| on_ground | bool | float 0/1 | 1 |
-| action | uint16 | learned embed (400 → 32) | 32 |
-| jumps_left | uint8 | learned embed (8 → 4) | 4 |
-| controller (5 axes + 8 buttons) | mixed | float [0,1] | 13 |
+| speed_air_x, speed_y, speed_ground_x | float32 | float × 0.05 | 3 |
+| speed_attack_x, speed_attack_y | float32 | float × 0.05 | 2 |
+| state_age | float32 | float × 0.01 | 1 |
+| hitlag | float32 | float × 0.1 | 1 |
+| stocks | uint8 | float × 0.25 | 1 |
 
-**Total**: 56 per player × 2 players = **112 dims/frame**. With K=10 context: **1120 input dims**.
+**Binary (3 dims):** facing, invulnerable, on_ground
+
+**Controller (13 dims):** main_stick x/y, c_stick x/y, shoulder, 8 buttons
+
+**Categorical embeddings (44 dims):**
+
+| Field | Vocab | Embed dims |
+|-------|-------|------------|
+| action_state | 400 | 32 |
+| jumps_left | 8 | 4 |
+| character | 33 | 8 |
+
+**Per-frame shared:** stage (33 → 4 dims)
+
+**Total**: 72 per player × 2 + 4 stage = **148 dims/frame**. With K=10 context: **1,480 input dims**.
+
+### Fields in parquet but not yet in model
+
+| Field | Type | Values | Why |
+|-------|------|--------|-----|
+| l_cancel | uint8 | 0=N/A, 1=success, 2=miss | L-cancelled aerials have half landing lag |
+| hurtbox_state | uint8 | 0=vulnerable, 1=invuln, 2=intangible | ~10% of frames have invulnerability |
+| ground | uint16 | surface IDs, 65535=airborne | Which platform — needed for platform drops |
+| last_attack_landed | uint8 | ~60 attack IDs | What move connected — helps predict DI |
+| combo_count | uint8 | 0-10+ | Combo context |
+
+See `~/.agent/diagrams/worldmodel-encoding-v2.html` for the full reference page.
 
 ### Model (Phase 1: FrameStackMLP)
 
-- **Trunk**: Linear(1120, 512) → ReLU → Dropout → Linear(512, 256) → ReLU → Dropout
+- **Trunk**: Linear(1480, 512) → ReLU → Dropout → Linear(512, 256) → ReLU → Dropout
 - **Heads**: continuous_delta (MSE), binary (BCE), action (CE), jumps (CE)
-- **Parameters**: 931K
+- **Parameters**: 1,116,138 (~1.1M)
 - **Loss weighting**: continuous=1.0, binary=0.5, action=2.0, jumps=0.5
 
 ## Data Pipeline
@@ -53,7 +80,7 @@ All stored in `/Users/mattiefairchild/claude-projects/nojohns-training/data/`:
 | Local (our matches) | 47 | ~/Slippi/ |
 | **Total** | **~24K** | |
 
-After parsing + dedup: **22,049 games, 207M frames (~958 hours)**.
+After parsing + dedup: **22,162 games** (v2.1 schema with velocity, dynamics, combat context).
 
 ### Additional sources (not yet downloaded)
 
@@ -301,6 +328,25 @@ Install: `.venv/bin/pip install nojohns[worldmodel]` or `.venv/bin/pip install t
 
 System: `brew install p7zip` (for extracting .7z archives)
 
+## Encoding versions
+
+| Version | Per-player dims | Frame dim | Input dim (K=10) | Params | Dataset |
+|---------|----------------|-----------|-----------------|--------|---------|
+| v1 | 56 | 112 | 1,120 | 931K | `data/parsed/` (22,049 games) |
+| v2 | 72 | 148 | 1,480 | 1.1M | `data/parsed-v2/` (22,162 games) |
+
+v2 adds: velocity (5), state_age, hitlag, stocks, character embed, stage embed. Parquet also stores l_cancel, hurtbox_state, ground, last_attack_landed, combo_count for future model use.
+
+v1 → v2 requires fresh training (input layer shape change). v1 results serve as baseline.
+
 ## Phase 2 Prep
 
 Swapping MLP → Mamba-2 means changing only `worldmodel/model/mlp.py`. The data pipeline, encoding, loss functions, and training loop stay identical. The key change: Mamba takes `(B, T, frame_dim)` sequences instead of `(B, K*frame_dim)` flat vectors.
+
+## Autonomous World Model (Solana hackathon — deadline Feb 27)
+
+Research direction: decompose the monolithic model into subsystem models (movement, hit detection, damage/knockback, action transitions, shield/grab) for onchain deployment via MagicBlock ephemeral rollups + BOLT ECS.
+
+Details: `~/claude-projects/rnd-2026/projects/autonomous-world-model/README.md`
+
+Key insight: the monolithic model directly answers the decomposition question. Train monolithic v2, measure per-subsystem accuracy, then train standalone subsystem models and compare. Subsystems that match the monolithic ceiling decompose well → candidates for onchain execution.

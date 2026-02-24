@@ -3,6 +3,13 @@
 Performance-critical: with 17M+ examples, __getitem__ must be pure tensor slicing.
 Returns 3 tensors per sample (float context, int context, float targets) to avoid
 dict overhead and custom collation.
+
+v2 layout (encoding with velocity, dynamics, character, stage):
+  Float per player: [cont(12), binary(3), controller(13)] = 28
+  Float per frame: 28 * 2 = 56
+  Int per frame: [p0_action, p0_jumps, p0_character, p1_action, p1_jumps, p1_character, stage] = 7
+  Target float: [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)] = 14
+  Target int: [p0_action, p0_jumps, p1_action, p1_jumps] = 4
 """
 
 import logging
@@ -17,14 +24,13 @@ from worldmodel.model.encoding import EncodingConfig, encode_player_frames
 
 logger = logging.getLogger(__name__)
 
-# Layout of the float context tensor per frame:
-# [p0_cont(4), p0_bin(3), p0_ctrl(13), p1_cont(4), p1_bin(3), p1_ctrl(13)] = 40 floats
-FLOAT_PER_FRAME = 40
-# Layout of the int context tensor per frame:
-# [p0_action, p0_jumps, p1_action, p1_jumps] = 4 ints
-INT_PER_FRAME = 4
-# Layout of targets:
-# [cont_delta(8), binary(6)] = 14 floats + [p0_action, p1_action, p0_jumps, p1_jumps] = 4 ints
+# v2 layout: per player = continuous(12) + binary(3) + controller(13) = 28
+# Per frame = 28 * 2 players = 56
+FLOAT_PER_PLAYER = 28
+FLOAT_PER_FRAME = FLOAT_PER_PLAYER * 2  # 56
+# [p0_action, p0_jumps, p0_character, p1_action, p1_jumps, p1_character, stage] = 7
+INT_PER_FRAME = 7
+# Targets unchanged from v1
 TARGET_FLOAT_DIM = 14
 TARGET_INT_DIM = 4
 
@@ -46,30 +52,36 @@ class MeleeDataset:
             p1 = encode_player_frames(game.p1, cfg)
             T = game.num_frames
 
-            # Float: concat all continuous data per frame
+            # Float: [continuous(12), binary(3), controller(13)] per player = 28 each
             frame_float = torch.cat([
-                p0["continuous"],  # (T, 4)
+                p0["continuous"],  # (T, 12) — percent, x, y, shield, 5×vel, state_age, hitlag, stocks
                 p0["binary"],  # (T, 3)
                 p0["controller"],  # (T, 13)
-                p1["continuous"],  # (T, 4)
+                p1["continuous"],  # (T, 12)
                 p1["binary"],  # (T, 3)
                 p1["controller"],  # (T, 13)
-            ], dim=1)  # (T, 40)
+            ], dim=1)  # (T, 56)
             all_floats.append(frame_float)
 
-            # Int: action + jumps per player
+            # Int: action + jumps + character per player, plus stage
+            stage_col = torch.full((T,), game.stage, dtype=torch.long)
+            stage_col = torch.clamp(stage_col, 0, cfg.stage_vocab - 1)
+
             frame_int = torch.stack([
                 p0["action"],  # (T,)
                 p0["jumps_left"],
+                p0["character"],
                 p1["action"],
                 p1["jumps_left"],
-            ], dim=1)  # (T, 4)
+                p1["character"],
+                stage_col,
+            ], dim=1)  # (T, 7)
             all_ints.append(frame_int)
 
             game_lengths.append(T)
 
-        self.floats = torch.cat(all_floats, dim=0)  # (total_frames, 40)
-        self.ints = torch.cat(all_ints, dim=0)  # (total_frames, 4)
+        self.floats = torch.cat(all_floats, dim=0)  # (total_frames, 56)
+        self.ints = torch.cat(all_ints, dim=0)  # (total_frames, 7)
         self.game_offsets = np.cumsum([0] + game_lengths)
         self.total_frames = self.game_offsets[-1]
         self.game_lengths = game_lengths
@@ -93,12 +105,21 @@ class MeleeDataset:
 class MeleeFrameDataset(Dataset):
     """Frame-level dataset returning flat tensors.
 
-    __getitem__ returns:
-        float_ctx: (K, 40) — context window float features
-        int_ctx:   (K, 4)  — context window categorical indices
-        float_tgt: (14,)   — target float features [cont_delta(8), binary(6)]
-        int_tgt:   (4,)    — target categorical indices
+    v2 layout:
+        float_ctx: (K, 56) — [p0: cont(12)+bin(3)+ctrl(13), p1: same] per frame
+        int_ctx:   (K, 7)  — [p0_action, p0_jumps, p0_char, p1_action, p1_jumps, p1_char, stage]
+        float_tgt: (14,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
+        int_tgt:   (4,)    — [p0_action, p0_jumps, p1_action, p1_jumps]
     """
+
+    # v2 float layout offsets (per player block = 28 floats)
+    # continuous: [0:12]  (percent, x, y, shield, 5×vel, state_age, hitlag, stocks)
+    # binary:     [12:15] (facing, invuln, on_ground)
+    # controller: [15:28] (sticks, shoulder, buttons)
+    P0_CONT = slice(0, 4)      # core continuous: percent, x, y, shield (delta targets)
+    P0_BIN = slice(12, 15)     # binary: facing, invuln, on_ground
+    P1_CONT = slice(28, 32)    # p1 core continuous (28 = FLOAT_PER_PLAYER)
+    P1_BIN = slice(40, 43)     # p1 binary (28 + 12 = 40)
 
     def __init__(self, data: MeleeDataset, game_range: range, context_len: int = 10):
         self.data = data
@@ -124,24 +145,29 @@ class MeleeFrameDataset(Dataset):
         t = int(self.valid_indices[idx])
         K = self.context_len
 
-        float_ctx = self.data.floats[t - K:t]  # (K, 40)
-        int_ctx = self.data.ints[t - K:t]  # (K, 4)
+        float_ctx = self.data.floats[t - K:t]  # (K, 56)
+        int_ctx = self.data.ints[t - K:t]  # (K, 7)
 
         # Targets: delta for continuous, raw for binary/categorical
-        # Float targets: [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
-        curr_float = self.data.floats[t]  # (40,)
-        next_float = self.data.floats[t + 1]  # (40,)
+        curr_float = self.data.floats[t]  # (56,)
+        next_float = self.data.floats[t + 1]  # (56,)
 
-        # Continuous delta: indices 0:4 (p0) and 20:24 (p1)
-        p0_cont_delta = next_float[0:4] - curr_float[0:4]
-        p1_cont_delta = next_float[20:24] - curr_float[20:24]
-        # Binary targets (next frame): indices 4:7 (p0) and 24:27 (p1)
-        p0_binary = next_float[4:7]
-        p1_binary = next_float[24:27]
+        # Continuous delta: first 4 of each player's block (percent, x, y, shield)
+        p0_cont_delta = next_float[self.P0_CONT] - curr_float[self.P0_CONT]
+        p1_cont_delta = next_float[self.P1_CONT] - curr_float[self.P1_CONT]
+        # Binary targets (next frame)
+        p0_binary = next_float[self.P0_BIN]
+        p1_binary = next_float[self.P1_BIN]
 
         float_tgt = torch.cat([p0_cont_delta, p1_cont_delta, p0_binary, p1_binary])  # (14,)
 
-        # Int targets: next frame action/jumps
-        int_tgt = self.data.ints[t + 1]  # (4,) = [p0_action, p0_jumps, p1_action, p1_jumps]
+        # Int targets: next frame action/jumps (not character — that's constant)
+        next_ints = self.data.ints[t + 1]
+        int_tgt = torch.stack([
+            next_ints[0],  # p0_action
+            next_ints[1],  # p0_jumps
+            next_ints[3],  # p1_action
+            next_ints[4],  # p1_jumps
+        ])  # (4,)
 
         return float_ctx, int_ctx, float_tgt, int_tgt

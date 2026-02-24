@@ -93,6 +93,38 @@ def _build_player_arrays(port_data, num_frames: int) -> dict:
     # airborne is uint8: 0=grounded, nonzero=airborne
     on_ground = (_pa_to_np(post.airborne, dtype=np.uint8) == 0) if post.airborne is not None else np.ones(num_frames, dtype=bool)
 
+    # Velocity (v2): 5 components from post.velocities
+    def _safe_velocity(vel_obj, field_name):
+        try:
+            return _pa_to_np(getattr(vel_obj, field_name))
+        except (AttributeError, Exception):
+            return np.zeros(num_frames, dtype=np.float32)
+
+    if post.velocities is not None:
+        speed_air_x = _safe_velocity(post.velocities, "self_x_air")
+        speed_y = _safe_velocity(post.velocities, "self_y")
+        speed_ground_x = _safe_velocity(post.velocities, "self_x_ground")
+        speed_attack_x = _safe_velocity(post.velocities, "knockback_x")
+        speed_attack_y = _safe_velocity(post.velocities, "knockback_y")
+    else:
+        speed_air_x = np.zeros(num_frames, dtype=np.float32)
+        speed_y = np.zeros(num_frames, dtype=np.float32)
+        speed_ground_x = np.zeros(num_frames, dtype=np.float32)
+        speed_attack_x = np.zeros(num_frames, dtype=np.float32)
+        speed_attack_y = np.zeros(num_frames, dtype=np.float32)
+
+    # Dynamics (v2)
+    state_age = _pa_to_np(post.state_age) if post.state_age is not None else np.zeros(num_frames, dtype=np.float32)
+    hitlag = _pa_to_np(post.hitlag) if post.hitlag is not None else np.zeros(num_frames, dtype=np.float32)
+    stocks = _pa_to_np(post.stocks, dtype=np.uint8) if post.stocks is not None else np.full(num_frames, 4, dtype=np.uint8)
+
+    # Combat context (v2.1)
+    l_cancel = _pa_to_np(post.l_cancel, dtype=np.uint8) if post.l_cancel is not None else np.zeros(num_frames, dtype=np.uint8)
+    hurtbox_state = _pa_to_np(post.hurtbox_state, dtype=np.uint8) if post.hurtbox_state is not None else np.zeros(num_frames, dtype=np.uint8)
+    ground = _pa_to_np(post.ground, dtype=np.uint16) if post.ground is not None else np.full(num_frames, 65535, dtype=np.uint16)
+    last_attack_landed = _pa_to_np(post.last_attack_landed, dtype=np.uint8) if post.last_attack_landed is not None else np.zeros(num_frames, dtype=np.uint8)
+    combo_count = _pa_to_np(post.combo_count, dtype=np.uint8) if post.combo_count is not None else np.zeros(num_frames, dtype=np.uint8)
+
     return {
         "percent": percent, "facing": facing, "x": x, "y": y,
         "action": action, "invulnerable": invulnerable,
@@ -101,6 +133,15 @@ def _build_player_arrays(port_data, num_frames: int) -> dict:
         "main_stick_x": main_x, "main_stick_y": main_y,
         "c_stick_x": c_x, "c_stick_y": c_y, "shoulder": shoulder,
         "buttons": buttons,
+        # v2 fields
+        "speed_air_x": speed_air_x, "speed_y": speed_y,
+        "speed_ground_x": speed_ground_x,
+        "speed_attack_x": speed_attack_x, "speed_attack_y": speed_attack_y,
+        "state_age": state_age, "hitlag": hitlag, "stocks": stocks,
+        # v2.1 combat context
+        "l_cancel": l_cancel, "hurtbox_state": hurtbox_state,
+        "ground": ground, "last_attack_landed": last_attack_landed,
+        "combo_count": combo_count,
     }
 
 
@@ -148,10 +189,25 @@ def _build_parquet_table(game, p0_arrays: dict, p1_arrays: dict, num_frames: int
                 pa.array(p["character"]), pa.array(p["jumps_left"]),
                 pa.array(p["shield_strength"]), pa.array(p["on_ground"]),
                 ctrl, nana,
+                # v2 fields
+                pa.array(p["speed_air_x"]), pa.array(p["speed_y"]),
+                pa.array(p["speed_ground_x"]),
+                pa.array(p["speed_attack_x"]), pa.array(p["speed_attack_y"]),
+                pa.array(p["state_age"]), pa.array(p["hitlag"]),
+                pa.array(p["stocks"]),
+                # v2.1 combat context
+                pa.array(p["l_cancel"]), pa.array(p["hurtbox_state"]),
+                pa.array(p["ground"]), pa.array(p["last_attack_landed"]),
+                pa.array(p["combo_count"]),
             ],
             names=["percent", "facing", "x", "y", "action", "invulnerable",
                    "character", "jumps_left", "shield_strength", "on_ground",
-                   "controller", "nana"],
+                   "controller", "nana",
+                   "speed_air_x", "speed_y", "speed_ground_x",
+                   "speed_attack_x", "speed_attack_y",
+                   "state_age", "hitlag", "stocks",
+                   "l_cancel", "hurtbox_state", "ground",
+                   "last_attack_landed", "combo_count"],
         )
 
     p0_struct = make_player_struct(p0_arrays)

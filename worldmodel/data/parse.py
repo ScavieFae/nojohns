@@ -34,6 +34,23 @@ class PlayerFrame:
     on_ground: np.ndarray  # (T,) bool → float32
     action: np.ndarray  # (T,) int64 (categorical)
     jumps_left: np.ndarray  # (T,) int64 (categorical)
+    character: np.ndarray  # (T,) int64 (categorical, constant per game)
+    # Velocity (5 components)
+    speed_air_x: np.ndarray  # (T,) float32
+    speed_y: np.ndarray  # (T,) float32
+    speed_ground_x: np.ndarray  # (T,) float32
+    speed_attack_x: np.ndarray  # (T,) float32
+    speed_attack_y: np.ndarray  # (T,) float32
+    # Dynamics
+    state_age: np.ndarray  # (T,) float32 — frame counter within current action
+    hitlag: np.ndarray  # (T,) float32 — hitlag frames remaining
+    stocks: np.ndarray  # (T,) float32 — stocks remaining
+    # Combat context (v2.1 — in parquet, not yet wired into model)
+    l_cancel: np.ndarray  # (T,) int64 — 0=N/A, 1=successful, 2=missed
+    hurtbox_state: np.ndarray  # (T,) int64 — 0=vulnerable, 1=invulnerable, 2=intangible
+    ground: np.ndarray  # (T,) int64 — ground surface ID (remapped: 65535→0 airborne sentinel)
+    last_attack_landed: np.ndarray  # (T,) int64 — attack ID of last connected move
+    combo_count: np.ndarray  # (T,) int64 — current combo counter
     # Controller
     main_stick_x: np.ndarray  # (T,) float32
     main_stick_y: np.ndarray  # (T,) float32
@@ -55,6 +72,14 @@ class ParsedGame:
     meta: Optional[dict] = None
 
 
+def _safe_field(struct_array, name: str, num_frames: int, dtype=np.float32) -> np.ndarray:
+    """Read a field from a PyArrow struct, returning zeros if the field doesn't exist."""
+    try:
+        return np.array(struct_array.field(name).to_pylist(), dtype=dtype)
+    except (KeyError, Exception):
+        return np.zeros(num_frames, dtype=dtype)
+
+
 def _extract_player(struct_array, num_frames: int) -> PlayerFrame:
     """Extract flat numpy arrays from a PyArrow StructArray for one player."""
     # Continuous fields
@@ -71,6 +96,28 @@ def _extract_player(struct_array, num_frames: int) -> PlayerFrame:
     # Categorical fields
     action = np.array(struct_array.field("action").to_pylist(), dtype=np.int64)
     jumps_left = np.array(struct_array.field("jumps_left").to_pylist(), dtype=np.int64)
+    character = _safe_field(struct_array, "character", num_frames, dtype=np.int64)
+
+    # Velocity (v2 fields — zeros if parsed with old schema)
+    speed_air_x = _safe_field(struct_array, "speed_air_x", num_frames)
+    speed_y = _safe_field(struct_array, "speed_y", num_frames)
+    speed_ground_x = _safe_field(struct_array, "speed_ground_x", num_frames)
+    speed_attack_x = _safe_field(struct_array, "speed_attack_x", num_frames)
+    speed_attack_y = _safe_field(struct_array, "speed_attack_y", num_frames)
+
+    # Dynamics (v2 fields — zeros if parsed with old schema)
+    state_age = _safe_field(struct_array, "state_age", num_frames)
+    hitlag = _safe_field(struct_array, "hitlag", num_frames)
+    stocks = _safe_field(struct_array, "stocks", num_frames)
+
+    # Combat context (v2.1 — zeros if parsed with old schema)
+    l_cancel = _safe_field(struct_array, "l_cancel", num_frames, dtype=np.int64)
+    hurtbox_state = _safe_field(struct_array, "hurtbox_state", num_frames, dtype=np.int64)
+    ground_raw = _safe_field(struct_array, "ground", num_frames, dtype=np.int64)
+    # Remap 65535 (airborne sentinel in peppi_py) → 0, shift real surfaces up by 1
+    ground = np.where(ground_raw == 65535, 0, ground_raw + 1).astype(np.int64)
+    last_attack_landed = _safe_field(struct_array, "last_attack_landed", num_frames, dtype=np.int64)
+    combo_count = _safe_field(struct_array, "combo_count", num_frames, dtype=np.int64)
 
     # Controller
     ctrl = struct_array.field("controller")
@@ -99,6 +146,20 @@ def _extract_player(struct_array, num_frames: int) -> PlayerFrame:
         on_ground=on_ground,
         action=action,
         jumps_left=jumps_left,
+        character=character,
+        speed_air_x=speed_air_x,
+        speed_y=speed_y,
+        speed_ground_x=speed_ground_x,
+        speed_attack_x=speed_attack_x,
+        speed_attack_y=speed_attack_y,
+        state_age=state_age,
+        hitlag=hitlag,
+        stocks=stocks,
+        l_cancel=l_cancel,
+        hurtbox_state=hurtbox_state,
+        ground=ground,
+        last_attack_landed=last_attack_landed,
+        combo_count=combo_count,
         main_stick_x=main_x,
         main_stick_y=main_y,
         c_stick_x=c_x,
