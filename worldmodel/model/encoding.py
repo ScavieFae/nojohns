@@ -158,7 +158,7 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
     """Convert a PlayerFrame's numpy arrays into normalized torch tensors.
 
     Returns dict with keys:
-        continuous: (T, 13) — [percent, x, y, shield, 5×velocity, state_age, hitlag, stocks, combo_count]
+        continuous: (T, continuous_dim) — core + velocity + dynamics + combat_continuous
         binary: (T, 3) — [facing, invulnerable, on_ground]
         controller: (T, 13) — [main_x, main_y, c_x, c_y, shoulder, A..D_UP]
         action: (T,) — int64 action indices
@@ -168,6 +168,7 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
         hurtbox_state: (T,) — int64 hurtbox state
         ground: (T,) — int64 ground surface ID
         last_attack_landed: (T,) — int64 last attack ID
+        state_age_int: (T,) — int64 (only when cfg.state_age_as_embed)
     """
     T = len(pf.percent)
 

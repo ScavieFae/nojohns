@@ -3,17 +3,18 @@
 Performance-critical: with 17M+ examples, __getitem__ must be pure tensor slicing.
 Returns 5 tensors per sample to avoid dict overhead and custom collation.
 
-v2.2 layout — input-conditioned world model:
+v2.2+ layout — input-conditioned world model:
   The model receives the current frame's controller input alongside the context
-  window, and predicts the current frame's state. This separates physics prediction
-  (deterministic given inputs) from decision prediction (what will the player press).
+  window, and predicts the current frame's state. Dimensions are config-driven
+  (EncodingConfig flags change them — see encoding.py).
 
-  float_ctx:  (K, 58) — [p0: cont(13)+bin(3)+ctrl(13), p1: same] per frame
-  int_ctx:    (K, 15) — per-player categoricals + stage
-  next_ctrl:  (26,)   — controller input for frame t [p0_ctrl(13), p1_ctrl(13)]
-  float_tgt:  (14,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
-  int_tgt:    (4,)    — [p0_action, p0_jumps, p1_action, p1_jumps]
+  float_ctx:  (K, F) — [p0: cont+bin(3)+ctrl(13), p1: same] per frame
+  int_ctx:    (K, I) — per-player categoricals [+ state_age when embedded] + stage
+  next_ctrl:  (C,)   — controller input for frame t [+ press events when enabled]
+  float_tgt:  (14,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
+  int_tgt:    (4,)   — [p0_action, p0_jumps, p1_action, p1_jumps]
 
+  Baseline: F=58, I=15, C=26. See EncodingConfig for experiment variants.
   Context = frames [t-K, ..., t-1]. Target = frame t's state given frame t's input.
 """
 
