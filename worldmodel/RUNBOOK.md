@@ -329,6 +329,32 @@ Use `--max-games` to stay within your machine's RAM. Scav (36GB) can handle ~8K 
 
 v2 adds velocity, state_age, hitlag, stocks, character/stage embeddings. The 10-point jump in action-change accuracy is primarily from velocity — knowing direction of movement makes transitions predictable.
 
+**v2.1 validation (4000 games, 2 epochs, Scav M3 Max):**
+
+| Metric | Epoch 1 | Epoch 2 |
+|--------|---------|---------|
+| Loss | 1.086 | **0.894** |
+| Action acc | 87.0% | **88.4%** |
+| Action-change acc | 29.2% | **36.2%** |
+| Position MAE | 0.89 | **0.78** |
+| Val loss | 0.886 | **0.807** |
+
+**v2.2 input-conditioned (2000 games, 2 epochs, ScavieFae M3 Pro):**
+
+| Metric | Epoch 1 | Epoch 2 | vs v2.1 (2K) |
+|--------|---------|---------|--------------|
+| Loss | 0.569 | **0.349** | -66% |
+| Action acc | 94.3% | **96.1%** | +3.1pp |
+| Action-change acc | 45.8% | **62.4%** | **+91% relative** |
+| Position MAE | 0.91 | **0.79** | same |
+| Val loss | 0.378 | **0.299** | -67% |
+
+The v2.2 jump is entirely from input conditioning — same data, same machine, same hyperparams. The model no longer guesses player decisions; it just simulates physics. See `worldmodel/docs/INPUT-CONDITIONING.md` for the full writeup.
+
+**Overnight runs (launched Feb 23, 2026):**
+- Scav: v2.2 world model, 22K games, 10 epochs
+- ScavieFae: imitation policy, 4K games, 50 epochs
+
 ## Dependencies
 
 Added `[worldmodel]` extra to `pyproject.toml`:
