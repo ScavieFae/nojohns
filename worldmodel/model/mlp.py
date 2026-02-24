@@ -3,12 +3,12 @@
 Concatenates K recent frames (via learned embeddings for categoricals)
 and predicts next-frame state changes through separate heads.
 
-v2.1: includes velocity, dynamics, combat context embeddings, and stage embedding.
-  float_ctx: (B, K, 58) — [p0: cont(13)+bin(3)+ctrl(13), p1: same]
-  int_ctx:   (B, K, 15) — [p0: action,jumps,char,l_cancel,hurtbox,ground,last_attack,
-                            p1: same, stage]
-  frame_dim: 58 + 2×(32+4+8+2+2+4+8) + 4 = 58 + 120 + 4 = 182
-  input_dim: 182 × K
+v2.2: input-conditioned — receives next-frame controller input alongside context.
+  float_ctx:  (B, K, 58) — context window [t-K, ..., t-1]
+  int_ctx:    (B, K, 15) — context categoricals
+  next_ctrl:  (B, 26)    — frame t's controller input [p0_ctrl(13), p1_ctrl(13)]
+  frame_dim:  58 + 2×(32+4+8+2+2+4+8) + 4 = 182
+  input_dim:  182 × K + 26 = 1846 (for K=10)
 """
 
 import torch
@@ -16,13 +16,21 @@ import torch.nn as nn
 
 from worldmodel.model.encoding import EncodingConfig
 
+# Controller input dimensions: sticks(4) + shoulders(2) + buttons(7) = 13 per player × 2
+CTRL_DIM = 26
+
 
 class FrameStackMLP(nn.Module):
-    """MLP world model with frame stacking and multi-head output.
+    """Input-conditioned MLP world model with frame stacking.
 
-    Input format (from MeleeFrameDataset v2.1):
-        float_ctx: (B, K, 58) — continuous + binary + controller per frame
-        int_ctx:   (B, K, 15) — categoricals per player + stage
+    Takes a context window of K frames plus the current frame's controller input,
+    and predicts the current frame's state. This separates physics prediction
+    (what happens given this input) from decision prediction (what will be pressed).
+
+    Input format (v2.2):
+        float_ctx:  (B, K, 58) — context frames
+        int_ctx:    (B, K, 15) — context categoricals
+        next_ctrl:  (B, 26)    — current frame's controller input
     """
 
     def __init__(
@@ -58,7 +66,8 @@ class FrameStackMLP(nn.Module):
             + cfg.stage_embed_dim
         )
         self.frame_dim = float_per_frame + embed_per_frame
-        input_dim = self.frame_dim * context_len
+        # v2.2: context window + controller input for the frame we're predicting
+        input_dim = self.frame_dim * context_len + CTRL_DIM
 
         # Shared trunk
         self.trunk = nn.Sequential(
@@ -79,13 +88,17 @@ class FrameStackMLP(nn.Module):
         self.p1_jumps_head = nn.Linear(trunk_dim, cfg.jumps_vocab)
 
     def forward(
-        self, float_ctx: torch.Tensor, int_ctx: torch.Tensor
+        self,
+        float_ctx: torch.Tensor,
+        int_ctx: torch.Tensor,
+        next_ctrl: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Forward pass.
 
         Args:
-            float_ctx: (B, K, 58) — float features per frame
-            int_ctx:   (B, K, 15) — categoricals per player + stage
+            float_ctx:  (B, K, 58) — context frames
+            int_ctx:    (B, K, 15) — context categoricals
+            next_ctrl:  (B, 26)    — controller input for the frame being predicted
 
         Returns:
             Dict with prediction head outputs.
@@ -123,8 +136,8 @@ class FrameStackMLP(nn.Module):
             stage_emb,
         ], dim=-1)
 
-        # Flatten context window: (B, K * frame_dim)
-        x = frame_enc.reshape(B, -1)
+        # Flatten context window + append controller input: (B, K*frame_dim + 26)
+        x = torch.cat([frame_enc.reshape(B, -1), next_ctrl], dim=-1)
 
         # Trunk
         h = self.trunk(x)

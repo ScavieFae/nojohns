@@ -43,23 +43,25 @@ Nobody has built this before — existing Melee AI (Phillip/slippi-ai) is model-
 
 **Total**: 72 per player × 2 + 4 stage = **148 dims/frame**. With K=10 context: **1,480 input dims**.
 
-### Fields in parquet but not yet in model
+### Combat context fields (wired in v2.1)
 
-| Field | Type | Values | Why |
-|-------|------|--------|-----|
-| l_cancel | uint8 | 0=N/A, 1=success, 2=miss | L-cancelled aerials have half landing lag |
-| hurtbox_state | uint8 | 0=vulnerable, 1=invuln, 2=intangible | ~10% of frames have invulnerability |
-| ground | uint16 | surface IDs, 65535=airborne | Which platform — needed for platform drops |
-| last_attack_landed | uint8 | ~60 attack IDs | What move connected — helps predict DI |
-| combo_count | uint8 | 0-10+ | Combo context |
+| Field | Type | Encoding | Embed dims |
+|-------|------|----------|------------|
+| l_cancel | uint8 | embed (vocab=3) | 2 |
+| hurtbox_state | uint8 | embed (vocab=3) | 2 |
+| ground | uint16 | embed (vocab=32) | 4 |
+| last_attack_landed | uint8 | embed (vocab=64) | 8 |
+| combo_count | uint8 | continuous × 0.1 | 1 |
 
 See `~/.agent/diagrams/worldmodel-encoding-v2.html` for the full reference page.
 
 ### Model (Phase 1: FrameStackMLP)
 
-- **Trunk**: Linear(1480, 512) → ReLU → Dropout → Linear(512, 256) → ReLU → Dropout
+v2.2 (current — input-conditioned):
+- **Trunk**: Linear(1846, 512) → ReLU → Dropout → Linear(512, 256) → ReLU → Dropout
+- **Input**: K context frames (flattened) + next-frame controller input (26 floats)
 - **Heads**: continuous_delta (MSE), binary (BCE), action (CE), jumps (CE)
-- **Parameters**: 1,116,138 (~1.1M)
+- **Parameters**: 1,304,182 (~1.3M)
 - **Loss weighting**: continuous=1.0, binary=0.5, action=2.0, jumps=0.5
 
 ## Data Pipeline
@@ -305,7 +307,7 @@ Use `--max-games` to stay within your machine's RAM. Scav (36GB) can handle ~8K 
 | Action-change acc | 5.9% | 67.2% |
 | Position MAE | 6.57 | 1.10 |
 
-**Real dataset (2000 games, 10 epochs, ScavieFae M3 Pro):**
+**Real dataset v1 (2000 games, 10 epochs, ScavieFae M3 Pro):**
 
 | Metric | Epoch 1 | Epoch 7 | Trend |
 |--------|---------|---------|-------|
@@ -314,6 +316,18 @@ Use `--max-games` to stay within your machine's RAM. Scav (36GB) can handle ~8K 
 | Action-change acc | 22.2% | 29.8% | ↑ steady improvement |
 | Position MAE | 0.91 | 0.72 | ↓ getting tighter |
 | Val loss | 1.068 | 0.930 | ↓ no overfitting yet |
+
+**Real dataset v2 (2000 games, 10 epochs, Scav M3 Max):**
+
+| Metric | Epoch 1 | Epoch 10 | v1 best |
+|--------|---------|----------|---------|
+| Loss | 1.169 | **0.782** | 0.951 |
+| Action acc | 86.7% | **89.7%** | 87.9% |
+| Action-change acc | 24.9% | **40.2%** | 29.8% |
+| Position MAE | 0.92 | **0.68** | 0.72 |
+| Val loss | 0.985 | **0.779** | 0.930 |
+
+v2 adds velocity, state_age, hitlag, stocks, character/stage embeddings. The 10-point jump in action-change accuracy is primarily from velocity — knowing direction of movement makes transitions predictable.
 
 ## Dependencies
 
@@ -334,10 +348,29 @@ System: `brew install p7zip` (for extracting .7z archives)
 |---------|----------------|-----------|-----------------|--------|---------|
 | v1 | 56 | 112 | 1,120 | 931K | `data/parsed/` (22,049 games) |
 | v2 | 72 | 148 | 1,480 | 1.1M | `data/parsed-v2/` (22,162 games) |
+| v2.1 | 89 | 182 | 1,820 | 1.3M | `data/parsed-v2/` (same parquet) |
+| **v2.2** | 89 | 182 | **1,846** | **1.3M** | `data/parsed-v2/` (same parquet) |
 
-v2 adds: velocity (5), state_age, hitlag, stocks, character embed, stage embed. Parquet also stores l_cancel, hurtbox_state, ground, last_attack_landed, combo_count for future model use.
+v2 adds: velocity (5), state_age, hitlag, stocks, character embed, stage embed.
+v2.1 adds: l_cancel embed (2d), hurtbox_state embed (2d), ground embed (4d), last_attack_landed embed (8d), combo_count continuous. Same parquet, no re-parsing needed.
+**v2.2: input-conditioned prediction.** Frame t's controller input (26 floats) is fed to the model alongside the context window. Target shifts from frame t+1 to frame t. Same parquet, same encoding — only the model architecture and data loading change. See `worldmodel/docs/INPUT-CONDITIONING.md` for the full writeup.
 
-v1 → v2 requires fresh training (input layer shape change). v1 results serve as baseline.
+Each version requires fresh training (input layer shape change).
+
+### Streaming dataloader
+
+For datasets too large for RAM, use `--streaming`:
+
+```bash
+.venv/bin/python -m worldmodel.scripts.train \
+    --dataset ~/claude-projects/nojohns-training/data/parsed-v2 \
+    --streaming --buffer-size 1000 \
+    --epochs 10 --batch-size 512 --device mps \
+    --save-dir ~/claude-projects/nojohns-training/checkpoints/v21-full \
+    --run-name "v21-full-22k" -v
+```
+
+Loads games in chunks of `buffer_size`, shuffles within each chunk, frees memory between chunks. Val set stays in-memory (only 10% of games). ~30% overhead from disk I/O vs in-memory, but handles any dataset size.
 
 ## Phase 2 Prep
 

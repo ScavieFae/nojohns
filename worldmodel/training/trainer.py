@@ -95,14 +95,15 @@ class Trainer:
         self.model.train()
         epoch_metrics = EpochMetrics()
 
-        for float_ctx, int_ctx, float_tgt, int_tgt in self.train_loader:
+        for float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt in self.train_loader:
             float_ctx = float_ctx.to(self.device)
             int_ctx = int_ctx.to(self.device)
+            next_ctrl = next_ctrl.to(self.device)
             float_tgt = float_tgt.to(self.device)
             int_tgt = int_tgt.to(self.device)
 
             self.optimizer.zero_grad()
-            predictions = self.model(float_ctx, int_ctx)
+            predictions = self.model(float_ctx, int_ctx, next_ctrl)
             loss, batch_metrics = self.metrics.compute_loss(predictions, float_tgt, int_tgt, int_ctx)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -118,13 +119,14 @@ class Trainer:
         self.model.eval()
         epoch_metrics = EpochMetrics()
 
-        for float_ctx, int_ctx, float_tgt, int_tgt in self.val_loader:
+        for float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt in self.val_loader:
             float_ctx = float_ctx.to(self.device)
             int_ctx = int_ctx.to(self.device)
+            next_ctrl = next_ctrl.to(self.device)
             float_tgt = float_tgt.to(self.device)
             int_tgt = int_tgt.to(self.device)
 
-            predictions = self.model(float_ctx, int_ctx)
+            predictions = self.model(float_ctx, int_ctx, next_ctrl)
             _, batch_metrics = self.metrics.compute_loss(predictions, float_tgt, int_tgt, int_ctx)
             epoch_metrics.update(batch_metrics)
 

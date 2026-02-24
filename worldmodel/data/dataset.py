@@ -1,16 +1,20 @@
 """PyTorch Dataset for Melee world model training.
 
 Performance-critical: with 17M+ examples, __getitem__ must be pure tensor slicing.
-Returns 3 tensors per sample (float context, int context, float targets) to avoid
-dict overhead and custom collation.
+Returns 5 tensors per sample to avoid dict overhead and custom collation.
 
-v2.1 layout (encoding with velocity, dynamics, combat context):
-  Float per player: [cont(13), binary(3), controller(13)] = 29
-  Float per frame: 29 * 2 = 58
-  Int per frame: [p0: action,jumps,char,l_cancel,hurtbox,ground,last_attack (7),
-                  p1: same (7), stage (1)] = 15
-  Target float: [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)] = 14
-  Target int: [p0_action, p0_jumps, p1_action, p1_jumps] = 4
+v2.2 layout — input-conditioned world model:
+  The model receives the current frame's controller input alongside the context
+  window, and predicts the current frame's state. This separates physics prediction
+  (deterministic given inputs) from decision prediction (what will the player press).
+
+  float_ctx:  (K, 58) — [p0: cont(13)+bin(3)+ctrl(13), p1: same] per frame
+  int_ctx:    (K, 15) — per-player categoricals + stage
+  next_ctrl:  (26,)   — controller input for frame t [p0_ctrl(13), p1_ctrl(13)]
+  float_tgt:  (14,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
+  int_tgt:    (4,)    — [p0_action, p0_jumps, p1_action, p1_jumps]
+
+  Context = frames [t-K, ..., t-1]. Target = frame t's state given frame t's input.
 """
 
 import logging
@@ -27,10 +31,13 @@ from worldmodel.model.encoding import EncodingConfig, encode_player_frames
 
 logger = logging.getLogger(__name__)
 
-# v2.1 layout: per player = continuous(13) + binary(3) + controller(13) = 29
+# v2.2 layout: per player = continuous(13) + binary(3) + controller(13) = 29
 # Per frame = 29 * 2 players = 58
 FLOAT_PER_PLAYER = 29
 FLOAT_PER_FRAME = FLOAT_PER_PLAYER * 2  # 58
+# Controller: sticks(4) + shoulders(2) + buttons(7) = 13 per player
+CTRL_PER_PLAYER = 13
+CTRL_DIM = CTRL_PER_PLAYER * 2  # 26 — the input-conditioning tensor
 # [p0: action,jumps,char,l_cancel,hurtbox,ground,last_attack,
 #  p1: action,jumps,char,l_cancel,hurtbox,ground,last_attack, stage] = 15
 INT_PER_PLAYER = 7
@@ -126,23 +133,32 @@ class MeleeDataset:
 
 
 class MeleeFrameDataset(Dataset):
-    """Frame-level dataset returning flat tensors.
+    """Input-conditioned frame dataset.
 
-    v2.1 layout:
-        float_ctx: (K, 58) — [p0: cont(13)+bin(3)+ctrl(13), p1: same] per frame
-        int_ctx:   (K, 15) — per-player categoricals + stage
-        float_tgt: (14,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
-        int_tgt:   (4,)    — [p0_action, p0_jumps, p1_action, p1_jumps]
+    v2.2: returns 5 tensors — context window + next-frame controller input + targets.
+    The model receives the controller input for frame t and predicts frame t's state.
+    This makes action prediction a physics problem (deterministic given inputs)
+    rather than a decision-guessing problem.
+
+        float_ctx:  (K, 58) — context frames [t-K, ..., t-1]
+        int_ctx:    (K, 15) — context categoricals
+        next_ctrl:  (26,)   — frame t's controller input [p0_ctrl(13), p1_ctrl(13)]
+        float_tgt:  (14,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
+        int_tgt:    (4,)    — [p0_action, p0_jumps, p1_action, p1_jumps]
+
+    Targets are frame t's state. Delta is computed as frame t minus frame t-1.
     """
 
-    # v2.1 float layout offsets (per player block = 29 floats)
+    # Float layout offsets (per player block = 29 floats)
     # continuous: [0:13]  (percent, x, y, shield, 5×vel, state_age, hitlag, stocks, combo_count)
     # binary:     [13:16] (facing, invuln, on_ground)
     # controller: [16:29] (sticks, shoulder, buttons)
     P0_CONT = slice(0, 4)      # core continuous: percent, x, y, shield (delta targets)
     P0_BIN = slice(13, 16)     # binary: facing, invuln, on_ground
+    P0_CTRL = slice(16, 29)    # p0 controller (13 floats)
     P1_CONT = slice(29, 33)    # p1 core continuous (29 = FLOAT_PER_PLAYER)
     P1_BIN = slice(42, 45)     # p1 binary (29 + 13 = 42)
+    P1_CTRL = slice(45, 58)    # p1 controller (13 floats)
 
     def __init__(self, data: MeleeDataset, game_range: range, context_len: int = 10):
         self.data = data
@@ -152,7 +168,8 @@ class MeleeFrameDataset(Dataset):
         for gi in game_range:
             start = data.game_offsets[gi]
             end = data.game_offsets[gi + 1]
-            for t in range(start + context_len, end - 1):
+            # v2.2: predict frame t given t's controller, no need for t+1
+            for t in range(start + context_len, end):
                 indices.append(t)
 
         self.valid_indices = np.array(indices, dtype=np.int64)
@@ -164,36 +181,42 @@ class MeleeFrameDataset(Dataset):
     def __len__(self) -> int:
         return len(self.valid_indices)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         t = int(self.valid_indices[idx])
         K = self.context_len
 
-        float_ctx = self.data.floats[t - K:t]  # (K, 58)
+        float_ctx = self.data.floats[t - K:t]  # (K, 58) — frames t-K to t-1
         int_ctx = self.data.ints[t - K:t]  # (K, 15)
 
-        # Targets: delta for continuous, raw for binary/categorical
+        # Controller input for frame t (what we're conditioning on)
         curr_float = self.data.floats[t]  # (58,)
-        next_float = self.data.floats[t + 1]  # (58,)
+        next_ctrl = torch.cat([
+            curr_float[self.P0_CTRL],  # p0 controller (13)
+            curr_float[self.P1_CTRL],  # p1 controller (13)
+        ])  # (26,)
 
-        # Continuous delta: first 4 of each player's block (percent, x, y, shield)
-        p0_cont_delta = next_float[self.P0_CONT] - curr_float[self.P0_CONT]
-        p1_cont_delta = next_float[self.P1_CONT] - curr_float[self.P1_CONT]
-        # Binary targets (next frame)
-        p0_binary = next_float[self.P0_BIN]
-        p1_binary = next_float[self.P1_BIN]
+        # Targets: frame t's state (the result of applying next_ctrl)
+        prev_float = self.data.floats[t - 1]  # last context frame
+
+        # Continuous delta: frame t minus frame t-1
+        p0_cont_delta = curr_float[self.P0_CONT] - prev_float[self.P0_CONT]
+        p1_cont_delta = curr_float[self.P1_CONT] - prev_float[self.P1_CONT]
+        # Binary targets (frame t)
+        p0_binary = curr_float[self.P0_BIN]
+        p1_binary = curr_float[self.P1_BIN]
 
         float_tgt = torch.cat([p0_cont_delta, p1_cont_delta, p0_binary, p1_binary])  # (14,)
 
-        # Int targets: next frame action/jumps (skip character + combat context)
-        next_ints = self.data.ints[t + 1]
+        # Int targets: frame t's action/jumps
+        curr_ints = self.data.ints[t]
         int_tgt = torch.stack([
-            next_ints[0],  # p0_action
-            next_ints[1],  # p0_jumps
-            next_ints[INT_PER_PLAYER],  # p1_action (index 7)
-            next_ints[INT_PER_PLAYER + 1],  # p1_jumps (index 8)
+            curr_ints[0],  # p0_action
+            curr_ints[1],  # p0_jumps
+            curr_ints[INT_PER_PLAYER],  # p1_action (index 7)
+            curr_ints[INT_PER_PLAYER + 1],  # p1_jumps (index 8)
         ])  # (4,)
 
-        return float_ctx, int_ctx, float_tgt, int_tgt
+        return float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt
 
 
 # --- Streaming dataset for large datasets ---
