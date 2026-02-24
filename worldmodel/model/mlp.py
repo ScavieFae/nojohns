@@ -3,21 +3,19 @@
 Concatenates K recent frames (via learned embeddings for categoricals)
 and predicts next-frame state changes through separate heads.
 
-v2.2: input-conditioned — receives next-frame controller input alongside context.
-  float_ctx:  (B, K, 58) — context window [t-K, ..., t-1]
-  int_ctx:    (B, K, 15) — context categoricals
-  next_ctrl:  (B, 26)    — frame t's controller input [p0_ctrl(13), p1_ctrl(13)]
-  frame_dim:  58 + 2×(32+4+8+2+2+4+8) + 4 = 182
-  input_dim:  182 × K + 26 = 1846 (for K=10)
+v2.2+: input-conditioned — receives next-frame controller input alongside context.
+  float_ctx:  (B, K, F) — context window [t-K, ..., t-1]
+  int_ctx:    (B, K, I) — context categoricals
+  next_ctrl:  (B, C)    — frame t's controller input (C = ctrl_conditioning_dim)
+
+Dimensions are config-driven — experiment flags (state_age_as_embed, press_events)
+change F, I, and C without any code modifications.
 """
 
 import torch
 import torch.nn as nn
 
 from worldmodel.model.encoding import EncodingConfig
-
-# Controller input dimensions: sticks(4) + shoulders(2) + buttons(7) = 13 per player × 2
-CTRL_DIM = 26
 
 
 class FrameStackMLP(nn.Module):
@@ -26,11 +24,6 @@ class FrameStackMLP(nn.Module):
     Takes a context window of K frames plus the current frame's controller input,
     and predicts the current frame's state. This separates physics prediction
     (what happens given this input) from decision prediction (what will be pressed).
-
-    Input format (v2.2):
-        float_ctx:  (B, K, 58) — context frames
-        int_ctx:    (B, K, 15) — context categoricals
-        next_ctrl:  (B, 26)    — current frame's controller input
     """
 
     def __init__(
@@ -55,19 +48,37 @@ class FrameStackMLP(nn.Module):
         self.hurtbox_embed = nn.Embedding(cfg.hurtbox_vocab, cfg.hurtbox_embed_dim)
         self.ground_embed = nn.Embedding(cfg.ground_vocab, cfg.ground_embed_dim)
         self.last_attack_embed = nn.Embedding(cfg.last_attack_vocab, cfg.last_attack_embed_dim)
+        # Exp 1a: state_age as learned embedding
+        if cfg.state_age_as_embed:
+            self.state_age_embed = nn.Embedding(cfg.state_age_embed_vocab, cfg.state_age_embed_dim)
 
-        # Per-frame dim: floats + embeddings
-        # = 58 + 2×(32+4+8+2+2+4+8) + 4 = 58 + 120 + 4 = 182
+        # Per-frame dim: floats + embeddings (dynamic based on config flags)
         float_per_frame = cfg.float_per_player * 2
-        embed_per_frame = (
-            2 * (cfg.action_embed_dim + cfg.jumps_embed_dim + cfg.character_embed_dim
-                 + cfg.l_cancel_embed_dim + cfg.hurtbox_embed_dim
-                 + cfg.ground_embed_dim + cfg.last_attack_embed_dim)
-            + cfg.stage_embed_dim
+        base_embed_per_player = (
+            cfg.action_embed_dim + cfg.jumps_embed_dim + cfg.character_embed_dim
+            + cfg.l_cancel_embed_dim + cfg.hurtbox_embed_dim
+            + cfg.ground_embed_dim + cfg.last_attack_embed_dim
         )
+        if cfg.state_age_as_embed:
+            base_embed_per_player += cfg.state_age_embed_dim
+        embed_per_frame = 2 * base_embed_per_player + cfg.stage_embed_dim
         self.frame_dim = float_per_frame + embed_per_frame
-        # v2.2: context window + controller input for the frame we're predicting
-        input_dim = self.frame_dim * context_len + CTRL_DIM
+        # Context window + controller conditioning input
+        input_dim = self.frame_dim * context_len + cfg.ctrl_conditioning_dim
+
+        # Int column indices (depend on int_per_player)
+        ipp = cfg.int_per_player
+        self._int_cols = {
+            "p0_action": 0, "p0_jumps": 1, "p0_char": 2,
+            "p0_l_cancel": 3, "p0_hurtbox": 4, "p0_ground": 5, "p0_last_attack": 6,
+            "p1_action": ipp, "p1_jumps": ipp + 1, "p1_char": ipp + 2,
+            "p1_l_cancel": ipp + 3, "p1_hurtbox": ipp + 4,
+            "p1_ground": ipp + 5, "p1_last_attack": ipp + 6,
+            "stage": ipp * 2,
+        }
+        if cfg.state_age_as_embed:
+            self._int_cols["p0_state_age"] = 7  # after p0's 7 base categoricals
+            self._int_cols["p1_state_age"] = ipp + 7
 
         # Shared trunk
         self.trunk = nn.Sequential(
@@ -96,47 +107,53 @@ class FrameStackMLP(nn.Module):
         """Forward pass.
 
         Args:
-            float_ctx:  (B, K, 58) — context frames
-            int_ctx:    (B, K, 15) — context categoricals
-            next_ctrl:  (B, 26)    — controller input for the frame being predicted
+            float_ctx:  (B, K, F) — context frames
+            int_ctx:    (B, K, I) — context categoricals
+            next_ctrl:  (B, C)    — controller conditioning input
 
         Returns:
             Dict with prediction head outputs.
         """
         B, K, _ = float_ctx.shape
+        c = self._int_cols
 
-        # Embed categoricals: int_ctx columns are:
-        # [p0_action(0), p0_jumps(1), p0_char(2), p0_l_cancel(3), p0_hurtbox(4),
-        #  p0_ground(5), p0_last_attack(6),
-        #  p1_action(7), p1_jumps(8), p1_char(9), p1_l_cancel(10), p1_hurtbox(11),
-        #  p1_ground(12), p1_last_attack(13), stage(14)]
-        p0_action_emb = self.action_embed(int_ctx[:, :, 0])          # (B, K, 32)
-        p0_jumps_emb = self.jumps_embed(int_ctx[:, :, 1])            # (B, K, 4)
-        p0_char_emb = self.character_embed(int_ctx[:, :, 2])         # (B, K, 8)
-        p0_lc_emb = self.l_cancel_embed(int_ctx[:, :, 3])            # (B, K, 2)
-        p0_hb_emb = self.hurtbox_embed(int_ctx[:, :, 4])             # (B, K, 2)
-        p0_gnd_emb = self.ground_embed(int_ctx[:, :, 5])             # (B, K, 4)
-        p0_la_emb = self.last_attack_embed(int_ctx[:, :, 6])         # (B, K, 8)
-        p1_action_emb = self.action_embed(int_ctx[:, :, 7])          # (B, K, 32)
-        p1_jumps_emb = self.jumps_embed(int_ctx[:, :, 8])            # (B, K, 4)
-        p1_char_emb = self.character_embed(int_ctx[:, :, 9])         # (B, K, 8)
-        p1_lc_emb = self.l_cancel_embed(int_ctx[:, :, 10])           # (B, K, 2)
-        p1_hb_emb = self.hurtbox_embed(int_ctx[:, :, 11])            # (B, K, 2)
-        p1_gnd_emb = self.ground_embed(int_ctx[:, :, 12])            # (B, K, 4)
-        p1_la_emb = self.last_attack_embed(int_ctx[:, :, 13])        # (B, K, 8)
-        stage_emb = self.stage_embed(int_ctx[:, :, 14])              # (B, K, 4)
+        # Embed categoricals using config-driven column indices
+        p0_action_emb = self.action_embed(int_ctx[:, :, c["p0_action"]])
+        p0_jumps_emb = self.jumps_embed(int_ctx[:, :, c["p0_jumps"]])
+        p0_char_emb = self.character_embed(int_ctx[:, :, c["p0_char"]])
+        p0_lc_emb = self.l_cancel_embed(int_ctx[:, :, c["p0_l_cancel"]])
+        p0_hb_emb = self.hurtbox_embed(int_ctx[:, :, c["p0_hurtbox"]])
+        p0_gnd_emb = self.ground_embed(int_ctx[:, :, c["p0_ground"]])
+        p0_la_emb = self.last_attack_embed(int_ctx[:, :, c["p0_last_attack"]])
 
-        # Concat floats + embeddings per frame: (B, K, frame_dim)
-        frame_enc = torch.cat([
+        p1_action_emb = self.action_embed(int_ctx[:, :, c["p1_action"]])
+        p1_jumps_emb = self.jumps_embed(int_ctx[:, :, c["p1_jumps"]])
+        p1_char_emb = self.character_embed(int_ctx[:, :, c["p1_char"]])
+        p1_lc_emb = self.l_cancel_embed(int_ctx[:, :, c["p1_l_cancel"]])
+        p1_hb_emb = self.hurtbox_embed(int_ctx[:, :, c["p1_hurtbox"]])
+        p1_gnd_emb = self.ground_embed(int_ctx[:, :, c["p1_ground"]])
+        p1_la_emb = self.last_attack_embed(int_ctx[:, :, c["p1_last_attack"]])
+        stage_emb = self.stage_embed(int_ctx[:, :, c["stage"]])
+
+        # Build per-frame encoding: floats + embeddings
+        parts = [
             float_ctx,
             p0_action_emb, p0_jumps_emb, p0_char_emb,
             p0_lc_emb, p0_hb_emb, p0_gnd_emb, p0_la_emb,
+        ]
+        if self.cfg.state_age_as_embed:
+            parts.append(self.state_age_embed(int_ctx[:, :, c["p0_state_age"]]))
+        parts.extend([
             p1_action_emb, p1_jumps_emb, p1_char_emb,
             p1_lc_emb, p1_hb_emb, p1_gnd_emb, p1_la_emb,
-            stage_emb,
-        ], dim=-1)
+        ])
+        if self.cfg.state_age_as_embed:
+            parts.append(self.state_age_embed(int_ctx[:, :, c["p1_state_age"]]))
+        parts.append(stage_emb)
 
-        # Flatten context window + append controller input: (B, K*frame_dim + 26)
+        frame_enc = torch.cat(parts, dim=-1)  # (B, K, frame_dim)
+
+        # Flatten context window + append controller conditioning
         x = torch.cat([frame_enc.reshape(B, -1), next_ctrl], dim=-1)
 
         # Trunk

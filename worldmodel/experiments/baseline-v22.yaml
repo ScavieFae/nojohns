@@ -1,0 +1,42 @@
+# Baseline v2.2 — control run (all experiment flags off)
+# Identical to current v2.2 behavior. Use as control for exp-1a/2a comparisons.
+
+data:
+  dataset_dir: null  # Set via CLI --dataset flag
+  max_games: 2000
+  stage_filter: null
+  character_filter: null
+
+encoding:
+  xy_scale: 0.05
+  percent_scale: 0.01
+  shield_scale: 0.01
+  action_vocab: 400
+  action_embed_dim: 32
+  jumps_vocab: 8
+  jumps_embed_dim: 4
+  # Experiment flags — all off
+  state_age_as_embed: false
+  press_events: false
+
+model:
+  context_len: 10
+  hidden_dim: 512
+  trunk_dim: 256
+  dropout: 0.1
+
+training:
+  lr: 0.001
+  weight_decay: 0.00001
+  batch_size: 512
+  num_epochs: 2
+  train_split: 0.9
+  device: null
+
+loss_weights:
+  continuous: 1.0
+  binary: 0.5
+  action: 2.0
+  jumps: 0.5
+
+save_dir: worldmodel/checkpoints

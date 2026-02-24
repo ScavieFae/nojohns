@@ -31,18 +31,13 @@ from worldmodel.model.encoding import EncodingConfig, encode_player_frames
 
 logger = logging.getLogger(__name__)
 
-# v2.2 layout: per player = continuous(13) + binary(3) + controller(13) = 29
-# Per frame = 29 * 2 players = 58
+# Backward-compat constants: match v2.2 baseline (default EncodingConfig).
+# Used by policy_dataset.py and rollout.py — will migrate to config-driven later.
 FLOAT_PER_PLAYER = 29
-FLOAT_PER_FRAME = FLOAT_PER_PLAYER * 2  # 58
-# Controller: sticks(4) + shoulders(2) + buttons(7) = 13 per player
-CTRL_PER_PLAYER = 13
-CTRL_DIM = CTRL_PER_PLAYER * 2  # 26 — the input-conditioning tensor
-# [p0: action,jumps,char,l_cancel,hurtbox,ground,last_attack,
-#  p1: action,jumps,char,l_cancel,hurtbox,ground,last_attack, stage] = 15
+FLOAT_PER_FRAME = 58
+CTRL_DIM = 26
 INT_PER_PLAYER = 7
-INT_PER_FRAME = INT_PER_PLAYER * 2 + 1  # 15
-# Targets unchanged
+INT_PER_FRAME = 15
 TARGET_FLOAT_DIM = 14
 TARGET_INT_DIM = 4
 
@@ -51,28 +46,28 @@ def _encode_game(game: ParsedGame, cfg: EncodingConfig) -> tuple[torch.Tensor, t
     """Encode a single game into float and int tensors.
 
     Returns:
-        frame_float: (T, 58) — continuous + binary + controller per player
-        frame_int: (T, 15) — categoricals per player + stage
+        frame_float: (T, float_per_player*2) — continuous + binary + controller per player
+        frame_int: (T, int_per_frame) — categoricals per player + stage
     """
     p0 = encode_player_frames(game.p0, cfg)
     p1 = encode_player_frames(game.p1, cfg)
     T = game.num_frames
 
-    # Float: [continuous(13), binary(3), controller(13)] per player = 29 each
+    # Float: [continuous, binary(3), controller(13)] per player
     frame_float = torch.cat([
-        p0["continuous"],  # (T, 13)
+        p0["continuous"],  # (T, continuous_dim)
         p0["binary"],  # (T, 3)
         p0["controller"],  # (T, 13)
-        p1["continuous"],  # (T, 13)
+        p1["continuous"],  # (T, continuous_dim)
         p1["binary"],  # (T, 3)
         p1["controller"],  # (T, 13)
-    ], dim=1)  # (T, 58)
+    ], dim=1)  # (T, float_per_player*2)
 
     # Int: categoricals per player + stage
     stage_col = torch.full((T,), game.stage, dtype=torch.long)
     stage_col = torch.clamp(stage_col, 0, cfg.stage_vocab - 1)
 
-    frame_int = torch.stack([
+    int_cols = [
         p0["action"],
         p0["jumps_left"],
         p0["character"],
@@ -80,6 +75,10 @@ def _encode_game(game: ParsedGame, cfg: EncodingConfig) -> tuple[torch.Tensor, t
         p0["hurtbox_state"],
         p0["ground"],
         p0["last_attack_landed"],
+    ]
+    if cfg.state_age_as_embed:
+        int_cols.append(p0["state_age_int"])
+    int_cols.extend([
         p1["action"],
         p1["jumps_left"],
         p1["character"],
@@ -87,8 +86,12 @@ def _encode_game(game: ParsedGame, cfg: EncodingConfig) -> tuple[torch.Tensor, t
         p1["hurtbox_state"],
         p1["ground"],
         p1["last_attack_landed"],
-        stage_col,
-    ], dim=1)  # (T, 15)
+    ])
+    if cfg.state_age_as_embed:
+        int_cols.append(p1["state_age_int"])
+    int_cols.append(stage_col)
+
+    frame_int = torch.stack(int_cols, dim=1)  # (T, int_per_frame)
 
     return frame_float, frame_int
 
@@ -135,40 +138,58 @@ class MeleeDataset:
 class MeleeFrameDataset(Dataset):
     """Input-conditioned frame dataset.
 
-    v2.2: returns 5 tensors — context window + next-frame controller input + targets.
+    v2.2+: returns 5 tensors — context window + next-frame controller input + targets.
     The model receives the controller input for frame t and predicts frame t's state.
-    This makes action prediction a physics problem (deterministic given inputs)
-    rather than a decision-guessing problem.
 
-        float_ctx:  (K, 58) — context frames [t-K, ..., t-1]
-        int_ctx:    (K, 15) — context categoricals
-        next_ctrl:  (26,)   — frame t's controller input [p0_ctrl(13), p1_ctrl(13)]
-        float_tgt:  (14,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
-        int_tgt:    (4,)    — [p0_action, p0_jumps, p1_action, p1_jumps]
+        float_ctx:  (K, F) — context frames [t-K, ..., t-1]   (F = float_per_player*2)
+        int_ctx:    (K, I) — context categoricals              (I = int_per_frame)
+        next_ctrl:  (C,)   — frame t's controller input        (C = ctrl_conditioning_dim)
+        float_tgt:  (14,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
+        int_tgt:    (4,)   — [p0_action, p0_jumps, p1_action, p1_jumps]
 
-    Targets are frame t's state. Delta is computed as frame t minus frame t-1.
+    Dimensions are config-driven (EncodingConfig flags change them).
     """
-
-    # Float layout offsets (per player block = 29 floats)
-    # continuous: [0:13]  (percent, x, y, shield, 5×vel, state_age, hitlag, stocks, combo_count)
-    # binary:     [13:16] (facing, invuln, on_ground)
-    # controller: [16:29] (sticks, shoulder, buttons)
-    P0_CONT = slice(0, 4)      # core continuous: percent, x, y, shield (delta targets)
-    P0_BIN = slice(13, 16)     # binary: facing, invuln, on_ground
-    P0_CTRL = slice(16, 29)    # p0 controller (13 floats)
-    P1_CONT = slice(29, 33)    # p1 core continuous (29 = FLOAT_PER_PLAYER)
-    P1_BIN = slice(42, 45)     # p1 binary (29 + 13 = 42)
-    P1_CTRL = slice(45, 58)    # p1 controller (13 floats)
 
     def __init__(self, data: MeleeDataset, game_range: range, context_len: int = 10):
         self.data = data
         self.context_len = context_len
+        cfg = data.cfg
+
+        # Compute slice offsets from config (per-player float block)
+        fp = cfg.float_per_player
+        cd = cfg.continuous_dim
+        bd = cfg.binary_dim
+        ctrl_d = cfg.controller_dim
+
+        bin_start = cd
+        bin_end = bin_start + bd
+        ctrl_start = bin_end
+        ctrl_end = ctrl_start + ctrl_d
+
+        self._p0_cont = slice(0, cfg.core_continuous_dim)  # delta targets (4)
+        self._p0_bin = slice(bin_start, bin_end)
+        self._p0_ctrl = slice(ctrl_start, ctrl_end)
+        self._p1_cont = slice(fp, fp + cfg.core_continuous_dim)
+        self._p1_bin = slice(fp + bin_start, fp + bin_end)
+        self._p1_ctrl = slice(fp + ctrl_start, fp + ctrl_end)
+
+        # Button slices for press events (buttons are last 8 of controller)
+        # controller layout: main_x, main_y, c_x, c_y, shoulder, 8 buttons
+        btn_offset = 5  # 4 sticks + 1 shoulder
+        self._p0_buttons = slice(ctrl_start + btn_offset, ctrl_end)
+        self._p1_buttons = slice(fp + ctrl_start + btn_offset, fp + ctrl_end)
+
+        # Int column offsets
+        ipp = cfg.int_per_player
+        self._p1_int_offset = ipp  # where p1's int columns start
+
+        self._press_events = cfg.press_events
 
         indices = []
+        # press_events needs t-1 for prev buttons, so start at context_len (which already guarantees t-1 exists)
         for gi in game_range:
             start = data.game_offsets[gi]
             end = data.game_offsets[gi + 1]
-            # v2.2: predict frame t given t's controller, no need for t+1
             for t in range(start + context_len, end):
                 indices.append(t)
 
@@ -185,35 +206,49 @@ class MeleeFrameDataset(Dataset):
         t = int(self.valid_indices[idx])
         K = self.context_len
 
-        float_ctx = self.data.floats[t - K:t]  # (K, 58) — frames t-K to t-1
-        int_ctx = self.data.ints[t - K:t]  # (K, 15)
+        float_ctx = self.data.floats[t - K:t]  # (K, F)
+        int_ctx = self.data.ints[t - K:t]  # (K, I)
 
         # Controller input for frame t (what we're conditioning on)
-        curr_float = self.data.floats[t]  # (58,)
-        next_ctrl = torch.cat([
-            curr_float[self.P0_CTRL],  # p0 controller (13)
-            curr_float[self.P1_CTRL],  # p1 controller (13)
-        ])  # (26,)
+        curr_float = self.data.floats[t]
+        ctrl_parts = [
+            curr_float[self._p0_ctrl],  # p0 controller (13)
+            curr_float[self._p1_ctrl],  # p1 controller (13)
+        ]
 
-        # Targets: frame t's state (the result of applying next_ctrl)
-        prev_float = self.data.floats[t - 1]  # last context frame
+        if self._press_events:
+            prev_float = self.data.floats[t - 1]
+            # Press event = button newly pressed this frame (was <0.5, now >0.5)
+            p0_curr_btn = curr_float[self._p0_buttons]
+            p0_prev_btn = prev_float[self._p0_buttons]
+            p1_curr_btn = curr_float[self._p1_buttons]
+            p1_prev_btn = prev_float[self._p1_buttons]
+            p0_press = ((p0_curr_btn > 0.5) & (p0_prev_btn < 0.5)).float()  # (8,)
+            p1_press = ((p1_curr_btn > 0.5) & (p1_prev_btn < 0.5)).float()  # (8,)
+            ctrl_parts.extend([p0_press, p1_press])
+
+        next_ctrl = torch.cat(ctrl_parts)  # (26,) or (42,)
+
+        # Targets: frame t's state
+        if not self._press_events:
+            prev_float = self.data.floats[t - 1]
 
         # Continuous delta: frame t minus frame t-1
-        p0_cont_delta = curr_float[self.P0_CONT] - prev_float[self.P0_CONT]
-        p1_cont_delta = curr_float[self.P1_CONT] - prev_float[self.P1_CONT]
-        # Binary targets (frame t)
-        p0_binary = curr_float[self.P0_BIN]
-        p1_binary = curr_float[self.P1_BIN]
+        p0_cont_delta = curr_float[self._p0_cont] - prev_float[self._p0_cont]
+        p1_cont_delta = curr_float[self._p1_cont] - prev_float[self._p1_cont]
+        p0_binary = curr_float[self._p0_bin]
+        p1_binary = curr_float[self._p1_bin]
 
         float_tgt = torch.cat([p0_cont_delta, p1_cont_delta, p0_binary, p1_binary])  # (14,)
 
         # Int targets: frame t's action/jumps
         curr_ints = self.data.ints[t]
+        p1_off = self._p1_int_offset
         int_tgt = torch.stack([
-            curr_ints[0],  # p0_action
-            curr_ints[1],  # p0_jumps
-            curr_ints[INT_PER_PLAYER],  # p1_action (index 7)
-            curr_ints[INT_PER_PLAYER + 1],  # p1_jumps (index 8)
+            curr_ints[0],          # p0_action
+            curr_ints[1],          # p0_jumps
+            curr_ints[p1_off],     # p1_action
+            curr_ints[p1_off + 1], # p1_jumps
         ])  # (4,)
 
         return float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt

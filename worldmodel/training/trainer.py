@@ -1,5 +1,6 @@
 """Training loop for the world model."""
 
+import dataclasses
 import logging
 import time
 from pathlib import Path
@@ -208,13 +209,8 @@ class Trainer:
                 "model_state_dict": self.model.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "val_loss": val_loss,
-                "config": {
-                    "action_vocab": self.cfg.action_vocab,
-                    "action_embed_dim": self.cfg.action_embed_dim,
-                    "jumps_vocab": self.cfg.jumps_vocab,
-                    "jumps_embed_dim": self.cfg.jumps_embed_dim,
-                    "context_len": self.model.context_len,
-                },
+                "encoding_config": dataclasses.asdict(self.cfg),
+                "context_len": self.model.context_len,
             },
             path,
         )

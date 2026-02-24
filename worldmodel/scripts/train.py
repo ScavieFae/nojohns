@@ -105,7 +105,24 @@ def main():
     if args.device is not None:
         train_cfg["device"] = args.device
 
-    save_dir = args.save_dir or cfg.get("save_dir", "worldmodel/checkpoints")
+    # Derive experiment name from config filename (e.g. "exp-1a-state-age-embed" from path)
+    experiment_name = None
+    if args.config:
+        experiment_name = Path(args.config).stem  # strip directory + .yaml
+
+    base_save_dir = args.save_dir or cfg.get("save_dir", "worldmodel/checkpoints")
+    # Experiment name drives save subdirectory
+    if experiment_name and not args.save_dir:
+        save_dir = str(Path(base_save_dir) / experiment_name)
+    else:
+        save_dir = base_save_dir
+
+    # Default run-name to experiment name
+    if args.run_name is None and experiment_name:
+        args.run_name = experiment_name
+
+    if experiment_name:
+        logging.info("Experiment: %s", experiment_name)
 
     # Build encoding config
     enc_cfg_dict = cfg.get("encoding", {})

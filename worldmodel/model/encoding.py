@@ -64,17 +64,23 @@ class EncodingConfig:
     last_attack_vocab: int = 64  # ~60 distinct attack IDs
     last_attack_embed_dim: int = 8
 
-    # Derived dimensions (per player)
+    # Experiment flags
+    state_age_as_embed: bool = False  # Exp 1a: learned embedding instead of scaled float
+    state_age_embed_vocab: int = 150  # max animation frames
+    state_age_embed_dim: int = 8
+    press_events: bool = False  # Exp 2a: 16 binary features for newly-pressed buttons
+
+    # Derived dimensions (per player, default / state_age_as_embed)
     # core_continuous: percent, x, y, shield = 4
     # velocity: speed_air_x, speed_y, speed_ground_x, speed_attack_x, speed_attack_y = 5
-    # dynamics: state_age, hitlag, stocks = 3
+    # dynamics: [state_age], hitlag, stocks = 3 or 2 (state_age moves to embedding)
     # combat_continuous: combo_count = 1
     # binary: facing, invulnerable, on_ground = 3
     # controller: main_x, main_y, c_x, c_y, shoulder, 8 buttons = 13
-    # embeddings: action(32) + jumps(4) + character(8) + l_cancel(2) + hurtbox(2) + ground(4) + last_attack(8) = 60
-    # Per player = 4 + 5 + 3 + 1 + 3 + 13 + 60 = 89
-    # Stage embedding (shared): 4
-    # Total per frame = 89 * 2 + 4 = 182
+    # embeddings: action(32) + jumps(4) + character(8) + l_cancel(2) + hurtbox(2) +
+    #             ground(4) + last_attack(8) [+ state_age(8)] = 60 or 68
+    # Default:          29 + 60 = 89 per player, 89*2 + 4 = 182 per frame
+    # state_age_embed:  28 + 68 = 96 per player, 96*2 + 4 = 196 per frame
 
     @property
     def core_continuous_dim(self) -> int:
@@ -86,7 +92,8 @@ class EncodingConfig:
 
     @property
     def dynamics_dim(self) -> int:
-        return 3  # state_age, hitlag, stocks
+        # state_age moves to embedding when state_age_as_embed is True
+        return 2 if self.state_age_as_embed else 3  # hitlag, stocks [, state_age]
 
     @property
     def combat_continuous_dim(self) -> int:
@@ -111,17 +118,37 @@ class EncodingConfig:
 
     @property
     def embed_dim(self) -> int:
-        return (self.action_embed_dim + self.jumps_embed_dim + self.character_embed_dim
+        base = (self.action_embed_dim + self.jumps_embed_dim + self.character_embed_dim
                 + self.l_cancel_embed_dim + self.hurtbox_embed_dim
                 + self.ground_embed_dim + self.last_attack_embed_dim)  # 60
+        if self.state_age_as_embed:
+            base += self.state_age_embed_dim  # +8
+        return base
+
+    @property
+    def int_per_player(self) -> int:
+        # 7 base categoricals + 1 state_age int when embedded
+        return 8 if self.state_age_as_embed else 7
+
+    @property
+    def int_per_frame(self) -> int:
+        return self.int_per_player * 2 + 1  # +1 for stage
+
+    @property
+    def ctrl_extra_dim(self) -> int:
+        return 16 if self.press_events else 0  # 8 buttons × 2 players
+
+    @property
+    def ctrl_conditioning_dim(self) -> int:
+        return self.controller_dim * 2 + self.ctrl_extra_dim  # 26 or 42
 
     @property
     def player_dim(self) -> int:
-        return self.float_per_player + self.embed_dim  # 29 + 60 = 89
+        return self.float_per_player + self.embed_dim
 
     @property
     def frame_dim(self) -> int:
-        return self.player_dim * 2 + self.stage_embed_dim  # 89*2 + 4 = 182
+        return self.player_dim * 2 + self.stage_embed_dim
 
 
 # --- Tensor encoding (numpy → torch, no learned params) ---
@@ -144,28 +171,30 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
     """
     T = len(pf.percent)
 
-    continuous = np.stack(
-        [
-            # Core continuous (predict deltas for these)
-            pf.percent * cfg.percent_scale,
-            pf.x * cfg.xy_scale,
-            pf.y * cfg.xy_scale,
-            pf.shield_strength * cfg.shield_scale,
-            # Velocity (input features)
-            pf.speed_air_x * cfg.velocity_scale,
-            pf.speed_y * cfg.velocity_scale,
-            pf.speed_ground_x * cfg.velocity_scale,
-            pf.speed_attack_x * cfg.velocity_scale,
-            pf.speed_attack_y * cfg.velocity_scale,
-            # Dynamics (input features)
-            pf.state_age * cfg.state_age_scale,
-            pf.hitlag * cfg.hitlag_scale,
-            pf.stocks * cfg.stocks_scale,
-            # Combat continuous
-            pf.combo_count * cfg.combo_count_scale,
-        ],
-        axis=1,
-    )  # (T, 13)
+    # Build continuous columns — dynamics section varies with state_age_as_embed
+    cont_cols = [
+        # Core continuous (predict deltas for these)
+        pf.percent * cfg.percent_scale,
+        pf.x * cfg.xy_scale,
+        pf.y * cfg.xy_scale,
+        pf.shield_strength * cfg.shield_scale,
+        # Velocity (input features)
+        pf.speed_air_x * cfg.velocity_scale,
+        pf.speed_y * cfg.velocity_scale,
+        pf.speed_ground_x * cfg.velocity_scale,
+        pf.speed_attack_x * cfg.velocity_scale,
+        pf.speed_attack_y * cfg.velocity_scale,
+    ]
+    # Dynamics — state_age is float only when not embedded
+    if not cfg.state_age_as_embed:
+        cont_cols.append(pf.state_age * cfg.state_age_scale)
+    cont_cols.extend([
+        pf.hitlag * cfg.hitlag_scale,
+        pf.stocks * cfg.stocks_scale,
+        # Combat continuous
+        pf.combo_count * cfg.combo_count_scale,
+    ])
+    continuous = np.stack(cont_cols, axis=1)  # (T, 13) or (T, 12)
 
     binary = np.stack(
         [pf.facing, pf.invulnerable, pf.on_ground],
@@ -193,7 +222,7 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
     ground = np.clip(pf.ground, 0, cfg.ground_vocab - 1)
     last_attack = np.clip(pf.last_attack_landed, 0, cfg.last_attack_vocab - 1)
 
-    return {
+    result = {
         "continuous": torch.from_numpy(continuous).float(),
         "binary": torch.from_numpy(binary).float(),
         "controller": torch.from_numpy(controller).float(),
@@ -205,6 +234,13 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
         "ground": torch.from_numpy(ground).long(),
         "last_attack_landed": torch.from_numpy(last_attack).long(),
     }
+
+    if cfg.state_age_as_embed:
+        # Clamp to vocab range as integer for embedding lookup
+        state_age_int = np.clip(pf.state_age.astype(np.int64), 0, cfg.state_age_embed_vocab - 1)
+        result["state_age_int"] = torch.from_numpy(state_age_int).long()
+
+    return result
 
 
 # --- Embedding module (learned params, part of the model) ---
@@ -229,10 +265,13 @@ class StateEncoder(nn.Module):
         self.hurtbox_embed = nn.Embedding(cfg.hurtbox_vocab, cfg.hurtbox_embed_dim)
         self.ground_embed = nn.Embedding(cfg.ground_vocab, cfg.ground_embed_dim)
         self.last_attack_embed = nn.Embedding(cfg.last_attack_vocab, cfg.last_attack_embed_dim)
+        # Exp 1a: state_age as learned embedding
+        if cfg.state_age_as_embed:
+            self.state_age_embed = nn.Embedding(cfg.state_age_embed_vocab, cfg.state_age_embed_dim)
 
     def forward_player(
         self,
-        continuous: torch.Tensor,  # (B, 13)
+        continuous: torch.Tensor,  # (B, 13) or (B, 12) when state_age_as_embed
         binary: torch.Tensor,  # (B, 3)
         controller: torch.Tensor,  # (B, 13)
         action: torch.Tensor,  # (B,)
@@ -242,6 +281,7 @@ class StateEncoder(nn.Module):
         hurtbox_state: torch.Tensor,  # (B,)
         ground: torch.Tensor,  # (B,)
         last_attack_landed: torch.Tensor,  # (B,)
+        state_age: Optional[torch.Tensor] = None,  # (B,) int — only when state_age_as_embed
     ) -> torch.Tensor:
         """Encode one player's state. Returns (B, player_dim)."""
         action_emb = self.action_embed(action)  # (B, 32)
@@ -251,8 +291,11 @@ class StateEncoder(nn.Module):
         hb_emb = self.hurtbox_embed(hurtbox_state)  # (B, 2)
         gnd_emb = self.ground_embed(ground)  # (B, 4)
         la_emb = self.last_attack_embed(last_attack_landed)  # (B, 8)
-        return torch.cat([
+        parts = [
             continuous, binary, controller,
             action_emb, jumps_emb, char_emb,
             lc_emb, hb_emb, gnd_emb, la_emb,
-        ], dim=-1)
+        ]
+        if self.cfg.state_age_as_embed and state_age is not None:
+            parts.append(self.state_age_embed(state_age))  # (B, 8)
+        return torch.cat(parts, dim=-1)
