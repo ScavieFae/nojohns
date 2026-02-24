@@ -436,6 +436,34 @@ ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-1a.log
 # Or just check wandb — both log there automatically
 ```
 
+### Shape preflight check
+
+The trainer runs a shape verification on the first sample before training starts. If the dataset's tensor shapes don't match what the EncodingConfig expects, it fails immediately with a clear error:
+
+```
+ValueError: Shape preflight FAILED — data/config mismatch:
+  float_ctx: got (10, 58), expected (10, 56)
+  Config: state_age_as_embed=True, press_events=False
+```
+
+This catches the most dangerous failure mode: loading a checkpoint or dataset built with one config and training with another.
+
+### Known hardcoded-dimension debt
+
+These files assume v2.2 baseline dimensions (continuous_dim=13, int_per_player=7, ctrl=26). They work fine with default `EncodingConfig()` but **will silently produce wrong results** if used with experiment configs:
+
+| File | What's hardcoded | Breaks when |
+|------|-----------------|-------------|
+| `model/policy_mlp.py` | int_ctx column indices (0-14) | `state_age_as_embed=True` (p1 columns shift) |
+| `data/policy_dataset.py` | `CTRL_OFFSET=16`, `FLOAT_PER_PLAYER=29` import | `state_age_as_embed=True` (controller at 15, not 16) |
+| `scripts/rollout.py` | `float_data[t, 16:29]`, `decode_continuous(float_frame[0:13])` | `state_age_as_embed=True` (all offsets shift) |
+
+**Why it's safe for now:** These files only run through `train_policy.py` and `rollout.py`, which construct default `EncodingConfig()` (no experiment flags). The experiment training path (`train.py` → `dataset.py` → `mlp.py`) never imports them.
+
+**When it becomes unsafe:** If someone runs rollout on an exp-1a checkpoint, or trains a policy on data encoded with experiment flags. The shape preflight won't catch this because these files have their own data loading paths.
+
+**Fix:** Same pattern as `mlp.py` — compute column indices from `cfg.int_per_player` and slice offsets from `cfg.continuous_dim`. Do this before running rollout or policy training on experiment checkpoints.
+
 ## Dependencies
 
 Added `[worldmodel]` extra to `pyproject.toml`:

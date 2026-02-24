@@ -88,9 +88,52 @@ class Trainer:
         self.metrics = MetricsTracker(cfg, loss_weights)
         self.history: list[dict] = []
 
+        # Shape preflight: pull one batch and verify dims match config
+        self._verify_shapes(train_dataset)
+
         # Resume from checkpoint
         if resume_from:
             self._load_checkpoint(resume_from)
+
+    def _verify_shapes(self, dataset) -> None:
+        """Preflight check: verify first sample's tensor shapes match config.
+
+        Catches config/data mismatches immediately instead of mid-epoch.
+        """
+        try:
+            sample = dataset[0] if hasattr(dataset, '__getitem__') else next(iter(dataset))
+        except Exception:
+            logger.warning("Shape preflight: couldn't read sample, skipping check")
+            return
+
+        float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt = sample
+        cfg = self.cfg
+        K = self.model.context_len
+        expected_float = cfg.float_per_player * 2
+        expected_int = cfg.int_per_frame
+        expected_ctrl = cfg.ctrl_conditioning_dim
+
+        errors = []
+        if float_ctx.shape != (K, expected_float):
+            errors.append(f"float_ctx: got {tuple(float_ctx.shape)}, expected ({K}, {expected_float})")
+        if int_ctx.shape != (K, expected_int):
+            errors.append(f"int_ctx: got {tuple(int_ctx.shape)}, expected ({K}, {expected_int})")
+        if next_ctrl.shape != (expected_ctrl,):
+            errors.append(f"next_ctrl: got {tuple(next_ctrl.shape)}, expected ({expected_ctrl},)")
+        if float_tgt.shape != (14,):
+            errors.append(f"float_tgt: got {tuple(float_tgt.shape)}, expected (14,)")
+        if int_tgt.shape != (4,):
+            errors.append(f"int_tgt: got {tuple(int_tgt.shape)}, expected (4,)")
+
+        if errors:
+            msg = "Shape preflight FAILED — data/config mismatch:\n  " + "\n  ".join(errors)
+            msg += f"\n  Config: state_age_as_embed={cfg.state_age_as_embed}, press_events={cfg.press_events}"
+            raise ValueError(msg)
+
+        logger.info(
+            "Shape preflight OK: float_ctx=(%d,%d) int_ctx=(%d,%d) next_ctrl=(%d,)",
+            K, expected_float, K, expected_int, expected_ctrl,
+        )
 
     def _train_epoch(self) -> dict[str, float]:
         self.model.train()
