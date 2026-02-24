@@ -25,6 +25,7 @@ from worldmodel.data.dataset import MeleeDataset, StreamingMeleeDataset
 from worldmodel.data.parse import load_games_from_dir
 from worldmodel.model.encoding import EncodingConfig
 from worldmodel.model.mlp import FrameStackMLP
+from worldmodel.model.mamba2 import FrameStackMamba2
 from worldmodel.training.metrics import LossWeights
 from worldmodel.training.trainer import Trainer
 
@@ -225,13 +226,26 @@ def main():
 
     # Build model
     model_cfg = cfg.get("model", {})
-    model = FrameStackMLP(
-        cfg=enc_cfg,
-        context_len=model_cfg.get("context_len", 10),
-        hidden_dim=model_cfg.get("hidden_dim", 512),
-        trunk_dim=model_cfg.get("trunk_dim", 256),
-        dropout=model_cfg.get("dropout", 0.1),
-    )
+    arch = model_cfg.get("arch", "mlp")
+
+    if arch == "mamba2":
+        model = FrameStackMamba2(
+            cfg=enc_cfg,
+            context_len=model_cfg.get("context_len", 10),
+            d_model=model_cfg.get("d_model", 256),
+            d_state=model_cfg.get("d_state", 64),
+            n_layers=model_cfg.get("n_layers", 2),
+            headdim=model_cfg.get("headdim", 64),
+            dropout=model_cfg.get("dropout", 0.1),
+        )
+    else:
+        model = FrameStackMLP(
+            cfg=enc_cfg,
+            context_len=model_cfg.get("context_len", 10),
+            hidden_dim=model_cfg.get("hidden_dim", 512),
+            trunk_dim=model_cfg.get("trunk_dim", 256),
+            dropout=model_cfg.get("dropout", 0.1),
+        )
 
     param_count = sum(p.numel() for p in model.parameters())
     logging.info("Model parameters: %s", f"{param_count:,}")

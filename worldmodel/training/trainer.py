@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
@@ -15,7 +16,6 @@ from torch.utils.data import IterableDataset
 
 from worldmodel.data.dataset import MeleeFrameDataset
 from worldmodel.model.encoding import EncodingConfig
-from worldmodel.model.mlp import FrameStackMLP
 from worldmodel.training.metrics import EpochMetrics, LossWeights, MetricsTracker
 
 try:
@@ -30,7 +30,7 @@ class Trainer:
 
     def __init__(
         self,
-        model: FrameStackMLP,
+        model: nn.Module,
         train_dataset: MeleeFrameDataset,
         val_dataset: Optional[MeleeFrameDataset],
         cfg: EncodingConfig,
