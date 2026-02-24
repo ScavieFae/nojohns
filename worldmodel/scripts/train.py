@@ -237,6 +237,7 @@ def main():
             n_layers=model_cfg.get("n_layers", 2),
             headdim=model_cfg.get("headdim", 64),
             dropout=model_cfg.get("dropout", 0.1),
+            chunk_size=model_cfg.get("chunk_size"),
         )
     else:
         model = FrameStackMLP(

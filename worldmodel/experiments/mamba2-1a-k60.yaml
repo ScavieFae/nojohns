@@ -1,16 +1,12 @@
-# Mamba-2 + 1a: sequential state space model with state_age embedding
-# First Mamba-2 experiment. Uses 1a encoding (the Phase 1 winner).
-# Compare directly against exp-1a-state-age-embed (MLP baseline).
+# Mamba-2 + 1a + K=60: one second of Melee context with SSD chunked scan
+# K=60 (1 second at 60fps) is the natural context window for Melee —
+# covers neutral exchanges, combo sequences, and recovery situations.
 #
-# Architecture change:
-#   MLP trunk (flatten + Linear(1960,512) + Linear(512,256))
-#   → Mamba-2 (project(196,256) + 2× Mamba2Block + last timestep)
+# SSD chunked algorithm with chunk_size=30 replaces sequential scan.
+# Benchmark: K=60 SSD/30 (89ms) ≈ K=10 sequential (87ms) per batch.
+# The READY...GO! intro frames (~60 frames) are "free" context padding.
 #
-# Key differences from MLP:
-#   - Temporal structure preserved (no flatten)
-#   - Sequential SSM scan processes frames in order
-#   - Controller conditioning via addition (not concatenation)
-#   - ~850K params vs ~1.08M (fewer params, structured for time)
+# Same 1a encoding (state_age embed), same param count, 6x more context.
 
 data:
   dataset_dir: null
@@ -26,7 +22,6 @@ encoding:
   action_embed_dim: 32
   jumps_vocab: 8
   jumps_embed_dim: 4
-  # Exp 1a (Phase 1 winner)
   state_age_as_embed: true
   state_age_embed_vocab: 150
   state_age_embed_dim: 8
@@ -35,13 +30,13 @@ encoding:
 
 model:
   arch: mamba2
-  context_len: 10
+  context_len: 60
   d_model: 256
   d_state: 64
   n_layers: 2
   headdim: 64
   dropout: 0.1
-  chunk_size: 10
+  chunk_size: 30
 
 training:
   lr: 0.001
