@@ -15,7 +15,8 @@ v2.2+ layout — input-conditioned world model:
   int_tgt:    (4,)   — [p0_action, p0_jumps, p1_action, p1_jumps]
 
   Baseline: F=58, I=15, C=26. See EncodingConfig for experiment variants.
-  Context = frames [t-K, ..., t-1]. Target = frame t's state given frame t's input.
+  Context = frames [t-K, ..., t-1]. Target = frame t+d's state given ctrl(t)..ctrl(t+d).
+  When lookahead=0 (default), d=0 and this reduces to: predict frame t given ctrl(t).
 """
 
 import logging
@@ -185,13 +186,15 @@ class MeleeFrameDataset(Dataset):
         self._p1_int_offset = ipp  # where p1's int columns start
 
         self._press_events = cfg.press_events
+        self._lookahead = cfg.lookahead
 
         indices = []
         # press_events needs t-1 for prev buttons, so start at context_len (which already guarantees t-1 exists)
+        # lookahead=d needs frames up to t+d, so end range shrinks by d
         for gi in game_range:
             start = data.game_offsets[gi]
             end = data.game_offsets[gi + 1]
-            for t in range(start + context_len, end):
+            for t in range(start + context_len, end - cfg.lookahead):
                 indices.append(t)
 
         self.valid_indices = np.array(indices, dtype=np.int64)
@@ -206,50 +209,51 @@ class MeleeFrameDataset(Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         t = int(self.valid_indices[idx])
         K = self.context_len
+        d = self._lookahead  # 0 = predict frame t, 1 = predict frame t+1, etc.
 
         float_ctx = self.data.floats[t - K:t]  # (K, F)
         int_ctx = self.data.ints[t - K:t]  # (K, I)
 
-        # Controller input for frame t (what we're conditioning on)
-        curr_float = self.data.floats[t]
-        ctrl_parts = [
-            curr_float[self._p0_ctrl],  # p0 controller (13)
-            curr_float[self._p1_ctrl],  # p1 controller (13)
-        ]
+        # Controller input: ctrl(t) through ctrl(t+d), concatenated
+        ctrl_parts = []
+        for offset in range(d + 1):
+            frame_float = self.data.floats[t + offset]
+            ctrl_parts.append(frame_float[self._p0_ctrl])  # p0 controller (13)
+            ctrl_parts.append(frame_float[self._p1_ctrl])  # p1 controller (13)
 
-        if self._press_events:
-            prev_float = self.data.floats[t - 1]
-            # Press event = button newly pressed this frame (was <0.5, now >0.5)
-            p0_curr_btn = curr_float[self._p0_buttons]
-            p0_prev_btn = prev_float[self._p0_buttons]
-            p1_curr_btn = curr_float[self._p1_buttons]
-            p1_prev_btn = prev_float[self._p1_buttons]
-            p0_press = ((p0_curr_btn > 0.5) & (p0_prev_btn < 0.5)).float()  # (8,)
-            p1_press = ((p1_curr_btn > 0.5) & (p1_prev_btn < 0.5)).float()  # (8,)
-            ctrl_parts.extend([p0_press, p1_press])
+            if self._press_events:
+                prev_float = self.data.floats[t + offset - 1]
+                p0_curr_btn = frame_float[self._p0_buttons]
+                p0_prev_btn = prev_float[self._p0_buttons]
+                p1_curr_btn = frame_float[self._p1_buttons]
+                p1_prev_btn = prev_float[self._p1_buttons]
+                p0_press = ((p0_curr_btn > 0.5) & (p0_prev_btn < 0.5)).float()
+                p1_press = ((p1_curr_btn > 0.5) & (p1_prev_btn < 0.5)).float()
+                ctrl_parts.extend([p0_press, p1_press])
 
-        next_ctrl = torch.cat(ctrl_parts)  # (26,) or (42,)
+        next_ctrl = torch.cat(ctrl_parts)  # (26*(1+d),) or (42*(1+d),)
 
-        # Targets: frame t's state
-        if not self._press_events:
-            prev_float = self.data.floats[t - 1]
+        # Target frame: t+d (when d=0, same as before — frame t)
+        tgt_idx = t + d
+        tgt_float = self.data.floats[tgt_idx]
+        prev_float = self.data.floats[tgt_idx - 1]
 
-        # Continuous delta: frame t minus frame t-1
-        p0_cont_delta = curr_float[self._p0_cont] - prev_float[self._p0_cont]
-        p1_cont_delta = curr_float[self._p1_cont] - prev_float[self._p1_cont]
-        p0_binary = curr_float[self._p0_bin]
-        p1_binary = curr_float[self._p1_bin]
+        # Continuous delta: frame (t+d) minus frame (t+d-1)
+        p0_cont_delta = tgt_float[self._p0_cont] - prev_float[self._p0_cont]
+        p1_cont_delta = tgt_float[self._p1_cont] - prev_float[self._p1_cont]
+        p0_binary = tgt_float[self._p0_bin]
+        p1_binary = tgt_float[self._p1_bin]
 
         float_tgt = torch.cat([p0_cont_delta, p1_cont_delta, p0_binary, p1_binary])  # (14,)
 
-        # Int targets: frame t's action/jumps
-        curr_ints = self.data.ints[t]
+        # Int targets: frame (t+d)'s action/jumps
+        tgt_ints = self.data.ints[tgt_idx]
         p1_off = self._p1_int_offset
         int_tgt = torch.stack([
-            curr_ints[0],          # p0_action
-            curr_ints[1],          # p0_jumps
-            curr_ints[p1_off],     # p1_action
-            curr_ints[p1_off + 1], # p1_jumps
+            tgt_ints[0],          # p0_action
+            tgt_ints[1],          # p0_jumps
+            tgt_ints[p1_off],     # p1_action
+            tgt_ints[p1_off + 1], # p1_jumps
         ])  # (4,)
 
         return float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt

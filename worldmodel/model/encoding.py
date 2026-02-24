@@ -69,6 +69,7 @@ class EncodingConfig:
     state_age_embed_vocab: int = 150  # max animation frames
     state_age_embed_dim: int = 8
     press_events: bool = False  # Exp 2a: 16 binary features for newly-pressed buttons
+    lookahead: int = 0  # Exp 3a: predict frame t+d given ctrl(t) through ctrl(t+d)
 
     # Derived dimensions (per player, default / state_age_as_embed)
     # core_continuous: percent, x, y, shield = 4
@@ -140,7 +141,8 @@ class EncodingConfig:
 
     @property
     def ctrl_conditioning_dim(self) -> int:
-        return self.controller_dim * 2 + self.ctrl_extra_dim  # 26 or 42
+        base = self.controller_dim * 2 + self.ctrl_extra_dim  # 26 or 42
+        return base * (1 + self.lookahead)  # ×2 for lookahead=1, ×3 for lookahead=2, etc.
 
     @property
     def player_dim(self) -> int:
