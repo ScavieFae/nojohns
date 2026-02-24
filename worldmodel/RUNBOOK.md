@@ -353,7 +353,88 @@ The v2.2 jump is entirely from input conditioning — same data, same machine, s
 
 **Overnight runs (launched Feb 23, 2026):**
 - Scav: v2.2 world model, 22K games, 10 epochs
-- ScavieFae: imitation policy, 4K games, 50 epochs
+- ScavieFae: imitation policy, 4K games, 50 epochs (converged at epoch 26 — btn_acc=0.992, val plateau)
+
+## Experiment Framework
+
+Config-driven experiments. Each experiment is a self-contained YAML file in `worldmodel/experiments/`. No code changes to switch — just `--config`.
+
+### How it works
+
+```bash
+# Run an experiment:
+.venv/bin/python -m worldmodel.scripts.train \
+    --config worldmodel/experiments/exp-2a-press-events.yaml \
+    --dataset ~/claude-projects/nojohns-training/data/parsed-v2 \
+    --streaming --buffer-size 500 --device mps -v
+```
+
+The experiment name (filename minus `.yaml`) auto-drives:
+- **wandb run name** (unless `--run-name` overrides)
+- **checkpoint directory**: `{save_dir}/{experiment_name}/`
+
+### Feature flags (EncodingConfig)
+
+Two flags control tensor dimensions at config time:
+
+| Flag | Effect | Dims changed |
+|------|--------|-------------|
+| `state_age_as_embed: true` | Learned embedding (vocab=150, dim=8) replaces scaled float | float_per_player: 29→28, int_per_frame: 15→17, embed_dim: 60→68 |
+| `press_events: true` | 16 binary rising-edge features appended to next_ctrl | ctrl_conditioning_dim: 26→42 |
+
+When both are false (default), behavior is identical to v2.2. No existing runs break.
+
+### Current experiments
+
+```
+worldmodel/experiments/
+├── baseline-v22.yaml           # v2.2 control (all flags off)
+├── exp-1a-state-age-embed.yaml # state_age as integer embedding
+└── exp-2a-press-events.yaml    # button press events in next_ctrl
+```
+
+All are 2K games, 2 epochs, batch_size 512 — quick directional runs.
+
+### Running experiments on ScavieFae
+
+MPS doesn't share between processes. Only one training run per machine.
+
+**DO NOT** launch via inline `nohup ... &` over SSH — if the command fails partway through, the backgrounded process still spawns. Three botched PID-capture attempts = three zombie training runs fighting over MPS. Use a script instead:
+
+```bash
+# Write a launcher script, scp it over, then run it
+scp launch-exp.sh queenmab@100.93.8.111:~/launch-exp.sh
+ssh queenmab@100.93.8.111 "nohup ~/launch-exp.sh > ~/exp.log 2>&1 & echo PID=\$!"
+```
+
+**Chaining experiments** (wait for one to finish, then start the next):
+
+```bash
+#!/bin/bash
+# run-after-prev.sh — wait for PID, then launch
+echo "[$(date)] Waiting for PID $1 to finish..."
+while kill -0 $1 2>/dev/null; do sleep 60; done
+echo "[$(date)] Done. Launching next experiment..."
+cd ~/claude-projects/nojohns
+.venv/bin/python -m worldmodel.scripts.train --config $2 \
+    --dataset ~/claude-projects/nojohns-training/data/parsed-v2 \
+    --streaming --buffer-size 500 --device mps -v
+```
+
+### Monitoring
+
+```bash
+# Check exp-2a progress:
+ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-2a.log"
+
+# Check queued exp-1a:
+ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-1a-queue.log"
+
+# exp-1a training log (once it starts):
+ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-1a.log"
+
+# Or just check wandb — both log there automatically
+```
 
 ## Dependencies
 
