@@ -15,9 +15,13 @@
 
 The zip batch had a peppi_py panic at the end (assertion failed) but completed — 287,504 game files on disk, 116,099+171,405 parsed with only 149 failures. This is massive. We have **13x more data than our current training set.**
 
-### Staging ranked data to Modal
+### Staging ranked data to Modal — when?
 
-The 287K games are on ScavieFae's machine. Getting them to Modal:
+**Not tonight.** Staging 287K games involves tar + transfer + upload + re-encode, easily 2+ hours of pipeline that hasn't been tested. Tonight's bet uses the 22K games already on the volume. Stage ranked data tomorrow after the overnight run proves out.
+
+If the overnight run shows clear data-scaling signal (22K >> 2K), then staging 50K+ ranked games is the obvious next step and worth the effort.
+
+**When we do it**, here's the process. The 287K games are on ScavieFae's machine:
 
 1. **Tar on ScavieFae**: `ssh queenmab "cd ~/data && tar cf /tmp/parsed-ranked.tar parsed-ranked/"` (~34GB based on log output)
 2. **Transfer to Scav**: `scp queenmab:/tmp/parsed-ranked.tar /tmp/` (Tailscale, ~10-15 min)
@@ -35,19 +39,22 @@ The 287K games are on ScavieFae's machine. Getting them to Modal:
 
 | Item | Status | Notes |
 |------|--------|-------|
-| RUNBOOK GPU section | Current | Updated with real timing data |
-| MODAL-REVIEW-RUNBOOK.md | Current | Has Scav-2 feedback + milestone |
-| HANDOFF-MODAL.md | Current | All 5 items checked off |
-| worldmodel/CLAUDE.md | Current | Agent roles, key files, coordination |
-| `/gpu-train` skill | Exists | Not tested recently |
-| Timeout | **Needs bump** | Changed to 14400s locally, not yet pushed |
+| RUNBOOK GPU section | **Current** | Updated with epoch 1+2 timing, num_workers comparison |
+| MODAL-REVIEW-RUNBOOK.md | **Current** | Known issues cleaned (4 fixed, 2 new). Cost table has real data. |
+| HANDOFF-MODAL.md | **Current** | Rewritten for overnight review. 8-hour plan, decision tree, failure modes. |
+| worldmodel/CLAUDE.md | **Current** | Added OVERNIGHT-PLAN.md and new configs to key files list |
+| `/gpu-train` skill | Exists | Not tested recently — use raw `modal run` commands for now |
+| Timeout | **Done** | 86400s (24hr) in modal_train.py, pushed |
 
-### Multi-GPU
+### Multi-GPU: do we need to test it?
 
-Sweep function exists (`train.spawn()`) but is **untested**. For overnight:
-- We don't need sweep for the main bet — one strong run is better than three mediocre ones
-- Useful for K10 vs K60 comparison (2 parallel runs, ~$6 each, 2 hours)
-- Risk: checkpoint collision was just fixed but sweep hasn't been tested end-to-end
+**No.** The `sweep()` function exists but is untested end-to-end. We don't need it tonight — separate `--detach` runs are simpler and already proven:
+
+- Each `modal run --detach` gets its own A100 container and its own checkpoint directory
+- No shared state between runs, no contention risk
+- The K comparison below uses two independent `--detach` runs, not sweep
+
+Sweep becomes useful later for hyperparameter searches (3+ runs with same config, different LR/batch_size). Not needed for tonight's bet.
 
 ## Model Evaluation
 
@@ -70,23 +77,26 @@ This is directionally correct and encouraging:
 
 **Updated key question**: How fast does Mamba-2 close the gap with more data? Does K=60 accelerate convergence or just cost more per epoch?
 
-### K10 vs K60 comparison — queue now
+### K10 vs K60 comparison — ready to launch
 
-Two parallel runs on Modal, 2K games, 2 epochs each:
+Two parallel detached runs on Modal, 2K games, 2 epochs each. Same `encoded-2k.pt` works for both — the `.pt` file contains raw game tensors, and `context_len` is applied at `get_frame_dataset()` time.
+
+**Commands (copy-paste, run both):**
 
 ```bash
-# Run 1: K=10 (current config, for direct comparison)
+# K=10: direct comparison baseline (same arch, same data as smoke-nw4-v2)
 .venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train \
+    --config worldmodel/experiments/mamba2-medium-gpu.yaml \
     --encoded-file /encoded-2k.pt --epochs 2 --run-name "k10-compare"
 
-# Run 2: K=60 (needs new pre-encoded file with K=60 context)
-# NOTE: encoded-2k.pt was encoded with the medium-gpu config.
-# K=60 needs a separate encode because MeleeFrameDataset slices differ.
+# K=60: 1 second of Melee context (batch_size=512, chunk_size=30)
+.venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train \
+    --config worldmodel/experiments/mamba2-medium-gpu-k60.yaml \
+    --encoded-file /encoded-2k.pt --epochs 2 --run-name "k60-compare"
 ```
 
-**Wait** — the `.pt` file contains raw game tensors, not frame datasets. The `context_len` is applied at `get_frame_dataset()` time. So the same `encoded-2k.pt` works for both K=10 and K=60. We just need a K=60 config that points to the same data.
-
-**Action**: Create `mamba2-medium-gpu-k60.yaml` (copy of medium-gpu, change context_len=60, chunk_size=30), then launch both in parallel.
+**Est. cost**: ~$4 each, ~$8 total. Results in ~2 hours.
+**Monitor**: https://wandb.ai/shinewave/melee-worldmodel — look for runs `k10-compare` and `k60-compare`.
 
 ### 15M parameter model estimates
 

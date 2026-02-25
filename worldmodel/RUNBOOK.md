@@ -379,21 +379,26 @@ Diminishing returns: +1.5pp, +0.3pp, +0.1pp per epoch. Architecture is the bottl
 - Scav: v2.2 world model, 22K games, 10 epochs (stopped at epoch 4 — ceiling reached)
 - ScavieFae: imitation policy, 4K games, 50 epochs (converged at epoch 26 — btn_acc=0.992, val plateau)
 
-**First GPU run — Mamba-2 on A100 (Feb 25, 2026):**
+**First GPU runs — Mamba-2 on A100 (Feb 25, 2026):**
 
 Run `mamba2-first-complete`: 2K games, Mamba-2 4.3M params, A100 40GB SXM4, batch_size=1024, `num_workers=0`.
+Run `smoke-nw4-v2`: same config, `num_workers=4`. Both epochs completed.
 
-| Metric | Epoch 1 | Notes |
-|--------|---------|-------|
-| loss | 0.4698 | |
-| action_acc | 95.2% | In line with MLP baseline |
-| change_acc | 51.9% | First Mamba-2 number at scale |
-| pos_mae | 0.78 | |
-| val_loss | 0.3405 | val < train → underfitting (good) |
-| val_acc | 96.0% | |
-| wall time | 3679.6s (61 min) | Without num_workers fix |
+| Metric | Epoch 1 (no workers) | Epoch 1 (nw=4) | Epoch 2 (nw=4) |
+|--------|---------------------|----------------|----------------|
+| loss | 0.4698 | 0.4672 | **0.2873** |
+| action_acc | 95.2% | 95.2% | **96.7%** |
+| change_acc | 51.9% | 52.1% | **67.2%** |
+| pos_mae | 0.78 | 0.77 | **0.64** |
+| val_loss | 0.3405 | 0.3420 | **0.2897** |
+| val_acc | 96.0% | 95.9% | **96.5%** |
+| wall time | 3679.6s (61 min) | 2738.8s (46 min) | 2737.3s (46 min) |
 
-Second run `smoke-nw4-v2` (same config, `num_workers=4`) in progress — will give A/B timing comparison for DataLoader parallelism.
+Key findings:
+- **num_workers=4 gives 25% speedup** (61min → 46min per epoch)
+- **Epoch 2 flips the story**: Mamba-2 beats MLP baseline on change_acc (67.2% vs 64.5%, same data+epochs)
+- **pos_mae improves significantly** (0.77 → 0.64) — SSM state accumulates useful physics context
+- val_loss < train_loss throughout → model is underfitting, more data/epochs will help
 
 ## Experiment Framework
 
@@ -861,7 +866,7 @@ If you launched with `--detach` or lost the terminal:
 ### Cost
 
 - A100 40GB: ~$2.78/hr on Modal
-- Observed: 1 epoch on 2K games = ~61 min (without num_workers fix). 10 epochs ~10 hrs → ~$28. With num_workers=4, TBD.
+- Observed: 1 epoch on 2K games = 46 min (num_workers=4) or 61 min (no workers). 2 epochs = 91 min → ~$4.21.
 - You only pay while the function is running — no idle costs
 - Check spend at https://modal.com/settings/billing
 

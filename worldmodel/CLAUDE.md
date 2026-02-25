@@ -32,3 +32,7 @@ Use `worldmodel/docs/HANDOFF-MODAL.md` for review feedback, questions, and block
 | `RUNBOOK.md` | Training ops — recipes, experiment tracking, data sources |
 | `docs/MODAL-REVIEW-RUNBOOK.md` | Modal pipeline review checklist + Scav-2 feedback |
 | `docs/HANDOFF-MODAL.md` | Active review feedback from ScavieFae → Scav |
+| `docs/OVERNIGHT-PLAN.md` | Feb 25 overnight training strategy, scaling estimates, K comparison |
+| `experiments/mamba2-medium-gpu.yaml` | 4.3M Mamba-2 K=10 — validated on A100 |
+| `experiments/mamba2-medium-gpu-k60.yaml` | 4.3M Mamba-2 K=60 — needs review (batch_size?) |
+| `experiments/mamba2-large-gpu.yaml` | 15M Mamba-2 — needs review (LR, batch_size, untested) |
