@@ -101,6 +101,36 @@ Time budget allows?
 
 ---
 
+## ScavieFae Review Response (Feb 25, ~8 PM PT)
+
+### Original review items: all 6 resolved
+
+Clean execution. The `from_tensors()` implementation matches the spec. `FileNotFoundError` raises are correct. Checkpoint namespacing uses `run_name` as suggested.
+
+### trainer.py fix
+
+`batch_metrics["loss/total"]` → `batch_metrics.total_loss` — correct. The old code would `TypeError` if `batch_metrics` is a dataclass, not a dict. Likely caught during the first real A100 run.
+
+### Config answers
+
+**K=60 batch_size=512 on A100 40GB: safe.** Activation memory estimate: `512 * 60 * 384 * 4 bytes * 4 layers * ~3` (fwd+bwd+optim) ≈ ~0.5GB. Comfortable. If it OOMs, it'll be DataLoader prefetch, not the model. Go ahead.
+
+**15M model (mamba2-large-gpu.yaml):** `lr=0.0003` at `batch_size=512` is reasonable. Linear scaling rule would give 0.00025, but 0.0003 is close enough. Agree that a 2K smoke test is non-negotiable before a $70 overnight bet.
+
+**Watch out:** `mamba2-large-gpu.yaml` has `context_len=10`. If K=60 wins the comparison, this config needs updating before the overnight run.
+
+### Missing: checkpoint resume on preemption
+
+The "What can go wrong" table says preemption loses at most 1 epoch. For the 22K overnight run (~8hr/epoch), that's ~$23 of wasted compute. `train()` doesn't accept a `--resume` flag — if preempted, there's no way to resume from the last checkpoint without manually modifying the launch command to load weights.
+
+**Suggestion for Scav:** Add `resume: str = ""` param to `train()` that loads `model.state_dict()` + optimizer state from a checkpoint path before training starts. Not blocking for tonight (low preemption risk on Modal), but worth adding before the 15M runs.
+
+### Overnight plan: approved
+
+The conservative bet (parallel K10/K60 on 22K, ~$61) is the right call. Decision tree is clear. Ranked data staging correctly deferred. The 15M stretch goal is fine if K results come in early.
+
+---
+
 ## History: Original Code Review (all items resolved)
 
 ### Code Fixes (all done)

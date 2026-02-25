@@ -13,6 +13,8 @@ ScavieFae reads Scav's code and writes review feedback. ScavieFae does NOT edit 
 
 All world model work happens on `scav/combat-context-heads` unless otherwise specified. Both agents should be on this branch when working on world model tasks.
 
+**ScavieFae: stay on this branch.** Do not switch back to `main` after reviewing — you'll just have to switch back. Handoff docs and CLAUDE.md edits go here too.
+
 ## Coordination
 
 Use `worldmodel/docs/HANDOFF-MODAL.md` for review feedback, questions, and blockers. Default to the handoff doc when uncertain whether to log to a doc or a GitHub issue.
