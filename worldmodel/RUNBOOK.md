@@ -60,9 +60,9 @@ See `~/.agent/diagrams/worldmodel-encoding-v2.html` for the full reference page.
 v2.2 (current — input-conditioned):
 - **Trunk**: Linear(1846, 512) → ReLU → Dropout → Linear(512, 256) → ReLU → Dropout
 - **Input**: K context frames (flattened) + next-frame controller input (26 floats)
-- **Heads**: continuous_delta (MSE), binary (BCE), action (CE), jumps (CE)
-- **Parameters**: 1,304,182 (~1.3M)
-- **Loss weighting**: continuous=1.0, binary=0.5, action=2.0, jumps=0.5
+- **Heads**: continuous_delta (8, MSE), velocity_delta (10, MSE), dynamics (6, MSE), binary (6, BCE), action (CE), jumps (CE)
+- **Parameters**: ~1.3M
+- **Loss weighting**: continuous=1.0, velocity=0.5, dynamics=0.5, binary=0.5, action=2.0, jumps=0.5
 
 ## Data Pipeline
 
@@ -351,8 +351,32 @@ v2 adds velocity, state_age, hitlag, stocks, character/stage embeddings. The 10-
 
 The v2.2 jump is entirely from input conditioning — same data, same machine, same hyperparams. The model no longer guesses player decisions; it just simulates physics. See `worldmodel/docs/INPUT-CONDITIONING.md` for the full writeup.
 
+**Phase 1 encoding experiments (2K games, 2 epochs each):**
+
+| Experiment | action_acc | change_acc | Δ change | pos_mae | Notes |
+|-----------|-----------|-----------|----------|---------|-------|
+| baseline-v22 | 96.4% | 64.5% | — | 0.79 | Control |
+| **1a (state_age embed)** | **97.0%** | **71.7%** | **+7.2pp** | **0.75** | **Winner — no regression** |
+| 2a (press events) | 96.3% | 65.3% | +0.8pp | 0.78 | Marginal |
+| 1a+2a combined | 96.7% | 70.1% | +5.6pp | 0.75 | 1a does the lifting |
+| 3a (lookahead) | 94.3% | 70.8% | +6.3pp | 0.74 | Trades action_acc for change_acc |
+| 3a+1a | 95.1% | 73.7% | +9.2pp | 0.73 | Best change_acc but -1.3pp action |
+| 3a+1a+2a | 93.8% | 67.0%* | +2.5pp | 0.92 | *Only 1 epoch completed |
+
+1a is the clear winner: only experiment that improves change_acc without regressing action_acc. Full analysis: `~/.agent/diagrams/worldmodel-experiment-results.html`
+
+**MLP ceiling (22K games, 4 epochs, stopped — flattening):**
+
+| Metric | Epoch 1 | Epoch 2 | Epoch 3 | Epoch 4 |
+|--------|---------|---------|---------|---------|
+| change_acc | 74.8% | 76.3% | 77.2% | 77.5% |
+| action_acc | 97.3% | 97.4% | 97.4% | 97.4% |
+| pos_mae | 0.80 | 0.79 | 0.79 | 0.79 |
+
+Diminishing returns: +1.5pp, +0.3pp, +0.1pp per epoch. Architecture is the bottleneck.
+
 **Overnight runs (launched Feb 23, 2026):**
-- Scav: v2.2 world model, 22K games, 10 epochs
+- Scav: v2.2 world model, 22K games, 10 epochs (stopped at epoch 4 — ceiling reached)
 - ScavieFae: imitation policy, 4K games, 50 epochs (converged at epoch 26 — btn_acc=0.992, val plateau)
 
 ## Experiment Framework
@@ -388,12 +412,20 @@ When both are false (default), behavior is identical to v2.2. No existing runs b
 
 ```
 worldmodel/experiments/
-├── baseline-v22.yaml           # v2.2 control (all flags off)
-├── exp-1a-state-age-embed.yaml # state_age as integer embedding
-└── exp-2a-press-events.yaml    # button press events in next_ctrl
+├── baseline-v22.yaml              # v2.2 control (all flags off)
+├── exp-1a-state-age-embed.yaml    # state_age as integer embedding ← Phase 1 WINNER
+├── exp-2a-press-events.yaml       # button press events in next_ctrl
+├── exp-1a2a-combined.yaml         # 1a + 2a stacked
+├── exp-3a-lookahead.yaml          # 1-frame lookahead (ctrl(t)+ctrl(t+1))
+├── exp-3a-1a-lookahead.yaml       # 3a + 1a stacked
+├── exp-3a-1a2a-lookahead.yaml     # 3a + 1a + 2a (full kitchen sink)
+├── mamba2-1a.yaml                 # Mamba-2 with 1a encoding (2 layers, SSD chunk_size=10)
+├── mamba2-1a-3layer.yaml          # Mamba-2 with 1a encoding (3 layers)
+└── mamba2-1a-k60.yaml             # Mamba-2 K=60 (1 second context, SSD chunk_size=30)
 ```
 
-All are 2K games, 2 epochs, batch_size 512 — quick directional runs.
+Encoding experiments are 2K games, 2 epochs, batch_size 512 — quick directional runs.
+Mamba-2 experiments use the same data/epoch settings for direct comparison with MLP baselines.
 
 ### Running experiments on ScavieFae
 
@@ -423,17 +455,38 @@ cd ~/claude-projects/nojohns
 
 ### Monitoring
 
+**Wandb API access** — use for pulling metrics programmatically:
+
+```python
+import wandb
+api = wandb.Api()
+# Entity is "shinewave", project is "melee-worldmodel"
+run = api.run("shinewave/melee-worldmodel/<run_id>")
+history = list(run.scan_history(keys=["epoch", "loss/total", "metric/p0_action_acc", "metric/action_change_acc"]))
+```
+
+Key identifiers (don't guess these — they're not obvious):
+- **Entity:** `shinewave` (check with `api.default_entity`)
+- **Project:** `melee-worldmodel` (check with `api.projects("shinewave")`)
+- **Run IDs:** visible in wandb URL or via `api.runs("shinewave/melee-worldmodel")`
+
+**SSH monitoring** (ScavieFae at `queenmab@100.93.8.111`):
+
 ```bash
-# Check exp-2a progress:
-ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-2a.log"
+# Check if training is running:
+ssh queenmab@100.93.8.111 "ps aux | grep worldmodel | grep -v grep"
 
-# Check queued exp-1a:
-ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-1a-queue.log"
+# Check checkpoint manifests for finished runs:
+ssh queenmab@100.93.8.111 'python3 << "PYEOF"
+import json
+name = "exp-2a-press-events"  # or exp-1a-state-age-embed
+with open(f"/Users/queenmab/claude-projects/nojohns-training/checkpoints/{name}/manifest.json") as f:
+    d = json.load(f)
+for i, ep in enumerate(d["all_epochs"]):
+    print(f"Epoch {i+1}: loss={ep[\"loss/total\"]:.4f} change_acc={ep.get(\"metric/action_change_acc\",0):.3f}")
+PYEOF'
 
-# exp-1a training log (once it starts):
-ssh queenmab@100.93.8.111 "tail -5 ~/claude-projects/nojohns-training/exp-1a.log"
-
-# Or just check wandb — both log there automatically
+# Or just check wandb — both machines log there automatically
 ```
 
 ### Shape preflight check
@@ -484,7 +537,10 @@ System: `brew install p7zip` (for extracting .7z archives)
 | v1 | 56 | 112 | 1,120 | 931K | `data/parsed/` (22,049 games) |
 | v2 | 72 | 148 | 1,480 | 1.1M | `data/parsed-v2/` (22,162 games) |
 | v2.1 | 89 | 182 | 1,820 | 1.3M | `data/parsed-v2/` (same parquet) |
-| **v2.2** | 89 | 182 | **1,846** | **1.3M** | `data/parsed-v2/` (same parquet) |
+| v2.2 (MLP) | 89 | 182 | 1,846 | 1.3M | `data/parsed-v2/` (same parquet) |
+| v2.2+1a (MLP) | 96 | 196 | 1,986 | 1.3M | `data/parsed-v2/` (same parquet) |
+| **v3 (Mamba-2+1a, K=10)** | 96 | 196 | **seq (10,196)** | **1.15M** | `data/parsed-v2/` (same parquet) |
+| **v3 (Mamba-2+1a, K=60)** | 96 | 196 | **seq (60,196)** | **1.15M** | `data/parsed-v2/` (same parquet) |
 
 v2 adds: velocity (5), state_age, hitlag, stocks, character embed, stage embed.
 v2.1 adds: l_cancel embed (2d), hurtbox_state embed (2d), ground embed (4d), last_attack_landed embed (8d), combo_count continuous. Same parquet, no re-parsing needed.
@@ -507,9 +563,145 @@ For datasets too large for RAM, use `--streaming`:
 
 Loads games in chunks of `buffer_size`, shuffles within each chunk, frees memory between chunks. Val set stays in-memory (only 10% of games). ~30% overhead from disk I/O vs in-memory, but handles any dataset size.
 
-## Phase 2 Prep
+## Phase 2: Mamba-2 Architecture
 
-Swapping MLP → Mamba-2 means changing only `worldmodel/model/mlp.py`. The data pipeline, encoding, loss functions, and training loop stay identical. The key change: Mamba takes `(B, T, frame_dim)` sequences instead of `(B, K*frame_dim)` flat vectors.
+Implemented in `worldmodel/model/mamba2.py`. Config-driven: set `model.arch: mamba2` in experiment YAML. The data pipeline, encoding, loss functions, and training loop are identical — same forward signature as FrameStackMLP.
+
+### Architecture (FrameStackMamba2)
+
+```
+frame_enc (B,K,frame_dim) → Linear(frame_dim, d_model) → Dropout
+→ N× [RMSNorm → Mamba2Block → residual add]
+→ last timestep → RMSNorm → add ctrl_proj(next_ctrl)
+→ prediction heads
+```
+
+Key differences from MLP:
+- **Temporal structure preserved** — frames processed as a sequence, not flattened
+- **Sequential SSM scan** — hidden state carries context forward through K frames
+- **Additive controller conditioning** — ctrl projected to d_model and added, not concatenated
+- **Weight sharing across timesteps** — same Mamba2Block processes frame 1 and frame 10
+
+### Mamba-2 hyperparameters
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| d_model | 256 | Model dimension (replaces hidden_dim/trunk_dim) |
+| d_state | 64 | SSM state dimension (Mamba-2 sweet spot) |
+| n_layers | 2 | Number of Mamba2Block layers |
+| headdim | 64 | Dimension per SSM head |
+| expand | 2 | Inner dimension = expand × d_model |
+| d_conv | 4 | Depthwise conv kernel (~67ms at 60fps) |
+
+### Parameter count comparison
+
+| Architecture | Trunk params | Total params |
+|-------------|-------------|-------------|
+| MLP (hidden=512, trunk=256) | ~1.08M | ~1.31M |
+| Mamba-2 (d_model=256, 2 layers) | ~850K | ~1.15M |
+| Mamba-2 (d_model=256, 3 layers) | ~1.28M | ~1.58M |
+
+### Scan modes: SSD vs Sequential
+
+**Always use SSD for training.** Set `model.chunk_size` in the experiment YAML. Sequential scan is a for-loop — MPS launches one kernel per timestep per layer per batch, and the serial overhead compounds badly at scale. SSD uses chunked matmuls that MPS parallelizes.
+
+| Config | ms/batch (B=512) | Relative | Use case |
+|--------|-----------------|----------|----------|
+| K=10 sequential | 87ms | 1.0x | Never — use SSD instead |
+| **K=10 SSD/10** | **32ms** | **0.37x** | Directional runs (2K/2ep) |
+| K=60 sequential | 493ms | 5.7x | Never — unusable |
+| K=60 SSD/30 | 89ms | 1.03x | Overnight runs (longer context) |
+
+**chunk_size rules:**
+- Must evenly divide context_len (K=10 → chunk_size=10 or 5; K=60 → 30, 20, 15)
+- Larger chunks = fewer inter-chunk passes = faster, until the quadratic attention within each chunk blows up memory
+- K=10: use chunk_size=10 (single chunk, fastest)
+- K=60: use chunk_size=30 (2 chunks, fastest)
+
+**When sequential scan is still useful:**
+- Correctness reference for debugging SSD changes
+- Context lengths that don't evenly divide any chunk_size (SSD falls back automatically)
+- The `benchmark_ssd.py` script validates SSD against sequential — run it after any changes to `mamba2.py`
+
+### SSD troubleshooting
+
+**Symptom: training loss is NaN or explodes after a few batches.**
+- Check chunk_size divides context_len evenly. If not, SSD silently falls back to sequential (correct but slow) — but a partial mismatch could indicate config issues.
+- Run `benchmark_ssd.py` to verify correctness hasn't regressed.
+
+**Symptom: training is much slower than expected (>100ms/batch at K=10 B=512).**
+- Verify `chunk_size` is set in the YAML. If missing, defaults to None → sequential scan.
+- Check `ps aux | grep train` to confirm only one training process per machine (MPS can't share).
+- On ScavieFae: verify the venv python is being used, not system python (system python3 is 3.9, missing torch).
+
+**Symptom: SSD output doesn't match sequential on `benchmark_ssd.py`.**
+- Two bugs we've hit before: (1) x must be pre-scaled by dt before entering SSD — the sequential scan multiplies dt inside the loop, SSD needs it upfront. (2) Inter-chunk state slice must be `[:, :-1]` (state *entering* each chunk), not `[:, 1:]` (off-by-one gives wrong initial states to each chunk).
+
+**Symptom: MPS out of memory.**
+- Reduce batch_size first (256 or 128). K=60 SSD uses more memory per batch than K=10 due to the (chunk_size × chunk_size) attention matrices.
+- If that doesn't help, reduce chunk_size (more chunks = smaller attention matrices, but slower).
+
+See `worldmodel/docs/MAMBA2-EXPLAINER.md` for the full architecture explanation.
+
+## Prediction Heads — Full Layout (as of Feb 24, 2026)
+
+The model predicts 34 values per frame (30 float + 4 int). The rollout loop (`scripts/rollout.py`) feeds all of these back into the context window for autoregressive generation. State_age is rules-based (increment if same action, reset if changed).
+
+**Note:** Autoregressive rollouts still drift significantly (characters float off stage, percent climbs to 500%+). This is compounding prediction error from a small model (1.15M params), not missing plumbing. The fix is scale: bigger model, more data, Mamba-2.
+
+### Prediction head layout
+
+| Category | Values | Head |
+|---|---|---|
+| Continuous deltas | percent, x, y, shield ×2 (8) | `continuous_head` |
+| Velocity deltas | 5 velocities ×2 (10) | `velocity_head` |
+| Binary logits | facing, invuln, on_ground ×2 (6) | `binary_head` |
+| Dynamics (absolute) | hitlag, stocks, combo ×2 (6) | `dynamics_head` |
+| Action | 400-class ×2 | `p0_action_head`, `p1_action_head` |
+| Jumps | 7-class ×2 | `p0_jumps_head`, `p1_jumps_head` |
+
+**Design choices:**
+- Velocities as **deltas** (like position) — they change smoothly frame-to-frame
+- Dynamics as **absolute values** with MSE — hitlag/stocks/combo are discrete-ish
+- State_age stays **rules-based** in rollout (increment if same action, reset if changed)
+- `float_tgt` expands from `(14,)` to `(30,)`: `[cont_delta(8), vel_delta(10), binary(6), dynamics(6)]`
+
+### Loss weights
+
+```yaml
+loss_weights:
+  continuous: 1.0     # position/shield deltas
+  velocity: 0.5       # velocity deltas (NEW)
+  dynamics: 0.5       # hitlag/stocks/combo absolute (NEW)
+  binary: 0.5         # facing/invuln/on_ground
+  action: 2.0         # action state CE
+  jumps: 0.5          # jumps_left CE
+```
+
+### Backward compatibility
+
+- **Old checkpoints load fine.** `strict=False` in `load_state_dict` — missing `velocity_head`/`dynamics_head` weights init randomly, existing heads load from checkpoint.
+- **Old training data works.** New targets extracted from existing float columns — no re-parsing needed.
+- **Rollout guarded.** `if "velocity_delta" in preds` checks protect against old models that don't output the new keys.
+
+### Files modified
+
+| File | Change |
+|------|--------|
+| `model/encoding.py` | `predicted_velocity_dim` (10), `predicted_dynamics_dim` (6) properties |
+| `data/dataset.py` | `float_tgt` from (14,) to (30,) — velocity deltas + dynamics absolute |
+| `model/mlp.py` | `velocity_head`, `dynamics_head` linear layers + forward outputs |
+| `model/mamba2.py` | Same two heads |
+| `training/metrics.py` | `LossWeights` gains velocity/dynamics; new loss terms and MAE metrics |
+| `training/trainer.py` | Shape preflight updated (14→30) |
+| `scripts/rollout.py` | Applies velocity deltas, dynamics, rules-based state_age in autoregressive loop |
+| `scripts/generate_demo.py` | `_build_predicted_player` outputs velocity/hitlag/combo; `strict=False` for old checkpoints |
+
+### Validation (Feb 24)
+
+1. **Quick train** (10 games, 1 epoch): `loss/velocity=0.132`, `loss/dynamics=0.162` — computes and backprops ✓
+2. **Teacher-forced demo** (old checkpoint): JSON includes velocity/hitlag/combo fields, values are random (untrained heads) ✓
+3. **Autoregressive demo** (old checkpoint): 20/20 unique velocity values in first 20 frames — mechanism works, values update frame-to-frame ✓
 
 ## Future Direction: Paired (State, Video) Dataset
 

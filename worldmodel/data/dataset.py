@@ -11,8 +11,10 @@ v2.2+ layout — input-conditioned world model:
   float_ctx:  (K, F) — [p0: cont+bin(3)+ctrl(13), p1: same] per frame
   int_ctx:    (K, I) — per-player categoricals [+ state_age when embedded] + stage
   next_ctrl:  (C,)   — controller input for frame t [+ press events when enabled]
-  float_tgt:  (14,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
-  int_tgt:    (4,)   — [p0_action, p0_jumps, p1_action, p1_jumps]
+  float_tgt:  (30,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_vel_delta(5), p1_vel_delta(5),
+                         p0_binary(3), p1_binary(3), p0_dynamics(3), p1_dynamics(3)]
+  int_tgt:    (12,)  — [p0_action, p0_jumps, p0_l_cancel, p0_hurtbox, p0_ground, p0_last_attack,
+                         p1_action, p1_jumps, p1_l_cancel, p1_hurtbox, p1_ground, p1_last_attack]
 
   Baseline: F=58, I=15, C=26. See EncodingConfig for experiment variants.
   Context = frames [t-K, ..., t-1]. Target = frame t+d's state given ctrl(t)..ctrl(t+d).
@@ -40,8 +42,8 @@ FLOAT_PER_FRAME = 58
 CTRL_DIM = 26
 INT_PER_PLAYER = 7
 INT_PER_FRAME = 15
-TARGET_FLOAT_DIM = 14
-TARGET_INT_DIM = 4
+TARGET_FLOAT_DIM = 30
+TARGET_INT_DIM = 12
 
 
 def _encode_game(game: ParsedGame, cfg: EncodingConfig) -> tuple[torch.Tensor, torch.Tensor]:
@@ -146,14 +148,17 @@ class MeleeFrameDataset(Dataset):
         float_ctx:  (K, F) — context frames [t-K, ..., t-1]   (F = float_per_player*2)
         int_ctx:    (K, I) — context categoricals              (I = int_per_frame)
         next_ctrl:  (C,)   — frame t's controller input        (C = ctrl_conditioning_dim)
-        float_tgt:  (14,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_binary(3), p1_binary(3)]
-        int_tgt:    (4,)   — [p0_action, p0_jumps, p1_action, p1_jumps]
+        float_tgt:  (30,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_vel_delta(5), p1_vel_delta(5),
+                              p0_binary(3), p1_binary(3), p0_dynamics(3), p1_dynamics(3)]
+        int_tgt:    (12,)  — [p0: action, jumps, l_cancel, hurtbox, ground, last_attack,
+                              p1: action, jumps, l_cancel, hurtbox, ground, last_attack]
 
     Dimensions are config-driven (EncodingConfig flags change them).
     """
 
     def __init__(self, data: MeleeDataset, game_range: range, context_len: int = 10):
         self.data = data
+        self.game_range = game_range
         self.context_len = context_len
         cfg = data.cfg
 
@@ -174,6 +179,18 @@ class MeleeFrameDataset(Dataset):
         self._p1_cont = slice(fp, fp + cfg.core_continuous_dim)
         self._p1_bin = slice(fp + bin_start, fp + bin_end)
         self._p1_ctrl = slice(fp + ctrl_start, fp + ctrl_end)
+
+        # Velocity slices (indices 4:9 within each player's continuous block)
+        vel_start = cfg.core_continuous_dim           # 4
+        vel_end = vel_start + cfg.velocity_dim        # 9
+        self._p0_vel = slice(vel_start, vel_end)
+        self._p1_vel = slice(fp + vel_start, fp + vel_end)
+
+        # Dynamics indices: hitlag, stocks, combo_count
+        # Layout after velocity: [state_age (if not embed)], hitlag, stocks, combo_count
+        dyn_start = vel_end + (0 if cfg.state_age_as_embed else 1)  # skip state_age float
+        self._p0_dyn = [dyn_start, dyn_start + 1, dyn_start + 2]  # hitlag, stocks, combo
+        self._p1_dyn = [fp + i for i in self._p0_dyn]
 
         # Button slices for press events (buttons are last 8 of controller)
         # controller layout: main_x, main_y, c_x, c_y, shoulder, 8 buttons
@@ -241,20 +258,42 @@ class MeleeFrameDataset(Dataset):
         # Continuous delta: frame (t+d) minus frame (t+d-1)
         p0_cont_delta = tgt_float[self._p0_cont] - prev_float[self._p0_cont]
         p1_cont_delta = tgt_float[self._p1_cont] - prev_float[self._p1_cont]
+
+        # Velocity deltas
+        p0_vel_delta = tgt_float[self._p0_vel] - prev_float[self._p0_vel]
+        p1_vel_delta = tgt_float[self._p1_vel] - prev_float[self._p1_vel]
+
         p0_binary = tgt_float[self._p0_bin]
         p1_binary = tgt_float[self._p1_bin]
 
-        float_tgt = torch.cat([p0_cont_delta, p1_cont_delta, p0_binary, p1_binary])  # (14,)
+        # Dynamics absolute (hitlag, stocks, combo_count)
+        p0_dyn = tgt_float[self._p0_dyn]
+        p1_dyn = tgt_float[self._p1_dyn]
 
-        # Int targets: frame (t+d)'s action/jumps
+        float_tgt = torch.cat([
+            p0_cont_delta, p1_cont_delta,     # (8)
+            p0_vel_delta, p1_vel_delta,        # (10)
+            p0_binary, p1_binary,              # (6)
+            p0_dyn, p1_dyn,                    # (6)
+        ])  # (30,)
+
+        # Int targets: frame (t+d)'s categoricals (6 per player)
         tgt_ints = self.data.ints[tgt_idx]
         p1_off = self._p1_int_offset
         int_tgt = torch.stack([
             tgt_ints[0],          # p0_action
             tgt_ints[1],          # p0_jumps
+            tgt_ints[3],          # p0_l_cancel
+            tgt_ints[4],          # p0_hurtbox
+            tgt_ints[5],          # p0_ground
+            tgt_ints[6],          # p0_last_attack
             tgt_ints[p1_off],     # p1_action
             tgt_ints[p1_off + 1], # p1_jumps
-        ])  # (4,)
+            tgt_ints[p1_off + 3], # p1_l_cancel
+            tgt_ints[p1_off + 4], # p1_hurtbox
+            tgt_ints[p1_off + 5], # p1_ground
+            tgt_ints[p1_off + 6], # p1_last_attack
+        ])  # (12,)
 
         return float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt
 

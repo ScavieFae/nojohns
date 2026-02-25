@@ -393,10 +393,21 @@ class FrameStackMamba2(nn.Module):
         # --- Prediction heads (identical to FrameStackMLP) ---
         self.continuous_head = nn.Linear(d_model, 8)
         self.binary_head = nn.Linear(d_model, 6)
+        self.velocity_head = nn.Linear(d_model, cfg.predicted_velocity_dim)   # 10
+        self.dynamics_head = nn.Linear(d_model, cfg.predicted_dynamics_dim)   # 6
         self.p0_action_head = nn.Linear(d_model, cfg.action_vocab)
         self.p1_action_head = nn.Linear(d_model, cfg.action_vocab)
         self.p0_jumps_head = nn.Linear(d_model, cfg.jumps_vocab)
         self.p1_jumps_head = nn.Linear(d_model, cfg.jumps_vocab)
+        # Combat context heads (predict per player)
+        self.p0_l_cancel_head = nn.Linear(d_model, cfg.l_cancel_vocab)
+        self.p1_l_cancel_head = nn.Linear(d_model, cfg.l_cancel_vocab)
+        self.p0_hurtbox_head = nn.Linear(d_model, cfg.hurtbox_vocab)
+        self.p1_hurtbox_head = nn.Linear(d_model, cfg.hurtbox_vocab)
+        self.p0_ground_head = nn.Linear(d_model, cfg.ground_vocab)
+        self.p1_ground_head = nn.Linear(d_model, cfg.ground_vocab)
+        self.p0_last_attack_head = nn.Linear(d_model, cfg.last_attack_vocab)
+        self.p1_last_attack_head = nn.Linear(d_model, cfg.last_attack_vocab)
 
     def _encode_frames(
         self, float_ctx: torch.Tensor, int_ctx: torch.Tensor,
@@ -463,8 +474,18 @@ class FrameStackMamba2(nn.Module):
         return {
             "continuous_delta": self.continuous_head(h),
             "binary_logits": self.binary_head(h),
+            "velocity_delta": self.velocity_head(h),
+            "dynamics_pred": self.dynamics_head(h),
             "p0_action_logits": self.p0_action_head(h),
             "p1_action_logits": self.p1_action_head(h),
             "p0_jumps_logits": self.p0_jumps_head(h),
             "p1_jumps_logits": self.p1_jumps_head(h),
+            "p0_l_cancel_logits": self.p0_l_cancel_head(h),
+            "p1_l_cancel_logits": self.p1_l_cancel_head(h),
+            "p0_hurtbox_logits": self.p0_hurtbox_head(h),
+            "p1_hurtbox_logits": self.p1_hurtbox_head(h),
+            "p0_ground_logits": self.p0_ground_head(h),
+            "p1_ground_logits": self.p1_ground_head(h),
+            "p0_last_attack_logits": self.p0_last_attack_head(h),
+            "p1_last_attack_logits": self.p1_last_attack_head(h),
         }

@@ -35,6 +35,8 @@ training:
 
 loss_weights:
   continuous: 1.0
+  velocity: 0.5
+  dynamics: 0.5
   binary: 0.5
   action: 2.0
   jumps: 0.5

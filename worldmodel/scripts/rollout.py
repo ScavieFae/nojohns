@@ -4,6 +4,9 @@
 Seeds with K real frames from a parsed replay, then predicts forward
 using either the replay's controller inputs or scripted inputs.
 
+Supports both MLP and Mamba-2 architectures. Uses config-driven dimensions
+so it works with any EncodingConfig (including state_age_as_embed, press_events).
+
 Usage:
     # Rollout using a replay's real inputs (compare model vs reality):
     python -m worldmodel.scripts.rollout \
@@ -24,15 +27,14 @@ import logging
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from worldmodel.data.dataset import CTRL_DIM, FLOAT_PER_PLAYER, INT_PER_PLAYER, _encode_game
+from worldmodel.data.dataset import _encode_game
 from worldmodel.data.parse import load_game
 from worldmodel.model.encoding import EncodingConfig
-from worldmodel.model.mlp import FrameStackMLP
+from worldmodel.scripts.generate_demo import load_model_from_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +42,10 @@ logger = logging.getLogger(__name__)
 def decode_continuous(normalized: torch.Tensor, cfg: EncodingConfig) -> dict:
     """Decode a player's continuous floats back to game units.
 
-    Input: (13,) — [percent, x, y, shield, 5×vel, state_age, hitlag, stocks, combo_count]
+    Config-driven: handles both default (13 values) and state_age_as_embed (12 values).
     """
-    return {
+    cd = cfg.continuous_dim
+    result = {
         "percent": normalized[0].item() / cfg.percent_scale,
         "x": normalized[1].item() / cfg.xy_scale,
         "y": normalized[2].item() / cfg.xy_scale,
@@ -52,11 +55,19 @@ def decode_continuous(normalized: torch.Tensor, cfg: EncodingConfig) -> dict:
         "speed_ground_x": normalized[6].item() / cfg.velocity_scale,
         "speed_attack_x": normalized[7].item() / cfg.velocity_scale,
         "speed_attack_y": normalized[8].item() / cfg.velocity_scale,
-        "state_age": normalized[9].item() / cfg.state_age_scale,
-        "hitlag": normalized[10].item() / cfg.hitlag_scale,
-        "stocks": normalized[11].item() / cfg.stocks_scale,
-        "combo_count": normalized[12].item() / cfg.combo_count_scale,
     }
+    # Dynamics section varies with state_age_as_embed
+    if not cfg.state_age_as_embed:
+        result["state_age"] = normalized[9].item() / cfg.state_age_scale
+        result["hitlag"] = normalized[10].item() / cfg.hitlag_scale
+        result["stocks"] = normalized[11].item() / cfg.stocks_scale
+        result["combo_count"] = normalized[12].item() / cfg.combo_count_scale
+    else:
+        result["hitlag"] = normalized[9].item() / cfg.hitlag_scale
+        result["stocks"] = normalized[10].item() / cfg.stocks_scale
+        result["combo_count"] = normalized[11].item() / cfg.combo_count_scale
+
+    return result
 
 
 def decode_frame(
@@ -66,41 +77,40 @@ def decode_frame(
 ) -> dict:
     """Decode a full frame tensor back to a visualizer-friendly dict.
 
-    Args:
-        float_frame: (58,) — [p0: cont(13)+bin(3)+ctrl(13), p1: same]
-        int_frame: (15,) — categoricals per player + stage
+    Config-driven: uses cfg.float_per_player and cfg.int_per_player for offsets.
     """
-    FPP = FLOAT_PER_PLAYER  # 29
+    fp = cfg.float_per_player
+    cd = cfg.continuous_dim
+    ipp = cfg.int_per_player
 
-    p0_cont = decode_continuous(float_frame[0:13], cfg)
-    p0_cont["facing"] = float_frame[13].item() > 0.5
-    p0_cont["invulnerable"] = float_frame[14].item() > 0.5
-    p0_cont["on_ground"] = float_frame[15].item() > 0.5
+    p0_cont = decode_continuous(float_frame[0:cd], cfg)
+    p0_cont["facing"] = float_frame[cd].item() > 0.5
+    p0_cont["invulnerable"] = float_frame[cd + 1].item() > 0.5
+    p0_cont["on_ground"] = float_frame[cd + 2].item() > 0.5
 
-    p1_cont = decode_continuous(float_frame[FPP:FPP + 13], cfg)
-    p1_cont["facing"] = float_frame[FPP + 13].item() > 0.5
-    p1_cont["invulnerable"] = float_frame[FPP + 14].item() > 0.5
-    p1_cont["on_ground"] = float_frame[FPP + 15].item() > 0.5
+    p1_cont = decode_continuous(float_frame[fp:fp + cd], cfg)
+    p1_cont["facing"] = float_frame[fp + cd].item() > 0.5
+    p1_cont["invulnerable"] = float_frame[fp + cd + 1].item() > 0.5
+    p1_cont["on_ground"] = float_frame[fp + cd + 2].item() > 0.5
 
-    IPP = INT_PER_PLAYER  # 7
     p0_cont["action"] = int_frame[0].item()
     p0_cont["jumps_left"] = int_frame[1].item()
     p0_cont["character"] = int_frame[2].item()
 
-    p1_cont["action"] = int_frame[IPP].item()
-    p1_cont["jumps_left"] = int_frame[IPP + 1].item()
-    p1_cont["character"] = int_frame[IPP + 2].item()
+    p1_cont["action"] = int_frame[ipp].item()
+    p1_cont["jumps_left"] = int_frame[ipp + 1].item()
+    p1_cont["character"] = int_frame[ipp + 2].item()
 
     return {
         "p0": p0_cont,
         "p1": p1_cont,
-        "stage": int_frame[14].item(),
+        "stage": int_frame[ipp * 2].item(),
     }
 
 
 @torch.no_grad()
 def rollout(
-    model: FrameStackMLP,
+    model: torch.nn.Module,
     float_data: torch.Tensor,
     int_data: torch.Tensor,
     cfg: EncodingConfig,
@@ -113,10 +123,12 @@ def rollout(
     Controller inputs from the replay are fed to the model as conditioning input,
     so the model predicts "what happens given these button presses."
 
+    Config-driven: works with any EncodingConfig and both MLP/Mamba-2 architectures.
+
     Args:
-        model: Trained FrameStackMLP (v2.2, input-conditioned).
-        float_data: (T, 58) — full game float tensors.
-        int_data: (T, 15) — full game int tensors.
+        model: Trained world model (FrameStackMLP or FrameStackMamba2).
+        float_data: (T, float_per_player*2) — full game float tensors.
+        int_data: (T, int_per_frame) — full game int tensors.
         cfg: Encoding config.
         max_frames: Max frames to generate.
         device: Compute device.
@@ -126,12 +138,31 @@ def rollout(
     """
     model.eval()
     K = model.context_len
-    FPP = FLOAT_PER_PLAYER  # 29
+    fp = cfg.float_per_player
+    ipp = cfg.int_per_player
+    cd = cfg.continuous_dim
+    bd = cfg.binary_dim
+    ctrl_start = cd + bd
+    ctrl_end = ctrl_start + cfg.controller_dim
     T = min(max_frames + K, float_data.shape[0])
 
+    # Velocity indices (4:9 within each player block)
+    vel_start = cfg.core_continuous_dim   # 4
+    vel_end = vel_start + cfg.velocity_dim  # 9
+
+    # Dynamics indices: hitlag, stocks, combo_count
+    dyn_start = vel_end + (0 if cfg.state_age_as_embed else 1)
+    p0_dyn_idx = [dyn_start, dyn_start + 1, dyn_start + 2]
+    p1_dyn_idx = [fp + i for i in p0_dyn_idx]
+
+    # State_age index (for rules-based update)
+    if not cfg.state_age_as_embed:
+        p0_state_age_idx = vel_end  # right after velocity
+        p1_state_age_idx = fp + vel_end
+
     # Start with real seed frames
-    sim_floats = float_data[:K].clone()  # (K, 58)
-    sim_ints = int_data[:K].clone()  # (K, 15)
+    sim_floats = float_data[:K].clone()
+    sim_ints = int_data[:K].clone()
 
     frames = []
     # Decode seed frames
@@ -140,17 +171,17 @@ def rollout(
 
     for t in range(K, T):
         # Context window: last K frames
-        ctx_f = sim_floats[-K:].unsqueeze(0).to(device)  # (1, K, 58)
-        ctx_i = sim_ints[-K:].unsqueeze(0).to(device)  # (1, K, 15)
+        ctx_f = sim_floats[-K:].unsqueeze(0).to(device)
+        ctx_i = sim_ints[-K:].unsqueeze(0).to(device)
 
         # Controller input for frame t (from replay data)
         if t < float_data.shape[0]:
             ctrl = torch.cat([
-                float_data[t, 16:29],            # p0 controller (13)
-                float_data[t, FPP + 16:FPP + 29],  # p1 controller (13)
-            ]).unsqueeze(0).to(device)  # (1, 26)
+                float_data[t, ctrl_start:ctrl_end],
+                float_data[t, fp + ctrl_start:fp + ctrl_end],
+            ]).unsqueeze(0).to(device)
         else:
-            ctrl = torch.zeros(1, CTRL_DIM).to(device)  # neutral
+            ctrl = torch.zeros(1, cfg.ctrl_conditioning_dim).to(device)
 
         # Predict frame t's state given the controller input
         preds = model(ctx_f, ctx_i, ctrl)
@@ -160,28 +191,59 @@ def rollout(
         next_float = curr_float.clone()
 
         # Apply continuous deltas (first 4 of each player block: percent, x, y, shield)
-        delta = preds["continuous_delta"][0].cpu()  # (8,)
-        next_float[0:4] += delta[0:4]    # p0 deltas
-        next_float[FPP:FPP + 4] += delta[4:8]  # p1 deltas
+        delta = preds["continuous_delta"][0].cpu()
+        next_float[0:4] += delta[0:4]  # p0 deltas
+        next_float[fp:fp + 4] += delta[4:8]  # p1 deltas
+
+        # Velocity deltas
+        if "velocity_delta" in preds:
+            vel_d = preds["velocity_delta"][0].cpu()
+            next_float[vel_start:vel_end] += vel_d[0:5]        # p0 velocities
+            next_float[fp + vel_start:fp + vel_end] += vel_d[5:10]  # p1 velocities
+
+        # Dynamics (absolute values: hitlag, stocks, combo)
+        if "dynamics_pred" in preds:
+            dyn = preds["dynamics_pred"][0].cpu()
+            for i, idx in enumerate(p0_dyn_idx):
+                next_float[idx] = dyn[i]
+            for i, idx in enumerate(p1_dyn_idx):
+                next_float[idx] = dyn[3 + i]
 
         # Binary predictions (threshold logits)
-        binary = (preds["binary_logits"][0].cpu() > 0).float()  # (6,)
-        next_float[13:16] = binary[0:3]  # p0 binary
-        next_float[FPP + 13:FPP + 16] = binary[3:6]  # p1 binary
+        binary = (preds["binary_logits"][0].cpu() > 0).float()
+        next_float[cd:cd + bd] = binary[0:3]  # p0 binary
+        next_float[fp + cd:fp + cd + bd] = binary[3:6]  # p1 binary
 
         # Store the controller input in the frame (for context window)
         if t < float_data.shape[0]:
-            next_float[16:29] = float_data[t, 16:29]
-            next_float[FPP + 16:FPP + 29] = float_data[t, FPP + 16:FPP + 29]
+            next_float[ctrl_start:ctrl_end] = float_data[t, ctrl_start:ctrl_end]
+            next_float[fp + ctrl_start:fp + ctrl_end] = float_data[t, fp + ctrl_start:fp + ctrl_end]
 
         # Categorical predictions (argmax)
         next_int = sim_ints[-1].clone()
-        IPP = INT_PER_PLAYER
         next_int[0] = preds["p0_action_logits"][0].cpu().argmax()
         next_int[1] = preds["p0_jumps_logits"][0].cpu().argmax()
-        next_int[IPP] = preds["p1_action_logits"][0].cpu().argmax()
-        next_int[IPP + 1] = preds["p1_jumps_logits"][0].cpu().argmax()
-        # character, l_cancel, hurtbox, ground, last_attack, stage: carry forward
+        next_int[ipp] = preds["p1_action_logits"][0].cpu().argmax()
+        next_int[ipp + 1] = preds["p1_jumps_logits"][0].cpu().argmax()
+        # character, stage: carry forward (constant per game)
+        # Combat context predictions (argmax)
+        if "p0_l_cancel_logits" in preds:
+            next_int[3] = preds["p0_l_cancel_logits"][0].cpu().argmax()
+            next_int[4] = preds["p0_hurtbox_logits"][0].cpu().argmax()
+            next_int[5] = preds["p0_ground_logits"][0].cpu().argmax()
+            next_int[6] = preds["p0_last_attack_logits"][0].cpu().argmax()
+            next_int[ipp + 3] = preds["p1_l_cancel_logits"][0].cpu().argmax()
+            next_int[ipp + 4] = preds["p1_hurtbox_logits"][0].cpu().argmax()
+            next_int[ipp + 5] = preds["p1_ground_logits"][0].cpu().argmax()
+            next_int[ipp + 6] = preds["p1_last_attack_logits"][0].cpu().argmax()
+
+        # State_age: rules-based (increment if same action, reset if changed)
+        if not cfg.state_age_as_embed:
+            for sa_idx, act_col in [(p0_state_age_idx, 0), (p1_state_age_idx, ipp)]:
+                if next_int[act_col] == sim_ints[-1][act_col]:
+                    next_float[sa_idx] += 1.0 * cfg.state_age_scale
+                else:
+                    next_float[sa_idx] = 0.0
 
         # Append to simulation
         sim_floats = torch.cat([sim_floats, next_float.unsqueeze(0)], dim=0)
@@ -214,20 +276,11 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    cfg = EncodingConfig()
-
-    # Load model
-    checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
-    model_cfg = checkpoint.get("config", {})
-    model = FrameStackMLP(
-        cfg=cfg,
-        context_len=model_cfg.get("context_len", 10),
-        hidden_dim=model_cfg.get("hidden_dim", 512),
-        trunk_dim=model_cfg.get("trunk_dim", 256),
+    # Load model (handles both architectures and checkpoint formats)
+    model, cfg, context_len, arch = load_model_from_checkpoint(
+        args.checkpoint, args.device,
     )
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model = model.to(args.device)
-    logger.info("Loaded model from %s (epoch %d)", args.checkpoint, checkpoint.get("epoch", -1))
+    logger.info("Loaded %s model from %s", arch, args.checkpoint)
 
     # Load and encode seed game
     game = load_game(args.seed_game)

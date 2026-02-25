@@ -51,7 +51,7 @@ def load_config(config_path: str | None) -> dict:
             "num_epochs": 50,
             "train_split": 0.9,
         },
-        "loss_weights": {"continuous": 1.0, "binary": 0.5, "action": 2.0, "jumps": 0.5},
+        "loss_weights": {"continuous": 1.0, "velocity": 0.5, "dynamics": 0.5, "binary": 0.5, "action": 2.0, "jumps": 0.5},
         "save_dir": "worldmodel/checkpoints",
     }
 
@@ -73,6 +73,8 @@ def main():
     parser.add_argument("--streaming", action="store_true", help="Stream from disk (for datasets too large for RAM)")
     parser.add_argument("--buffer-size", type=int, default=1000, help="Games per streaming buffer (default 1000)")
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
+    parser.add_argument("--rollout-every", type=int, default=5, help="Run rollout validation every N epochs (0 to disable)")
+    parser.add_argument("--rollout-games", type=int, default=3, help="Number of val games to rollout")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -311,6 +313,8 @@ def main():
         save_dir=save_dir,
         device=train_cfg.get("device"),
         resume_from=args.resume,
+        rollout_every_n=args.rollout_every,
+        rollout_games=args.rollout_games,
     )
 
     # Train

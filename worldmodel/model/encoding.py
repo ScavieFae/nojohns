@@ -149,6 +149,18 @@ class EncodingConfig:
         return self.float_per_player + self.embed_dim
 
     @property
+    def predicted_velocity_dim(self) -> int:
+        return self.velocity_dim * 2  # 10 — both players
+
+    @property
+    def predicted_dynamics_dim(self) -> int:
+        return 6  # hitlag + stocks + combo, both players
+
+    @property
+    def target_int_dim(self) -> int:
+        return 12  # per player: action, jumps, l_cancel, hurtbox, ground, last_attack × 2
+
+    @property
     def frame_dim(self) -> int:
         return self.player_dim * 2 + self.stage_embed_dim
 
