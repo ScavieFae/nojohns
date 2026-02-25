@@ -177,10 +177,11 @@ def main():
             buffer_size=args.buffer_size,
             train=True, train_split=train_split,
         )
-        # Val set: load into memory (only 10% of games, fits in RAM)
+        # Val set: load a subset into memory (cap at 200 games to keep startup fast)
         val_entries = game_entries[int(len(game_entries) * train_split):]
+        max_val_games = min(len(val_entries), 200)
         val_games = []
-        for entry in val_entries:
+        for entry in val_entries[:max_val_games]:
             from worldmodel.data.parse import load_game
             try:
                 g = load_game(dataset_dir / "games" / entry["slp_md5"], entry.get("compression", "zlib"))
