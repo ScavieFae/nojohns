@@ -295,7 +295,7 @@ class Mamba2Block(nn.Module):
         y = y + x * self.D.unsqueeze(-1)
 
         # Flatten heads
-        y = y.view(batch, seqlen, self.d_inner)
+        y = y.reshape(batch, seqlen, self.d_inner)
 
         # Gated output: RMSNorm(y, gate=z) → out_proj
         y = self.norm(y, z)
