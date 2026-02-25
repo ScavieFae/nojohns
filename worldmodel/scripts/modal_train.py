@@ -55,7 +55,7 @@ def check_volume():
     gpu="A100",
     volumes={DATA_VOLUME_PATH: volume},
     image=image,
-    timeout=7200,
+    timeout=86400,
     secrets=[modal.Secret.from_name("wandb-key")],
 )
 def train(

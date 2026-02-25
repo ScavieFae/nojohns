@@ -1,0 +1,62 @@
+# Mamba-2 large: 15M-param model for overnight scaling run
+# 6-layer, d_model=512. ~3.5x the medium model.
+#
+# Prerequisites:
+#   - K decision from K10 vs K60 comparison
+#   - Pre-encoded data at scale (22K+ games)
+#   - Timeout set to 86400s (24hr) in modal_train.py
+#
+# Cost estimate: ~$70 for 22K games × 1 epoch on A100.
+# Full overnight (3 epochs): ~$210.
+
+data:
+  dataset_dir: null
+  max_games: 22000
+  stage_filter: null
+  character_filter: null
+
+encoding:
+  xy_scale: 0.05
+  percent_scale: 0.01
+  shield_scale: 0.01
+  action_vocab: 400
+  action_embed_dim: 32
+  jumps_vocab: 8
+  jumps_embed_dim: 4
+  state_age_as_embed: true
+  state_age_embed_vocab: 150
+  state_age_embed_dim: 8
+  press_events: false
+  lookahead: 0
+
+model:
+  arch: mamba2
+  context_len: 10
+  d_model: 512
+  d_state: 64
+  n_layers: 6
+  headdim: 64
+  dropout: 0.1
+  chunk_size: 10
+
+training:
+  lr: 0.0003
+  weight_decay: 0.00001
+  batch_size: 512
+  num_epochs: 3
+  train_split: 0.9
+  device: null
+
+loss_weights:
+  continuous: 1.0
+  velocity: 0.5
+  dynamics: 0.5
+  binary: 0.5
+  action: 2.0
+  jumps: 0.5
+  l_cancel: 0.3
+  hurtbox: 0.3
+  ground: 0.3
+  last_attack: 0.3
+
+save_dir: checkpoints/mamba2-large-gpu

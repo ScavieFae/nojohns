@@ -57,7 +57,7 @@ Secret: wandb-key (WANDB_API_KEY)
 
 - [ ] **Image**: `debian_slim(python_version="3.11")` + `pip_install("torch", index_url=cu121)`. Verify torch CUDA version matches A100 driver (cu121 is safe for all current Modal A100 images).
 - [ ] **GPU type**: `gpu="A100"` — Modal auto-selects 40GB or 80GB. The code doesn't assume 80GB anywhere.
-- [ ] **Timeout**: `train()` has 7200s (2hr). For 10-epoch runs this should be sufficient. For 20+ epochs, may need to increase.
+- [ ] **Timeout**: `train()` has 86400s (24hr). Previously 7200s — caused timeouts mid-epoch-2 on 2K games. Bumped for overnight runs.
 - [ ] **pre_encode timeout**: 3600s (1hr). Encoding 22K games takes ~3-5 minutes. Encoding 300K games could take longer — check if this is sufficient for the full dataset.
 - [ ] **pre_encode resources**: `cpu=4, memory=16384` (16GB RAM). 22K games encoded into tensors is ~4GB. 300K games would be ~50GB — this would OOM. Document the limit.
 - [ ] **Volume commit**: Both `pre_encode` and `train` call `volume.commit()` after writing. Verify no data loss if the function crashes before commit.
@@ -85,13 +85,19 @@ Secret: wandb-key (WANDB_API_KEY)
 
 ### 7. Cost Sanity
 
-| Operation | Instance | Est. time | Est. cost |
-|-----------|----------|-----------|-----------|
-| pre_encode (22K games) | CPU-4 16GB | ~5 min | ~$0.05 |
-| train (1 epoch, 2K games, no workers) | A100 40GB | ~61 min | ~$2.83 |
-| train (10 epochs, 2K games) | A100 40GB | ~10 hr (est.) | ~$28 |
-| sweep (3 runs, 10 epochs) | 3× A100 | ~1-2 hr | ~$9-18 |
+Observed timing from completed A100 runs (Feb 25):
+
+| Operation | Instance | Observed time | Est. cost |
+|-----------|----------|---------------|-----------|
+| pre_encode (2K games) | CPU-4 16GB | ~3 min | ~$0.03 |
+| pre_encode (22K games) | CPU-4 16GB | ~10 min (est.) | ~$0.10 |
+| train (1 epoch, 2K games, no workers) | A100 40GB | **61 min** | ~$2.83 |
+| train (1 epoch, 2K games, num_workers=4) | A100 40GB | **46 min** (25% faster) | ~$2.13 |
+| train (2 epochs, 2K games, num_workers=4) | A100 40GB | **91 min** total | ~$4.21 |
+| train (1 epoch, 22K games, projected) | A100 40GB | ~8.4 hr (linear extrap) | ~$23 |
 | check_volume | CPU (minimal) | ~10 sec | ~$0.01 |
+
+A100 rate: ~$2.78/hr. `num_workers=4` gives ~25% speedup on 2K games (CPU-bound loading eliminated).
 
 ## How to Know Training Is Actually Running
 
@@ -148,13 +154,16 @@ Run these in order to validate the pipeline end-to-end:
 
 ## Known Issues / Risks
 
-| Issue | Severity | Notes |
-|-------|----------|-------|
-| Sweep checkpoint collision | **Medium** | All runs write `best.pt` to same dir. Fix: use `{CHECKPOINT_DIR}/{run_name}/` |
-| pre_encode memory limit | Low | 16GB RAM caps at ~25-30K games (raw + encoded tensors coexist). Fine for 22K. For 230K+, needs `memory=65536` or chunked encoding. |
-| ~~Encoding config not validated~~ | ~~Medium~~ | **Fixed** — `train()` now raises `ValueError` if `.pt` config != YAML config. |
-| No retry on volume.commit() | Low | If commit fails, checkpoints are lost. Modal volumes are reliable but not infallible. |
-| train() returns 0 on missing data | Low | Missing encoded file prints error but doesn't raise. `modal run` shows success. |
+| Issue | Severity | Status | Notes |
+|-------|----------|--------|-------|
+| ~~Sweep checkpoint collision~~ | ~~Medium~~ | **Fixed** | `save_dir` now uses `{CHECKPOINT_DIR}/{run_name}`. |
+| pre_encode memory limit | Low | Open | 16GB RAM caps at ~25-30K games. For 230K+, needs `memory=65536` or chunked encoding. |
+| ~~Encoding config not validated~~ | ~~Medium~~ | **Fixed** | `train()` raises `ValueError` if `.pt` config != YAML config. |
+| ~~`__new__` dataset reconstruction~~ | ~~Medium~~ | **Fixed** | Replaced with `MeleeDataset.from_tensors()` classmethod. |
+| No retry on volume.commit() | Low | Open | If commit fails, checkpoints are lost. Modal volumes are reliable but not infallible. |
+| ~~train() returns 0 on missing data~~ | ~~Low~~ | **Fixed** | Both `train()` and `pre_encode()` now raise `FileNotFoundError`. |
+| Sweep untested end-to-end | Medium | Open | `train.spawn()` works in theory, checkpoint namespacing is fixed, but no parallel sweep has completed. |
+| K=60 batch_size unknown | Low | Open | K=60 at batch_size=512 is a guess. Could OOM on A100 40GB — monitor first run. |
 
 ## Architectural Decisions
 
