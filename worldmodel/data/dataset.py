@@ -125,6 +125,19 @@ class MeleeDataset:
 
         logger.info("Encoded %d games, %d total frames", self.num_games, self.total_frames)
 
+    @classmethod
+    def from_tensors(cls, floats, ints, game_offsets, game_lengths, num_games, cfg):
+        """Reconstruct from pre-encoded tensors (e.g. loaded from a .pt file)."""
+        ds = cls.__new__(cls)
+        ds.cfg = cfg
+        ds.floats = floats
+        ds.ints = ints
+        ds.game_offsets = game_offsets if isinstance(game_offsets, np.ndarray) else game_offsets.numpy()
+        ds.game_lengths = game_lengths
+        ds.num_games = num_games
+        ds.total_frames = int(ds.game_offsets[-1])
+        return ds
+
     def get_frame_dataset(
         self,
         context_len: int = 10,

@@ -87,11 +87,10 @@ def train(
     # Load pre-encoded data — single file, instant
     encoded_path = f"{DATA_VOLUME_PATH}{encoded_file}"
     if not os.path.exists(encoded_path):
-        print(f"ERROR: No encoded data at {encoded_path}")
-        print("Pre-encode locally and upload:")
-        print("  .venv/bin/python worldmodel/scripts/pre_encode.py ...")
-        print("  .venv/bin/modal volume put melee-training-data <file> /<name>")
-        return
+        raise FileNotFoundError(
+            f"No encoded data at {encoded_path}. "
+            "Pre-encode first: modal run worldmodel/scripts/modal_train.py::pre_encode"
+        )
 
     print(f"Loading {encoded_path}...")
     t0 = time.time()
@@ -124,15 +123,15 @@ def train(
 
     enc_cfg = EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None})
 
-    # Build MeleeDataset without re-encoding
-    dataset = MeleeDataset.__new__(MeleeDataset)
-    dataset.cfg = enc_cfg
-    dataset.floats = payload["floats"]
-    dataset.ints = payload["ints"]
-    dataset.game_offsets = payload["game_offsets"].numpy()
-    dataset.game_lengths = payload["game_lengths"]
-    dataset.num_games = payload["num_games"]
-    dataset.total_frames = int(dataset.game_offsets[-1])
+    # Build MeleeDataset from pre-encoded tensors
+    dataset = MeleeDataset.from_tensors(
+        floats=payload["floats"],
+        ints=payload["ints"],
+        game_offsets=payload["game_offsets"],
+        game_lengths=payload["game_lengths"],
+        num_games=payload["num_games"],
+        cfg=enc_cfg,
+    )
 
     context_len = cfg["model"]["context_len"]
     train_split = cfg["training"]["train_split"]
@@ -173,7 +172,8 @@ def train(
     loss_cfg = cfg.get("loss_weights", {})
     loss_weights = LossWeights(**loss_cfg) if loss_cfg else None
 
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    save_dir = f"{CHECKPOINT_DIR}/{run_name}"
+    os.makedirs(save_dir, exist_ok=True)
 
     trainer = Trainer(
         model=model,
@@ -185,7 +185,7 @@ def train(
         batch_size=cfg["training"]["batch_size"],
         num_epochs=epochs,
         loss_weights=loss_weights,
-        save_dir=CHECKPOINT_DIR,
+        save_dir=save_dir,
         device="cuda",
         rollout_every_n=0,
         num_workers=4,
@@ -259,10 +259,10 @@ def pre_encode(
     extract_dir = f"{DATA_VOLUME_PATH}/parsed-v2"
     if not os.path.isdir(extract_dir):
         if not os.path.exists(tar_path):
-            print(f"ERROR: No tar at {tar_path} and no extracted dir at {extract_dir}")
-            print("Upload the tar first:")
-            print("  .venv/bin/modal volume put melee-training-data /tmp/parsed-v2.tar /parsed-v2.tar")
-            return
+            raise FileNotFoundError(
+                f"No tar at {tar_path} and no extracted dir at {extract_dir}. "
+                "Upload first: modal volume put melee-training-data /tmp/parsed-v2.tar /parsed-v2.tar"
+            )
         print(f"Extracting {tar_path}...")
         t0 = time.time()
         with tarfile.open(tar_path) as tar:

@@ -71,7 +71,8 @@ Add a note at the top of the runbook: as of Feb 25, no training epoch has comple
 
 ## Priority Order
 
-1. Checkpoint collision fix (#1) — prevents data loss in sweeps
-2. `from_tensors()` classmethod (#2) — prevents silent breakage on next `__init__` change
-3. Smoke test the full loop — first-ever cloud GPU epoch completion
-4. Error raises (#3) and doc fixes (#4, #5) — cleanup
+1. ~~Checkpoint collision fix (#1)~~ — **Done** (Scav, Feb 25). `save_dir` uses `{CHECKPOINT_DIR}/{run_name}`.
+2. ~~`from_tensors()` classmethod (#2)~~ — **Done** (Scav, Feb 25). Added to `MeleeDataset`, modal_train.py updated.
+3. ~~Smoke test the full loop~~ — **Done** (Feb 25 ~12:08 PT). First epoch completed: run `mamba2-first-complete`, 61min, loss=0.4698, change_acc=0.519, val_loss=0.3405. Checkpoint saved. Second run (`smoke-nw4-v2`, with `num_workers=4`) in progress.
+4. ~~Error raises (#3)~~ — **Done** (Scav, Feb 25). `return` → `raise FileNotFoundError` in both `train()` and `pre_encode()`.
+5. Doc fixes (#4, #5) — **Done** (Scav, Feb 25). Memory estimate corrected, "no epoch completed" framing added then updated with real results.

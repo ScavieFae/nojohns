@@ -199,7 +199,7 @@ class Trainer:
                 pct = 100.0 * (batch_idx + 1) / num_batches
                 logger.info(
                     "  batch %d/%d (%.0f%%) loss=%.4f",
-                    batch_idx + 1, num_batches, pct, batch_metrics["loss/total"],
+                    batch_idx + 1, num_batches, pct, batch_metrics.total_loss,
                 )
 
         return epoch_metrics.averaged()
@@ -233,7 +233,7 @@ class Trainer:
                 pct = 100.0 * (batch_idx + 1) / num_batches
                 logger.info(
                     "  val batch %d/%d (%.0f%%) loss=%.4f",
-                    batch_idx + 1, num_batches, pct, batch_metrics["loss/total"],
+                    batch_idx + 1, num_batches, pct, batch_metrics.total_loss,
                 )
 
         result = {f"val_{k}": v for k, v in epoch_metrics.averaged().items()}

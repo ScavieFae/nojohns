@@ -379,6 +379,22 @@ Diminishing returns: +1.5pp, +0.3pp, +0.1pp per epoch. Architecture is the bottl
 - Scav: v2.2 world model, 22K games, 10 epochs (stopped at epoch 4 — ceiling reached)
 - ScavieFae: imitation policy, 4K games, 50 epochs (converged at epoch 26 — btn_acc=0.992, val plateau)
 
+**First GPU run — Mamba-2 on A100 (Feb 25, 2026):**
+
+Run `mamba2-first-complete`: 2K games, Mamba-2 4.3M params, A100 40GB SXM4, batch_size=1024, `num_workers=0`.
+
+| Metric | Epoch 1 | Notes |
+|--------|---------|-------|
+| loss | 0.4698 | |
+| action_acc | 95.2% | In line with MLP baseline |
+| change_acc | 51.9% | First Mamba-2 number at scale |
+| pos_mae | 0.78 | |
+| val_loss | 0.3405 | val < train → underfitting (good) |
+| val_acc | 96.0% | |
+| wall time | 3679.6s (61 min) | Without num_workers fix |
+
+Second run `smoke-nw4-v2` (same config, `num_workers=4`) in progress — will give A/B timing comparison for DataLoader parallelism.
+
 ## Experiment Framework
 
 Config-driven experiments. Each experiment is a self-contained YAML file in `worldmodel/experiments/`. No code changes to switch — just `--config`.
@@ -845,7 +861,7 @@ If you launched with `--detach` or lost the terminal:
 ### Cost
 
 - A100 40GB: ~$2.78/hr on Modal
-- Typical 10-epoch run (22K games, Mamba-2 4.3M): estimate ~1-2 hours → ~$3-6
+- Observed: 1 epoch on 2K games = ~61 min (without num_workers fix). 10 epochs ~10 hrs → ~$28. With num_workers=4, TBD.
 - You only pay while the function is running — no idle costs
 - Check spend at https://modal.com/settings/billing
 

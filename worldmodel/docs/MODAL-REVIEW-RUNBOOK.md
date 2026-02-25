@@ -88,10 +88,32 @@ Secret: wandb-key (WANDB_API_KEY)
 | Operation | Instance | Est. time | Est. cost |
 |-----------|----------|-----------|-----------|
 | pre_encode (22K games) | CPU-4 16GB | ~5 min | ~$0.05 |
-| train (10 epochs, 22K games) | A100 40GB | ~1-2 hr | ~$3-6 |
-| train (20 epochs, 22K games) | A100 40GB | ~2-4 hr | ~$6-12 |
+| train (1 epoch, 2K games, no workers) | A100 40GB | ~61 min | ~$2.83 |
+| train (10 epochs, 2K games) | A100 40GB | ~10 hr (est.) | ~$28 |
 | sweep (3 runs, 10 epochs) | 3× A100 | ~1-2 hr | ~$9-18 |
 | check_volume | CPU (minimal) | ~10 sec | ~$0.01 |
+
+## How to Know Training Is Actually Running
+
+**"Starting training..." followed by silence proves nothing.** It means init completed. It does not mean batches are computing. We've been fooled by this before.
+
+Possible states after seeing "Starting training" with no further output:
+
+| What you hope | What might actually be happening |
+|---------------|----------------------------------|
+| Batches computing, waiting for 10% log | DataLoader workers stuck on I/O, GPU idle |
+| GPU crunching | `persistent_workers=True` fork hanging or deadlocked |
+| Just slow | Silent CUDA OOM (kills process, no traceback reaches stdout) |
+| Detach lag | Modal log streaming delayed — output exists but hasn't been forwarded |
+
+**Proof levels (strongest first):**
+
+1. **wandb has a data point** — a metric was logged, meaning a full epoch completed
+2. **Batch log line in stdout** — `batch 1730/17300 (10%)` means at least 1,730 batches ran
+3. **Modal dashboard shows GPU utilization > 0%** — compute is happening
+4. **No crash after N minutes** — weakest signal. Only rules out immediate failure.
+
+**Update Feb 25, 2026 ~12:08 PT: first epoch completed on cloud GPU.** Run `mamba2-first-complete` (2K games, Mamba-2 4.3M params, A100 40GB, no `num_workers` fix): Epoch 1 in 3679.6s (61min), loss=0.4698, action_acc=0.952, change_acc=0.519, val_loss=0.3405. Checkpoint saved. Second run `smoke-nw4-v2` (with `num_workers=4`) still in progress — will give A/B timing comparison.
 
 ## Smoke Tests
 
