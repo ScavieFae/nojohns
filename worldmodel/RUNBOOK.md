@@ -747,6 +747,172 @@ The game state is the "sheet music" — positions, velocities, action states, co
 
 This is a Phase 3+ direction. Not blocking current work.
 
+## GPU Training via Modal
+
+**Use Modal for all GPU training.** It spins up an A100 on demand, runs your code, streams logs to your terminal, and shuts down automatically. No SSH, no pods, no environment management. Pay-per-second.
+
+### Prerequisites (one-time)
+
+1. **Install Modal**: `.venv/bin/pip install modal`
+2. **Auth**: `.venv/bin/modal setup` (opens browser, creates token)
+3. **Volume**: `.venv/bin/modal volume create melee-training-data`
+4. **wandb secret**: `.venv/bin/modal secret create wandb-key WANDB_API_KEY=<key>`
+
+### Upload training data (one-time)
+
+Individual files are slow — tar first, upload the single blob. The `pre_encode` function auto-extracts.
+
+```bash
+# Tar locally (fast)
+cd ~/claude-projects/nojohns-training/data && tar cf /tmp/parsed-v2.tar parsed-v2/
+
+# Upload to Modal volume (3.4GB, ~5 min)
+.venv/bin/modal volume put melee-training-data /tmp/parsed-v2.tar /parsed-v2.tar
+
+# Verify
+.venv/bin/modal run worldmodel/scripts/modal_train.py::check_volume
+```
+
+### Pre-encode on Modal
+
+Encode raw parquet → `.pt` directly on Modal's CPUs. No local encoding or 7GB upload needed.
+
+```bash
+# Encode all games (reads tar, encodes, writes .pt to volume)
+.venv/bin/modal run worldmodel/scripts/modal_train.py::pre_encode
+
+# Subset for testing
+.venv/bin/modal run worldmodel/scripts/modal_train.py::pre_encode \
+    --max-games 2000 --output /encoded-2k.pt
+
+# Verify the .pt landed
+.venv/bin/modal run worldmodel/scripts/modal_train.py::check_volume
+```
+
+The tar is auto-extracted on first `pre_encode` run and committed to the volume. Subsequent runs skip extraction.
+
+### Launch training
+
+```bash
+# Default config (Mamba-2 medium, A100, 10 epochs)
+.venv/bin/modal run worldmodel/scripts/modal_train.py::train
+
+# Custom config
+.venv/bin/modal run worldmodel/scripts/modal_train.py::train \
+    --config worldmodel/experiments/mamba2-medium-gpu.yaml
+
+# Override epochs
+.venv/bin/modal run worldmodel/scripts/modal_train.py::train --epochs 5
+
+# Custom run name for wandb
+.venv/bin/modal run worldmodel/scripts/modal_train.py::train \
+    --run-name "my-experiment"
+
+# Detached mode — returns immediately, check wandb for progress
+.venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train \
+    --run-name "overnight-run" --epochs 20
+```
+
+Logs stream live to your terminal (unless `--detach`). wandb tracking at https://wandb.ai/shinewave/melee-worldmodel.
+
+### Sweep (parallel runs)
+
+Launch multiple A100 runs simultaneously for hyperparameter sweeps:
+
+```bash
+.venv/bin/modal run worldmodel/scripts/modal_train.py::sweep \
+    --names "sweep-lr3e4,sweep-lr1e3,sweep-lr3e3" --epochs 10
+```
+
+Each run name gets its own A100 and wandb run. The sweep entrypoint waits for all runs to complete.
+
+### Check training status
+
+If you launched with `--detach` or lost the terminal:
+- **wandb**: Check the project dashboard for live loss curves
+- **Modal dashboard**: https://modal.com/apps/scaviefae/main — shows running functions, logs, GPU usage
+
+### Download checkpoints
+
+```bash
+# List what's on the volume
+.venv/bin/modal run worldmodel/scripts/modal_train.py::check_volume
+
+# Pull files from volume to local
+.venv/bin/modal volume get melee-training-data /checkpoints ./downloaded-checkpoints
+```
+
+### Cost
+
+- A100 40GB: ~$2.78/hr on Modal
+- Typical 10-epoch run (22K games, Mamba-2 4.3M): estimate ~1-2 hours → ~$3-6
+- You only pay while the function is running — no idle costs
+- Check spend at https://modal.com/settings/billing
+
+### How it works (for future Claudes)
+
+`worldmodel/scripts/modal_train.py` is the launcher. It defines:
+- **Image**: debian_slim + PyTorch CUDA + pyarrow/pyyaml/wandb + local `worldmodel/` code baked in
+- **Volume**: `melee-training-data` persists training data + checkpoints across runs
+- **Secret**: `wandb-key` provides WANDB_API_KEY to the container
+- **`pre_encode()`**: CPU-only function — reads raw parquet tar from volume, encodes to `.pt`, writes back to volume
+- **`train()`**: GPU function — loads pre-encoded `.pt`, builds model, trains with `num_workers=4` for DataLoader parallelism
+- **`sweep()`**: Local entrypoint — calls `train.spawn()` to launch parallel A100 runs
+- **`check_volume()`**: Lists volume contents (replaces old `upload_data`/`download_checkpoints`)
+
+The local code is baked into the container image via `add_local_dir()`. This means code changes are automatically picked up on every `modal run` — no manual sync needed. Data lives on the persistent volume.
+
+### Troubleshooting
+
+**"Volume not found"**
+```bash
+.venv/bin/modal volume create melee-training-data
+```
+
+**"Token missing" / auth errors**
+```bash
+.venv/bin/modal setup   # Re-authenticate in browser
+```
+
+**"Secret not found"**
+```bash
+.venv/bin/modal secret create wandb-key WANDB_API_KEY=<your-key>
+```
+To train without wandb, edit `modal_train.py` and remove the `secrets=` line, or add `--no-wandb` to the subprocess command.
+
+**Training crashes with import errors**
+The code is baked from your local `worldmodel/` directory. Check that the code works locally first:
+```bash
+.venv/bin/python -c "from worldmodel.model.mamba2 import FrameStackMamba2; print('OK')"
+```
+
+**"No data" errors**
+Check the volume has data:
+```bash
+.venv/bin/modal run worldmodel/scripts/modal_train.py::check_volume
+```
+If empty, re-upload the tar (see "Upload training data" above). Then run `pre_encode` to generate the `.pt` file.
+
+**CUDA out of memory**
+Reduce batch_size in the experiment YAML. A100 40GB should handle batch_size=1024 for the 4.3M param model easily. If you're running a larger model, try 512 or 256.
+
+**"module 'modal' has no attribute X"**
+Modal's API changes between versions. Check `.venv/bin/pip show modal` for version. Current working version: 1.3.4. Key changes from older versions:
+- `modal.Mount` → `Image.add_local_dir()` (mounts removed)
+- `Secret.from_name(required=False)` → just `Secret.from_name()` (no required param)
+- `torch.cuda.get_device_properties(0).total_mem` → attribute name varies by PyTorch version; use `getattr()` fallback
+
+### Why Modal, not RunPod
+
+We burned 8+ hours on RunPod (Feb 25, 2026). Core problems:
+1. **SSH proxy forces PTY** — `ssh.runpod.io` breaks rsync/scp/piped commands. Non-interactive SSH is impossible through their proxy.
+2. **Direct TCP ports unreliable** — connection-refused on public IP:port despite pod showing "running."
+3. **Pip packages ephemeral** — installed to container disk, lost on pod restart. Only `/workspace` volume persists.
+4. **runpodctl** uses croc P2P transfer with interactive code phrases — impossible for an agent to automate.
+5. **SSH key auth flaky** — both ed25519 and RSA keys registered correctly, both rejected by proxy. No clear error.
+
+RunPod is built for humans in Jupyter notebooks, not agents driving SSH. Modal eliminates the entire category of remote-machine problems.
+
 ## Autonomous World Model (Solana hackathon — deadline Feb 27)
 
 Research direction: decompose the monolithic model into subsystem models (movement, hit detection, damage/knockback, action transitions, shield/grab) for onchain deployment via MagicBlock ephemeral rollups + BOLT ECS.

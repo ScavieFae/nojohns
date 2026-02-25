@@ -75,6 +75,7 @@ def main():
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
     parser.add_argument("--rollout-every", type=int, default=5, help="Run rollout validation every N epochs (0 to disable)")
     parser.add_argument("--rollout-games", type=int, default=3, help="Number of val games to rollout")
+    parser.add_argument("--num-workers", type=int, default=None, help="DataLoader workers (default: auto — 4 for CUDA, 0 for MPS/CPU)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -316,6 +317,7 @@ def main():
         resume_from=args.resume,
         rollout_every_n=args.rollout_every,
         rollout_games=args.rollout_games,
+        num_workers=args.num_workers,
     )
 
     # Train

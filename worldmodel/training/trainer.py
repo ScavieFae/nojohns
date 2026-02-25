@@ -51,6 +51,7 @@ class Trainer:
         resume_from: Optional[str | Path] = None,
         rollout_every_n: int = 5,
         rollout_games: int = 3,
+        num_workers: Optional[int] = None,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -69,6 +70,16 @@ class Trainer:
         self.save_dir = Path(save_dir) if save_dir else None
         self.start_epoch = 0
 
+        # DataLoader workers: CUDA benefits from multi-process loading (fork-mode
+        # workers share tensors via copy-on-write on Linux). MPS/CPU stays single-process.
+        if num_workers is None:
+            num_workers = 4 if device == "cuda" else 0
+        loader_kwargs: dict = {}
+        if num_workers > 0:
+            loader_kwargs["persistent_workers"] = True
+            loader_kwargs["prefetch_factor"] = 4
+        logger.info("DataLoader: num_workers=%d", num_workers)
+
         # DataLoader — no custom collate, default stacking works with tuple returns
         # IterableDataset handles its own shuffling; map-style Dataset uses shuffle=True
         is_iterable = isinstance(train_dataset, IterableDataset)
@@ -76,9 +87,10 @@ class Trainer:
             train_dataset,
             batch_size=batch_size,
             shuffle=not is_iterable,
-            num_workers=0,
+            num_workers=num_workers,
             drop_last=True,
             pin_memory=(device != "cpu"),
+            **loader_kwargs,
         )
         self.val_loader = None
         if val_dataset and len(val_dataset) > 0:
@@ -86,9 +98,10 @@ class Trainer:
                 val_dataset,
                 batch_size=batch_size,
                 shuffle=False,
-                num_workers=0,
+                num_workers=num_workers,
                 drop_last=False,
                 pin_memory=(device != "cpu"),
+                **loader_kwargs,
             )
 
         self.optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -164,8 +177,10 @@ class Trainer:
     def _train_epoch(self) -> dict[str, float]:
         self.model.train()
         epoch_metrics = EpochMetrics()
+        num_batches = len(self.train_loader)
+        log_interval = max(1, num_batches // 10)  # Log ~10 times per epoch
 
-        for float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt in self.train_loader:
+        for batch_idx, (float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt) in enumerate(self.train_loader):
             float_ctx = float_ctx.to(self.device)
             int_ctx = int_ctx.to(self.device)
             next_ctrl = next_ctrl.to(self.device)
@@ -180,6 +195,13 @@ class Trainer:
             self.optimizer.step()
             epoch_metrics.update(batch_metrics)
 
+            if (batch_idx + 1) % log_interval == 0:
+                pct = 100.0 * (batch_idx + 1) / num_batches
+                logger.info(
+                    "  batch %d/%d (%.0f%%) loss=%.4f",
+                    batch_idx + 1, num_batches, pct, batch_metrics["loss/total"],
+                )
+
         return epoch_metrics.averaged()
 
     @torch.no_grad()
@@ -189,8 +211,10 @@ class Trainer:
         self.model.eval()
         epoch_metrics = EpochMetrics()
         action_tracker = ActionBreakdown(self.cfg.action_vocab)
+        num_batches = len(self.val_loader)
+        log_interval = max(1, num_batches // 10)
 
-        for float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt in self.val_loader:
+        for batch_idx, (float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt) in enumerate(self.val_loader):
             float_ctx = float_ctx.to(self.device)
             int_ctx = int_ctx.to(self.device)
             next_ctrl = next_ctrl.to(self.device)
@@ -204,6 +228,13 @@ class Trainer:
             # Per-action tracking (both players — p1_action is at index 6)
             action_tracker.update(predictions["p0_action_logits"], int_tgt[:, 0])
             action_tracker.update(predictions["p1_action_logits"], int_tgt[:, 6])
+
+            if (batch_idx + 1) % log_interval == 0:
+                pct = 100.0 * (batch_idx + 1) / num_batches
+                logger.info(
+                    "  val batch %d/%d (%.0f%%) loss=%.4f",
+                    batch_idx + 1, num_batches, pct, batch_metrics["loss/total"],
+                )
 
         result = {f"val_{k}": v for k, v in epoch_metrics.averaged().items()}
         result.update(action_tracker.summary_metrics())
