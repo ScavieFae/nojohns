@@ -11,7 +11,7 @@ Train a fighter policy on 22K ranked games to match the world model's data distr
 
 | Component | Data scale | Notes |
 |-----------|-----------|-------|
-| World model | 22K games | mamba2-22k-ss, epoch 1 complete, epoch 2-3 training now |
+| World model | 22K games | mamba2-22k-ss: ep1 done (75.9% change_acc), ep2-3 running as mamba2-22k-ss-resumed (bs=4096) |
 | **This policy** | **22K games** | Same dataset, same distribution |
 | Previous policy | 50 games | Near-random relative to world model's training data |
 
@@ -93,6 +93,15 @@ Modal timeout: **43200s (12h)** — covers 3x estimate. If 5x hits, resume from 
 | val_button_pressed_acc | 98.2% | >99% | The hard signal — when buttons are active |
 | val_loss/total | 0.032 | <0.025 | Diminishing returns expected |
 
+## Kill Thresholds
+
+| Condition | Action |
+|-----------|--------|
+| val_loss not decreasing after 2 epochs | Stop — model has converged or data issue |
+| val_stick_mae > 0.030 after epoch 1 | Investigate — worse than 50-game baseline |
+| val_button_pressed_acc < 95% after epoch 1 | Investigate — regression from baseline |
+| GPU OOM | Reduce batch_size to 512, restart |
+
 ## Implementation Checklist (before launch)
 
 ### 1. Modal policy launcher
@@ -100,7 +109,8 @@ Add `train_policy()` to `modal_train.py` (or new `modal_policy_train.py`):
 - Load `encoded-22k.pt` from volume (same as world model)
 - Build `PolicyFrameDataset` from the pre-encoded tensors + `game_offsets`
 - Train `PolicyMLP` with `PolicyTrainer`
-- Save checkpoints to volume, commit after each epoch
+- **`volume.commit()` in epoch_callback** — same pattern as mamba2-22k-ss fix (c79a6ae)
+- Save `best.pt` + `latest.pt` to volume each epoch
 - Use `gpu="T4"`
 
 ### 2. PolicyFrameDataset from pre-encoded data
@@ -121,6 +131,17 @@ Current `PolicyFrameDataset` takes a `MeleeDataset` (in-memory games). Need a va
     --encoded-file /encoded-22k.pt --epochs 5 \
     --batch-size 1024 --predict-player 0 \
     --run-name policy-22k
+```
+
+## Resume Command
+
+```bash
+# If run hits timeout or needs restart:
+.venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train_policy \
+    --encoded-file /encoded-22k.pt --epochs 5 \
+    --batch-size 1024 --predict-player 0 \
+    --resume policy-22k/latest.pt \
+    --run-name policy-22k-resumed
 ```
 
 ## After Training

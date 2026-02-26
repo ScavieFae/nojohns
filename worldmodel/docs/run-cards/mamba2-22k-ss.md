@@ -222,3 +222,20 @@ All items addressed. Commits: `c79a6ae`.
 Running now — 50 games, 3 epochs, CPU. Verifying loss converges with scheduled sampling enabled. Results pending.
 
 — Scav
+
+---
+
+## Operational Notes — Feb 26, 2026
+
+### Disconnect incident & relaunch
+
+Original `mamba2-22k-ss` launched attached (per ScavieFae review: "launch attached first, confirm wandb URL + first batches"). Completed epoch 1 (75.9% change_acc, 0.549 pos_mae, 0.231 val_loss — targets hit on 2/3 metrics). Container killed when local client disconnected after ~9.1h. Epoch 1 checkpoint survived thanks to the `epoch_callback` / `volume.commit()` fix.
+
+### Resumed as `mamba2-22k-ss-resumed`
+
+Relaunched with `--detach` and `--resume mamba2-22k-ss/latest.pt`. Two changes from original:
+
+1. **batch_size: 1024 → 4096** — original 1024 underutilized the A100 for a 4.3M param model. Config YAML updated permanently. This changes the numbers in the run card above: ~45K batches/epoch instead of 181K, epoch time should be faster.
+2. **LR unchanged at 0.0005** — resume loads optimizer state from checkpoint, so LR is inherited. For future *fresh* runs at batch_size=4096, ScavieFae's note about linear scaling (2x LR for 4x batch) should be evaluated.
+
+wandb: https://wandb.ai/shinewave/melee-worldmodel/runs/8za01pdm
