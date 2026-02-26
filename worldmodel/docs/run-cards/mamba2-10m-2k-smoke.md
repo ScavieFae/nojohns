@@ -1,7 +1,7 @@
 # Run Card: mamba2-10m-2k-smoke
 
 **Created**: Feb 26, 2026
-**Status**: PENDING REVIEW
+**Status**: LAUNCHING — ScavieFae approved, firing up
 
 ## Goal
 

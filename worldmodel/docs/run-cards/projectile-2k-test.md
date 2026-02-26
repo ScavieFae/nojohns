@@ -11,6 +11,8 @@ Checked 500 parsed games: the `items` struct exists in the parquet schema (15 sl
 
 **Unblocked by**: Parser fix + re-parse of at least 2K games with item data populated.
 
+**Owner**: ScavieFae is working on the parser fix (Feb 26).
+
 ## Goal
 
 Test whether projectile encoding improves world model accuracy. Projectiles (Fox lasers, Samus charge shots, etc.) are currently invisible to the model — damage appears from nowhere. This is the #1 known encoding gap.

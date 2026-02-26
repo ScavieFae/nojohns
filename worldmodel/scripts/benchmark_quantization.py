@@ -120,25 +120,69 @@ def run_val_pass(model, val_loader, metrics, device, label="float32"):
     return results
 
 
-def quantize_model(model):
-    """Apply dynamic INT8 quantization to linear layers."""
+def quantize_model(model, force_all=False):
+    """Apply dynamic INT8 quantization to linear layers.
+
+    Args:
+        model: The model to quantize.
+        force_all: If True, force-quantize ALL linear layers including tiny ones
+                   that quantize_dynamic normally skips. Required for onchain where
+                   all math must be integer.
+    """
     # Use qnnpack on ARM/macOS, fbgemm on x86
     if torch.backends.quantized.engine == "none":
         torch.backends.quantized.engine = "qnnpack"
     logger.info("Quantization engine: %s", torch.backends.quantized.engine)
 
-    quantized = torch.quantization.quantize_dynamic(
-        model,
-        {torch.nn.Linear},
-        dtype=torch.qint8,
-    )
+    if force_all:
+        # Force INT8 on every Linear layer by setting qconfig explicitly.
+        # quantize_dynamic skips tiny layers (e.g. Linear(384,3)) as a CPU
+        # optimization — but for onchain we need uniform INT8 math everywhere.
+        model.qconfig = torch.quantization.default_dynamic_qconfig
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Linear):
+                module.qconfig = torch.quantization.default_dynamic_qconfig
+        quantized = torch.quantization.quantize_dynamic(
+            model,
+            {torch.nn.Linear},
+            dtype=torch.qint8,
+        )
+        # Double-check: manually quantize any stragglers that quantize_dynamic
+        # still skipped (PyTorch may still skip based on internal heuristics)
+        for name, module in list(quantized.named_modules()):
+            if isinstance(module, torch.nn.Linear):
+                logger.warning("Layer %s (%s) still float — force-wrapping to DynamicQuantizedLinear",
+                               name, tuple(module.weight.shape))
+                parent_name = ".".join(name.split(".")[:-1])
+                child_name = name.split(".")[-1]
+                parent = quantized if not parent_name else dict(quantized.named_modules())[parent_name]
+                quantized_layer = torch.nn.quantized.dynamic.Linear(
+                    module.in_features, module.out_features,
+                    bias=module.bias is not None, dtype=torch.qint8,
+                )
+                quantized_layer.set_weight_bias(
+                    torch.quantize_per_tensor(module.weight, scale=module.weight.abs().mean().item() / 64,
+                                              zero_point=0, dtype=torch.qint8),
+                    module.bias,
+                )
+                setattr(parent, child_name, quantized_layer)
+        logger.info("Force-quantized ALL linear layers to INT8 (onchain mode)")
+    else:
+        quantized = torch.quantization.quantize_dynamic(
+            model,
+            {torch.nn.Linear},
+            dtype=torch.qint8,
+        )
+
     # Count quantized layers
     n_quantized = sum(
         1 for m in quantized.modules()
         if hasattr(m, 'weight') and hasattr(m.weight, 'qscheme')
     )
-    n_linear = sum(1 for m in model.modules() if isinstance(m, torch.nn.Linear))
-    logger.info("Quantized %d/%d linear layers to INT8", n_quantized, n_linear)
+    n_linear_remaining = sum(1 for m in quantized.modules() if isinstance(m, torch.nn.Linear))
+    n_total = n_quantized + n_linear_remaining
+    logger.info("Quantized %d/%d linear layers to INT8 (%d remaining as float)",
+                n_quantized, n_total, n_linear_remaining)
 
     # Size comparison
     orig_size = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
@@ -153,12 +197,68 @@ def quantize_model(model):
     return quantized
 
 
+def print_comparison(fp32_results, int8_results, label="INT8"):
+    """Print comparison table between float32 and quantized results."""
+    compare_keys = [
+        ("loss/total", "Val Loss", "{:.4f}", False),
+        ("metric/action_change_acc", "Change Acc", "{:.4f}", True),
+        ("metric/p0_action_acc", "P0 Action Acc", "{:.4f}", True),
+        ("metric/position_mae", "Position MAE", "{:.3f}", False),
+        ("metric/velocity_mae", "Velocity MAE", "{:.3f}", False),
+    ]
+
+    print(f"\n{'Metric':<20} {'Float32':>10} {label:>10} {'Delta':>10} {'Verdict':>10}")
+    print("-" * 62)
+
+    all_ok = True
+    for key, metric_label, fmt, higher_is_better in compare_keys:
+        fp32_val = fp32_results.get(key)
+        int8_val = int8_results.get(key)
+        if fp32_val is None or int8_val is None:
+            continue
+
+        delta = int8_val - fp32_val
+        if higher_is_better:
+            pct = -100 * delta / max(abs(fp32_val), 1e-8)
+        else:
+            pct = 100 * delta / max(abs(fp32_val), 1e-8)
+
+        if abs(pct) < 1:
+            verdict = "OK"
+        elif abs(pct) < 3:
+            verdict = "MILD"
+        elif abs(pct) < 5:
+            verdict = "WARN"
+        else:
+            verdict = "BAD"
+            all_ok = False
+
+        print(f"{metric_label:<20} {fmt.format(fp32_val):>10} {fmt.format(int8_val):>10} {pct:>+9.1f}% {verdict:>10}")
+
+    # Speed comparison
+    fp32_fps = fp32_results["_fps"]
+    int8_fps = int8_results["_fps"]
+    speedup = int8_fps / max(fp32_fps, 1)
+    print(f"\n{'Inference Speed':<20} {fp32_fps:>9.0f}  {int8_fps:>9.0f}   {speedup:>8.2f}x")
+    print(f"{'(frames/sec)':<20}")
+
+    print("\n" + "-" * 62)
+    if all_ok:
+        print(f"VERDICT: {label} quantization looks safe.")
+    else:
+        print(f"VERDICT: {label} shows >5% degradation on at least one metric.")
+    return all_ok
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark INT8 quantization")
     parser.add_argument("--checkpoint", required=True, help="Path to model checkpoint")
     parser.add_argument("--dataset", required=True, help="Path to parsed dataset")
     parser.add_argument("--max-games", type=int, default=500, help="Games to load for val")
     parser.add_argument("--batch-size", type=int, default=512, help="Val batch size")
+    parser.add_argument("--force-all", action="store_true",
+                        help="Force-quantize ALL linear layers (onchain mode). "
+                             "Default quantize_dynamic skips tiny layers.")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -189,66 +289,49 @@ def main():
     model_fp32 = model.to(device)
     fp32_results = run_val_pass(model_fp32, val_loader, metrics_calc, device, label="float32")
 
-    # --- INT8 quantized ---
-    print("\n=== INT8 Dynamic Quantization ===")
-    model_int8 = quantize_model(copy.deepcopy(model))
+    # --- INT8 quantized (default — skips tiny layers) ---
+    print("\n=== INT8 Dynamic Quantization (default) ===")
+    model_int8 = quantize_model(copy.deepcopy(model), force_all=False)
     model_int8 = model_int8.to(device)
     int8_results = run_val_pass(model_int8, val_loader, metrics_calc, device, label="int8")
 
-    # --- Comparison ---
     print("\n" + "=" * 70)
-    print("QUANTIZATION BENCHMARK RESULTS")
+    print("QUANTIZATION BENCHMARK — DEFAULT (skips tiny heads)")
     print("=" * 70)
+    default_ok = print_comparison(fp32_results, int8_results, label="INT8")
 
-    compare_keys = [
-        ("loss/total", "Val Loss", "{:.4f}", False),
-        ("metric/action_change_acc", "Change Acc", "{:.4f}", True),
-        ("metric/p0_action_acc", "P0 Action Acc", "{:.4f}", True),
-        ("metric/position_mae", "Position MAE", "{:.3f}", False),
-        ("metric/velocity_mae", "Velocity MAE", "{:.3f}", False),
-    ]
+    if args.force_all:
+        # --- INT8 force-all (onchain mode — every layer quantized) ---
+        print("\n\n=== INT8 Force-All Quantization (onchain mode) ===")
+        model_int8_all = quantize_model(copy.deepcopy(model), force_all=True)
+        model_int8_all = model_int8_all.to(device)
+        int8_all_results = run_val_pass(model_int8_all, val_loader, metrics_calc, device, label="int8-all")
 
-    print(f"\n{'Metric':<20} {'Float32':>10} {'INT8':>10} {'Delta':>10} {'Verdict':>10}")
-    print("-" * 62)
+        print("\n" + "=" * 70)
+        print("QUANTIZATION BENCHMARK — FORCE ALL (onchain mode, all layers INT8)")
+        print("=" * 70)
+        force_ok = print_comparison(fp32_results, int8_all_results, label="INT8-ALL")
 
-    all_ok = True
-    for key, label, fmt, higher_is_better in compare_keys:
-        fp32_val = fp32_results.get(key)
-        int8_val = int8_results.get(key)
-        if fp32_val is None or int8_val is None:
-            continue
+        # --- Delta between default and force-all ---
+        print("\n" + "=" * 70)
+        print("DELTA: force-all vs default (cost of quantizing the 4 tiny heads)")
+        print("=" * 70)
+        print_comparison(int8_results, int8_all_results, label="INT8-ALL")
 
-        delta = int8_val - fp32_val
-        if higher_is_better:
-            pct = -100 * delta / max(abs(fp32_val), 1e-8)  # negative delta = degradation
+    print("\n" + "=" * 70)
+    if not args.force_all:
+        if default_ok:
+            print("OVERALL: INT8 quantization looks safe. Train float32, quantize post-training.")
+            print("Re-run with --force-all to verify onchain mode (all layers INT8).")
         else:
-            pct = 100 * delta / max(abs(fp32_val), 1e-8)  # positive delta = degradation
-
-        if abs(pct) < 1:
-            verdict = "OK"
-        elif abs(pct) < 3:
-            verdict = "MILD"
-        elif abs(pct) < 5:
-            verdict = "WARN"
-        else:
-            verdict = "BAD"
-            all_ok = False
-
-        print(f"{label:<20} {fmt.format(fp32_val):>10} {fmt.format(int8_val):>10} {pct:>+9.1f}% {verdict:>10}")
-
-    # Speed comparison
-    fp32_fps = fp32_results["_fps"]
-    int8_fps = int8_results["_fps"]
-    speedup = int8_fps / max(fp32_fps, 1)
-    print(f"\n{'Inference Speed':<20} {fp32_fps:>9.0f}  {int8_fps:>9.0f}   {speedup:>8.2f}x")
-    print(f"{'(frames/sec)':<20}")
-
-    # Overall verdict
-    print("\n" + "-" * 62)
-    if all_ok:
-        print("VERDICT: INT8 quantization looks safe. Train in float32, quantize post-training.")
+            print("OVERALL: INT8 shows >5% degradation. Consider mixed precision or QAT.")
     else:
-        print("VERDICT: INT8 shows >5% degradation. Consider mixed precision or QAT.")
+        if default_ok and force_ok:
+            print("OVERALL: Full INT8 (all layers) looks safe for onchain. No QAT needed.")
+        elif default_ok and not force_ok:
+            print("OVERALL: Default INT8 is safe, but force-all degrades. Investigate the 4 tiny heads.")
+        else:
+            print("OVERALL: INT8 shows significant degradation. Consider QAT.")
     print("=" * 70)
 
 

@@ -126,6 +126,14 @@ Ran `benchmark_quantization.py` on `mamba2-22k-ss-ep1.pt`, 50-game val set, qnnp
 
 Script: `worldmodel/scripts/benchmark_quantization.py`
 
+**Follow-up: force-quantize all 26/26 layers (onchain mode)**
+
+The 4 skipped layers are tiny prediction heads (l_cancel: 384→3, hurtbox: 384→3, × 2 players = 4,620 params total). PyTorch skipped them as a CPU speed optimization. For onchain ephemeral rollup, ALL math must be integer — no exceptions. Added `--force-all` flag to benchmark script that force-quantizes every Linear layer to INT8, including the heads PyTorch considers too small.
+
+Decision: force INT8 everywhere (not INT32) for uniformity — one integer matmul path in the onchain verifier, not two.
+
+*Results pending — re-running benchmark with `--force-all`.*
+
 **Mamba-2 quantization notes:**
 - SSM scan ops (softplus, cumsum) are NOT in the linear layers — they survive quantization untouched
 - The 4 non-quantized layers are small prediction heads (in=384, out=3 for l_cancel/hurtbox) — `quantize_dynamic` skips very small layers where INT8 packing isn't beneficial. The heavy hitters — the 8 Mamba in_proj/out_proj layers (~70% of all params) — all got quantized.
@@ -222,9 +230,10 @@ Mattie's call: quantization first, then projectiles and 10.6M smoke test.
 
 | # | Experiment | Cost | Time | Status |
 |---|-----------|------|------|--------|
-| **1** | **PTQ on 4.3M checkpoint** | **Free** | **~30 min** | **DONE — PASS (0.1% change_acc loss)** |
-| ~~2~~ | ~~Projectile encoding test (2K)~~ | ~~$6~~ | ~~2h~~ | **BLOCKED — parser doesn't populate item data** |
-| 3 | 10.6M × 2K smoke test | ~$20 | ~3h (2ep on A100) | Ready — encoded-2k.pt exists |
+| **1a** | **PTQ on 4.3M checkpoint (default)** | **Free** | **~30 min** | **DONE — PASS (0.1% change_acc loss, 22/26 layers)** |
+| **1b** | **PTQ force-all (onchain mode)** | **Free** | **~30 min** | **RUNNING — quantize all 26/26 layers including tiny heads** |
+| ~~2~~ | ~~Projectile encoding test (2K)~~ | ~~$6~~ | ~~2h~~ | **BLOCKED — ScavieFae working on parser fix** |
+| 3 | 10.6M × 2K smoke test | ~$20 | ~35 min (2ep on A100) | **LAUNCHING** |
 
 ~~Experiments 2 and 3 can run in parallel on Modal.~~
 Experiment 3 can launch independently. Experiment 2 blocked until parser fix.
