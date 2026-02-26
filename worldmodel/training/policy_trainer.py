@@ -4,7 +4,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -150,6 +150,7 @@ class PolicyTrainer:
         save_dir: Optional[str | Path] = None,
         device: Optional[str] = None,
         resume_from: Optional[str | Path] = None,
+        epoch_callback: Optional[Callable] = None,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -189,6 +190,7 @@ class PolicyTrainer:
         self.optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=num_epochs)
         self.metrics = PolicyMetrics(loss_weights)
+        self.epoch_callback = epoch_callback
         self.history: list[dict] = []
 
         if resume_from:
@@ -272,14 +274,16 @@ class PolicyTrainer:
             if wandb and wandb.run:
                 wandb.log({**combined, "lr": self.scheduler.get_last_lr()[0]})
 
-            if self.save_dir and val_metrics:
-                val_loss = val_metrics.get("val_loss/total", float("inf"))
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    self._save_checkpoint("best.pt", epoch, val_loss)
+            if self.save_dir:
+                self._save_checkpoint("latest.pt", epoch)
+                if val_metrics:
+                    val_loss = val_metrics.get("val_loss/total", float("inf"))
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        self._save_checkpoint("best.pt", epoch, val_loss)
 
-        if self.save_dir:
-            self._save_checkpoint("final.pt", self.num_epochs - 1)
+            if self.epoch_callback:
+                self.epoch_callback()
 
         return self.history
 

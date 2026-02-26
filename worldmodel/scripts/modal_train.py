@@ -702,6 +702,186 @@ def pre_encode_parallel(
     print(f"  .venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train --encoded-file {output}")
 
 
+@app.function(
+    gpu="T4",
+    volumes={DATA_VOLUME_PATH: volume},
+    image=image,
+    timeout=43200,  # 12h — covers 3x calibrated estimate
+    secrets=[modal.Secret.from_name("wandb-key")],
+)
+def train_policy(
+    encoded_file: str = "/encoded-22k.pt",
+    epochs: int = 5,
+    batch_size: int = 1024,
+    predict_player: int = 0,
+    run_name: str = "policy-22k",
+    resume: str = "",
+):
+    """Train imitation learning policy on pre-encoded data (T4 GPU).
+
+    Usage:
+        .venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train_policy
+        .venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train_policy \\
+            --encoded-file /encoded-22k.pt --epochs 5 --run-name policy-22k
+    """
+    import sys
+    import time
+    import logging
+
+    sys.path.insert(0, "/root/nojohns")
+    sys.stdout.reconfigure(line_buffering=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    import torch
+
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"CUDA: {torch.version.cuda}")
+
+    # Load pre-encoded data
+    encoded_path = f"{DATA_VOLUME_PATH}{encoded_file}"
+    if not os.path.exists(encoded_path):
+        raise FileNotFoundError(
+            f"No encoded data at {encoded_path}. "
+            "Pre-encode first: modal run worldmodel/scripts/modal_train.py::pre_encode"
+        )
+
+    print(f"Loading {encoded_path}...")
+    t0 = time.time()
+    payload = torch.load(encoded_path, weights_only=False)
+    print(f"Loaded in {time.time() - t0:.1f}s")
+    print(f"  Floats: {payload['floats'].shape}")
+    print(f"  Ints: {payload['ints'].shape}")
+    print(f"  Games: {payload['num_games']}")
+
+    from worldmodel.data.dataset import MeleeDataset
+    from worldmodel.data.policy_dataset import PolicyFrameDataset
+    from worldmodel.model.encoding import EncodingConfig
+    from worldmodel.model.policy_mlp import PolicyMLP
+    from worldmodel.training.policy_trainer import PolicyTrainer
+
+    enc_cfg_dict = payload.get("encoding_config", {})
+    enc_cfg = EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None})
+
+    # Build MeleeDataset from pre-encoded tensors (same as world model train)
+    dataset = MeleeDataset.from_tensors(
+        floats=payload["floats"],
+        ints=payload["ints"],
+        game_offsets=payload["game_offsets"],
+        game_lengths=payload["game_lengths"],
+        num_games=payload["num_games"],
+        cfg=enc_cfg,
+    )
+
+    # Split by game boundaries (90/10)
+    train_split = 0.9
+    n_games = dataset.num_games
+    split_idx = int(n_games * train_split)
+    train_range = range(0, split_idx)
+    val_range = range(split_idx, n_games)
+
+    context_len = 10
+    train_ds = PolicyFrameDataset(dataset, train_range, context_len=context_len, predict_player=predict_player, cfg=enc_cfg)
+    val_ds = PolicyFrameDataset(dataset, val_range, context_len=context_len, predict_player=predict_player, cfg=enc_cfg)
+    print(f"Train: {len(train_ds)} examples, Val: {len(val_ds)} examples")
+
+    # Build model
+    model = PolicyMLP(
+        cfg=enc_cfg,
+        context_len=context_len,
+        hidden_dim=512,
+        trunk_dim=256,
+        dropout=0.1,
+    )
+    param_count = sum(p.numel() for p in model.parameters())
+    print(f"PolicyMLP: {param_count:,} params")
+
+    # wandb
+    try:
+        import wandb
+        wandb.init(
+            project="melee-worldmodel",
+            name=run_name,
+            tags=["policy", "imitation"],
+            config={
+                "model_type": "policy_mlp",
+                "params": param_count,
+                "context_len": context_len,
+                "data": {
+                    "num_games_loaded": n_games,
+                    "predict_player": predict_player,
+                    "encoded_file": encoded_file,
+                },
+                "training": {
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "lr": 1e-3,
+                },
+            },
+        )
+        print(f"wandb: {wandb.run.url}")
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"WARNING: wandb init failed: {e}")
+        print(f"Training will continue WITHOUT monitoring.")
+        print(f"{'='*60}\n")
+
+    # Checkpoint setup
+    save_dir = f"{CHECKPOINT_DIR}/{run_name}"
+    os.makedirs(save_dir, exist_ok=True)
+
+    resume_path = None
+    if resume:
+        resume_path = f"{CHECKPOINT_DIR}/{resume}"
+        if not os.path.exists(resume_path):
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        print(f"Resuming from: {resume_path}")
+
+    def commit_checkpoints():
+        volume.commit()
+        print("Checkpoints committed to volume.")
+
+    trainer = PolicyTrainer(
+        model=model,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        lr=1e-3,
+        weight_decay=1e-5,
+        batch_size=batch_size,
+        num_epochs=epochs,
+        save_dir=save_dir,
+        device="cuda",
+        resume_from=resume_path,
+        epoch_callback=commit_checkpoints,
+    )
+
+    print(f"Training {epochs} epochs on {torch.cuda.get_device_name(0)}...")
+    history = trainer.train()
+
+    volume.commit()
+    print("Final checkpoints committed to volume.")
+
+    if history:
+        final = history[-1]
+        print(f"\n=== DONE ===")
+        print(f"Final loss: {final.get('loss/total', 0):.4f}")
+        print(f"Stick MAE: {final.get('metric/stick_mae', 0):.4f}")
+        btn_pressed = final.get('metric/button_pressed_acc', final.get('val_metric/button_pressed_acc', 0))
+        print(f"Button pressed acc: {btn_pressed:.3f}")
+        if 'val_loss/total' in final:
+            print(f"Val loss: {final['val_loss/total']:.4f}")
+
+    if wandb and wandb.run:
+        wandb.finish()
+
+    volume.commit()
+    print("Done. Download checkpoint with:")
+    print(f"  .venv/bin/modal volume get melee-training-data /checkpoints/{run_name}/best.pt worldmodel/checkpoints/{run_name}/best.pt")
+
+
 @app.local_entrypoint()
 def sweep(
     config: str = "worldmodel/experiments/mamba2-medium-gpu.yaml",
