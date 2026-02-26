@@ -97,7 +97,11 @@ def main():
 
     save_dir = args.save_dir or "worldmodel/checkpoints/policy"
 
-    enc_cfg = EncodingConfig()
+    # Build encoding config from YAML if provided, otherwise default
+    enc_cfg_dict = {}
+    if args.config:
+        enc_cfg_dict = cfg.get("encoding", {})
+    enc_cfg = EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None})
 
     # Load data
     logging.info("Loading games from %s", args.dataset)
@@ -126,11 +130,13 @@ def main():
         dataset, range(0, split_idx),
         context_len=context_len,
         predict_player=args.predict_player,
+        cfg=enc_cfg,
     )
     val_ds = PolicyFrameDataset(
         dataset, range(split_idx, dataset.num_games),
         context_len=context_len,
         predict_player=args.predict_player,
+        cfg=enc_cfg,
     )
 
     logging.info("Train: %d examples, Val: %d examples", len(train_ds), len(val_ds))
@@ -189,7 +195,10 @@ def main():
     elif not wandb:
         logging.info("wandb not installed — logging to file only")
 
-    loss_weights = PolicyLossWeights(**loss_cfg) if loss_cfg else None
+    # Filter to only PolicyLossWeights fields (ignore world model loss keys)
+    policy_loss_keys = {"analog", "button"}
+    policy_loss_cfg = {k: v for k, v in loss_cfg.items() if k in policy_loss_keys}
+    loss_weights = PolicyLossWeights(**policy_loss_cfg) if policy_loss_cfg else None
 
     trainer = PolicyTrainer(
         model=model,

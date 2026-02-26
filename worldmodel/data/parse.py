@@ -61,6 +61,22 @@ class PlayerFrame:
 
 
 @dataclass
+class FrameItems:
+    """Item/projectile state for all 15 slots across all frames.
+
+    In Melee, "items" includes projectiles (Fox laser, Samus charge shot,
+    Link arrows, etc.) — anything that exists as a separate entity on stage.
+    Each slot tracks one item's existence, type, state, and position per frame.
+    """
+
+    exists: np.ndarray   # (T, 15) float32 — 1.0 if active
+    type_id: np.ndarray  # (T, 15) int64 — item type
+    state: np.ndarray    # (T, 15) int64 — item state
+    x: np.ndarray        # (T, 15) float32 — x position
+    y: np.ndarray        # (T, 15) float32 — y position
+
+
+@dataclass
 class ParsedGame:
     """A single parsed game with both players' frame data."""
 
@@ -70,6 +86,7 @@ class ParsedGame:
     num_frames: int
     # Metadata (optional, for filtering)
     meta: Optional[dict] = None
+    items: Optional[FrameItems] = None
 
 
 def _safe_field(struct_array, name: str, num_frames: int, dtype=np.float32) -> np.ndarray:
@@ -169,6 +186,28 @@ def _extract_player(struct_array, num_frames: int) -> PlayerFrame:
     )
 
 
+NUM_ITEM_SLOTS = 15
+
+
+def _extract_items(items_struct, num_frames: int) -> FrameItems:
+    """Extract flat numpy arrays for all 15 item slots from a PyArrow StructArray."""
+    exists = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.float32)
+    type_id = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.int64)
+    state = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.int64)
+    x = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.float32)
+    y = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.float32)
+
+    for i in range(NUM_ITEM_SLOTS):
+        slot = items_struct.field(f"item_{i}")
+        exists[:, i] = np.array(slot.field("exists").to_pylist(), dtype=np.float32)
+        type_id[:, i] = np.array(slot.field("type").to_pylist(), dtype=np.int64)
+        state[:, i] = np.array(slot.field("state").to_pylist(), dtype=np.int64)
+        x[:, i] = np.array(slot.field("x").to_pylist(), dtype=np.float32)
+        y[:, i] = np.array(slot.field("y").to_pylist(), dtype=np.float32)
+
+    return FrameItems(exists=exists, type_id=type_id, state=state, x=x, y=y)
+
+
 def load_game(path: str | Path, compression: str = "zlib") -> ParsedGame:
     """Load a single parsed game file (zlib-compressed parquet).
 
@@ -196,7 +235,14 @@ def load_game(path: str | Path, compression: str = "zlib") -> ParsedGame:
     # Stage is constant across all frames — take first value
     stage = root.field("stage")[0].as_py()
 
-    return ParsedGame(p0=p0, p1=p1, stage=stage, num_frames=num_frames)
+    # Items/projectiles (15 slots — Fox laser, Samus charge shot, etc.)
+    items = None
+    try:
+        items = _extract_items(root.field("items"), num_frames)
+    except Exception:
+        pass  # Old schema without items field
+
+    return ParsedGame(p0=p0, p1=p1, stage=stage, num_frames=num_frames, items=items)
 
 
 def load_games_from_dir(

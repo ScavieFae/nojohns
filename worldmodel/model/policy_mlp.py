@@ -3,6 +3,8 @@
 Same embedding structure and trunk as the world model (FrameStackMLP),
 but with controller prediction heads instead of state prediction heads.
 
+Config-driven: works with any EncodingConfig (including state_age_as_embed).
+
 Input: K frames of full game state (state + controller history)
 Output: predicted controller for the target player on the next frame
   - analog: (5,) — main_x, main_y, c_x, c_y, shoulder [0, 1]
@@ -45,14 +47,20 @@ class PolicyMLP(nn.Module):
         self.ground_embed = nn.Embedding(cfg.ground_vocab, cfg.ground_embed_dim)
         self.last_attack_embed = nn.Embedding(cfg.last_attack_vocab, cfg.last_attack_embed_dim)
 
-        # Same per-frame dim as world model: 58 + 120 + 4 = 182
+        if cfg.state_age_as_embed:
+            self.state_age_embed = nn.Embedding(cfg.state_age_embed_vocab, cfg.state_age_embed_dim)
+
+        # Per-frame dim: floats + embeddings
         float_per_frame = cfg.float_per_player * 2
-        embed_per_frame = (
-            2 * (cfg.action_embed_dim + cfg.jumps_embed_dim + cfg.character_embed_dim
-                 + cfg.l_cancel_embed_dim + cfg.hurtbox_embed_dim
-                 + cfg.ground_embed_dim + cfg.last_attack_embed_dim)
-            + cfg.stage_embed_dim
+        embed_per_player = (
+            cfg.action_embed_dim + cfg.jumps_embed_dim + cfg.character_embed_dim
+            + cfg.l_cancel_embed_dim + cfg.hurtbox_embed_dim
+            + cfg.ground_embed_dim + cfg.last_attack_embed_dim
         )
+        if cfg.state_age_as_embed:
+            embed_per_player += cfg.state_age_embed_dim
+        embed_per_frame = 2 * embed_per_player + cfg.stage_embed_dim
+
         self.frame_dim = float_per_frame + embed_per_frame
         input_dim = self.frame_dim * context_len
 
@@ -67,9 +75,7 @@ class PolicyMLP(nn.Module):
         )
 
         # Controller prediction heads
-        # Analog: main_stick x/y, c_stick x/y, shoulder — continuous [0, 1]
         self.analog_head = nn.Linear(trunk_dim, ANALOG_DIM)
-        # Buttons: A, B, X, Y, Z, L, R, D_UP — binary logits
         self.button_head = nn.Linear(trunk_dim, BUTTON_DIM)
 
     def forward(
@@ -80,17 +86,19 @@ class PolicyMLP(nn.Module):
         """Forward pass.
 
         Args:
-            float_ctx: (B, K, 58) — context frames (full state + controller history)
-            int_ctx:   (B, K, 15) — context categoricals
+            float_ctx: (B, K, float_per_player*2) — context frames
+            int_ctx:   (B, K, int_per_frame) — context categoricals
 
         Returns:
             Dict with:
                 analog_pred: (B, 5) — predicted stick/trigger values (sigmoid, [0,1])
-                button_logits: (B, 8) — predicted button logits (raw, for BCEWithLogitsLoss)
+                button_logits: (B, 8) — predicted button logits (raw)
         """
         B, K, _ = float_ctx.shape
+        cfg = self.cfg
+        ipp = cfg.int_per_player
 
-        # Embed categoricals (identical to world model)
+        # Embed categoricals — config-driven column indices
         p0_action_emb = self.action_embed(int_ctx[:, :, 0])
         p0_jumps_emb = self.jumps_embed(int_ctx[:, :, 1])
         p0_char_emb = self.character_embed(int_ctx[:, :, 2])
@@ -98,24 +106,39 @@ class PolicyMLP(nn.Module):
         p0_hb_emb = self.hurtbox_embed(int_ctx[:, :, 4])
         p0_gnd_emb = self.ground_embed(int_ctx[:, :, 5])
         p0_la_emb = self.last_attack_embed(int_ctx[:, :, 6])
-        p1_action_emb = self.action_embed(int_ctx[:, :, 7])
-        p1_jumps_emb = self.jumps_embed(int_ctx[:, :, 8])
-        p1_char_emb = self.character_embed(int_ctx[:, :, 9])
-        p1_lc_emb = self.l_cancel_embed(int_ctx[:, :, 10])
-        p1_hb_emb = self.hurtbox_embed(int_ctx[:, :, 11])
-        p1_gnd_emb = self.ground_embed(int_ctx[:, :, 12])
-        p1_la_emb = self.last_attack_embed(int_ctx[:, :, 13])
-        stage_emb = self.stage_embed(int_ctx[:, :, 14])
 
-        frame_enc = torch.cat([
+        p1_action_emb = self.action_embed(int_ctx[:, :, ipp])
+        p1_jumps_emb = self.jumps_embed(int_ctx[:, :, ipp + 1])
+        p1_char_emb = self.character_embed(int_ctx[:, :, ipp + 2])
+        p1_lc_emb = self.l_cancel_embed(int_ctx[:, :, ipp + 3])
+        p1_hb_emb = self.hurtbox_embed(int_ctx[:, :, ipp + 4])
+        p1_gnd_emb = self.ground_embed(int_ctx[:, :, ipp + 5])
+        p1_la_emb = self.last_attack_embed(int_ctx[:, :, ipp + 6])
+
+        stage_emb = self.stage_embed(int_ctx[:, :, ipp * 2])
+
+        embed_parts = [
             float_ctx,
             p0_action_emb, p0_jumps_emb, p0_char_emb,
             p0_lc_emb, p0_hb_emb, p0_gnd_emb, p0_la_emb,
+        ]
+
+        if cfg.state_age_as_embed:
+            p0_sa_emb = self.state_age_embed(int_ctx[:, :, 7])
+            p1_sa_emb = self.state_age_embed(int_ctx[:, :, ipp + 7])
+            embed_parts.append(p0_sa_emb)
+
+        embed_parts.extend([
             p1_action_emb, p1_jumps_emb, p1_char_emb,
             p1_lc_emb, p1_hb_emb, p1_gnd_emb, p1_la_emb,
-            stage_emb,
-        ], dim=-1)
+        ])
 
+        if cfg.state_age_as_embed:
+            embed_parts.append(p1_sa_emb)
+
+        embed_parts.append(stage_emb)
+
+        frame_enc = torch.cat(embed_parts, dim=-1)
         x = frame_enc.reshape(B, -1)
         h = self.trunk(x)
 

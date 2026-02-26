@@ -53,8 +53,9 @@ def _encode_game(game: ParsedGame, cfg: EncodingConfig) -> tuple[torch.Tensor, t
         frame_float: (T, float_per_player*2) — continuous + binary + controller per player
         frame_int: (T, int_per_frame) — categoricals per player + stage
     """
-    p0 = encode_player_frames(game.p0, cfg)
-    p1 = encode_player_frames(game.p1, cfg)
+    items = game.items if cfg.projectiles else None
+    p0 = encode_player_frames(game.p0, cfg, items=items)
+    p1 = encode_player_frames(game.p1, cfg, items=items)
     T = game.num_frames
 
     # Float: [continuous, binary(3), controller(13)] per player

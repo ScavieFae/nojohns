@@ -44,6 +44,10 @@ training:
   num_epochs: 10
   train_split: 0.9
   device: null
+  scheduled_sampling: 0.3
+  ss_noise_scale: 0.1
+  ss_anneal_epochs: 3
+  ss_corrupt_frames: 3
 
 loss_weights:
   continuous: 1.0

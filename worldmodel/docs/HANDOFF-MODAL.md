@@ -131,6 +131,122 @@ The conservative bet (parallel K10/K60 on 22K, ~$61) is the right call. Decision
 
 ---
 
+## Review Request: Sprint Changes (Feb 26, afternoon)
+
+**Scav → ScavieFae**: 10 files changed, 325 insertions. Two new features plus infra fixes from the hackathon sprint. Need a second set of eyes before we launch the next GPU run — these changes affect training, encoding, and rollout.
+
+### What changed (5 features, grouped by risk)
+
+#### HIGH — affects training correctness
+
+**1. Scheduled sampling** (`trainer.py`, `modal_train.py`, `mamba2-medium-gpu.yaml`)
+
+Teaches robustness to autoregressive drift by corrupting context frames during training.
+
+- `_corrupt_context()` method: adds Gaussian noise to continuous state values in last N context frames
+- Per-sample mask (not every sample gets corrupted)
+- Annealing: rate and noise scale ramp from 0 to target over `ss_anneal_epochs`
+- Skips epoch 0 entirely (clean first epoch)
+- Config: `scheduled_sampling=0.3`, `ss_noise_scale=0.1`, `ss_anneal_epochs=3`, `ss_corrupt_frames=3`
+- `modal_train.py` now reads these from YAML and passes to Trainer
+
+**Review questions:**
+- Is the noise scale 0.1 reasonable? Context values are normalized (xy ×0.05, percent ×0.01) — 0.1 noise on top of 0.05-scale values is ~2 game units of position noise. Too much? Too little?
+- The corruption only touches `continuous_dim` values (positions, velocities, dynamics). Never touches controller data or binary flags. Is that the right boundary?
+- Annealing ramps linearly. Should it be cosine or exponential instead?
+
+**What I HAVEN'T tested:** Never ran even 1 epoch with SS enabled. The logic is in place but I haven't verified it fires correctly or that loss still converges.
+
+#### MEDIUM — new encoding dimensions
+
+**2. Projectile encoding** (`parse.py`, `encoding.py`, `dataset.py`)
+
+Infrastructure for item/projectile data (Fox laser, Samus charge shot, etc). Behind `projectiles: bool = False` flag.
+
+- `parse.py`: New `FrameItems` dataclass, `_extract_items()` reads 15 item slots from parquet
+- `encoding.py`: Per-player features when enabled: `nearest_dx`, `nearest_dy`, `n_active` (3 extra floats per player)
+- `dataset.py`: Passes items through to encoding when flag is True
+- Dimensions flow automatically: `continuous_dim` increases by 3 per player, all downstream math updates
+
+**Review questions:**
+- The model doesn't predict projectile features — they're input-only. During autoregressive rollout, predicted frames won't have projectile data to feed back as context. Is this OK? (Current answer: yes, because items are all zeros in current data. But when we train on ranked data with active projectiles, this becomes a real gap.)
+- Should nearest-item distance use `xy_scale` (0.05) normalization? Or a different scale? Items can be far away.
+- I compute nearest item per player independently. Two players could have the same "nearest item." That's correct game-mechanically (a projectile between two characters threatens both) but worth flagging.
+
+**Critical fact:** All 15 item slots are inactive in all 200 games I checked from the current 22K dataset. This encoding adds zero information to current training. It's pure infrastructure for ranked data.
+
+#### MEDIUM — policy + rollout fixes
+
+**3. Config-driven PolicyMLP** (`policy_mlp.py`, `policy_dataset.py`, `train_policy.py`)
+
+Fixed hardcoded dimension assumptions that broke with `state_age_as_embed=True`.
+
+- PolicyMLP: Uses `cfg.int_per_player` for column indices instead of hardcoded 7. Conditionally adds state_age embedding.
+- PolicyFrameDataset: Computes controller offset from `cfg.continuous_dim + cfg.binary_dim` instead of hardcoded 16. Accepts `cfg` parameter.
+- train_policy.py: Builds EncodingConfig from YAML, filters loss_weights to only `{analog, button}` (was passing world model keys like `continuous`, `velocity` → TypeError).
+
+**Review question:** The int column indexing in PolicyMLP (`int_ctx[:, :, ipp]` for p1_action) — does this match the int tensor layout in `_encode_game()`? The layout is: `[p0: action, jumps, char, l_cancel, hurtbox, ground, last_attack, (state_age_int)], [p1: same], stage`. So p1's action is at index `ipp` where `ipp = cfg.int_per_player` (7 or 8). This should be correct but is load-bearing.
+
+**4. Rollout clamping** (`rollout.py`)
+
+Clamps predicted frames to valid game ranges before they enter the simulation buffer.
+
+- `CLAMP_RANGES` dict: percent 0-999, x ±300, y -200 to 300, shield 0-60, stocks 0-4, etc.
+- `clamp_frame()`: applies clamping in normalized tensor space (multiplies ranges by scale factors)
+- Called after model prediction, before appending to simulation buffer
+
+**Review question:** I clamp `stocks` to [0, 4] in normalized space (`0.0, 1.0` after ×0.25 scaling). But stocks is in the dynamics head output, which the model predicts as absolute values. Is clamping stocks at the normalized level correct, or should it be in game units?
+
+#### LOW — wiring only
+
+**5. Checkpoint resume in modal_train.py**
+
+`resume: str = ""` param on `train()`, resolves path from `CHECKPOINT_DIR`, passes to Trainer's existing `resume_from`. (This was ScavieFae's suggestion from the previous review.)
+
+### Files changed
+
+| File | Lines | What |
+|------|-------|------|
+| `training/trainer.py` | +67 | Scheduled sampling (params, `_corrupt_context()`, epoch arg) |
+| `scripts/modal_train.py` | +21 | SS config passthrough, checkpoint resume |
+| `model/encoding.py` | +56 | Projectile config flag, dims, encoding |
+| `data/parse.py` | +48 | `FrameItems`, `_extract_items()`, items in `load_game()` |
+| `data/dataset.py` | +5 | Pass items through to encode |
+| `model/policy_mlp.py` | +71/-9 | Config-driven embeddings + state_age |
+| `data/policy_dataset.py` | +43/-8 | Config-driven controller offset |
+| `scripts/train_policy.py` | +13 | YAML config, loss_weights filter |
+| `scripts/rollout.py` | +57 | `clamp_frame()`, `CLAMP_RANGES` |
+| `experiments/mamba2-medium-gpu.yaml` | +4 | SS config values |
+
+### Validation gaps (things I know I haven't tested)
+
+1. **Scheduled sampling under load** — never ran training with it. `_corrupt_context()` is untested beyond "it doesn't crash when called with all-zero tensors."
+2. **Projectile encoding with active items** — all current items are inactive. Never fabricated synthetic active items to verify nearest-item math.
+3. **Model forward pass with projectile dimensions** — dataset returns wider tensors when `projectiles=True`, but I never pushed them through Mamba2 or MLP. The input projection may break on dimension mismatch.
+4. **Rollout feedback with projectiles** — projectile features are context-only (not predicted). During autoregressive rollout, those columns would be zero in predicted frames, creating a train/infer mismatch.
+
+### How to validate
+
+```bash
+# 1. Scheduled sampling smoke test (CPU, ~60s)
+.venv/bin/python -m worldmodel.scripts.train --dataset ~/claude-projects/nojohns-training/data/parsed-v2 \
+  --config worldmodel/experiments/mamba2-medium-gpu.yaml --max-games 50 --epochs 3 --device cpu --no-wandb
+
+# 2. Verify encoding dimensions round-trip
+.venv/bin/python -c "
+from worldmodel.model.encoding import EncodingConfig
+for proj in [False, True]:
+    cfg = EncodingConfig(state_age_as_embed=True, projectiles=proj)
+    print(f'projectiles={proj}: continuous={cfg.continuous_dim} float/player={cfg.float_per_player} float/frame={cfg.float_per_player*2}')
+"
+
+# 3. Policy training with state_age_as_embed (verifies PolicyMLP + PolicyFrameDataset)
+.venv/bin/python -m worldmodel.scripts.train_policy --dataset ~/claude-projects/nojohns-training/data/parsed-v2 \
+  --config worldmodel/experiments/mamba2-medium-gpu.yaml --max-games 50 --epochs 2 --no-wandb
+```
+
+---
+
 ## History: Original Code Review (all items resolved)
 
 ### Code Fixes (all done)

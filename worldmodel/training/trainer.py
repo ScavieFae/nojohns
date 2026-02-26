@@ -52,6 +52,10 @@ class Trainer:
         rollout_every_n: int = 5,
         rollout_games: int = 3,
         num_workers: Optional[int] = None,
+        scheduled_sampling: float = 0.0,
+        ss_noise_scale: float = 0.1,
+        ss_anneal_epochs: int = 3,
+        ss_corrupt_frames: int = 3,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -108,6 +112,18 @@ class Trainer:
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=num_epochs)
         self.metrics = MetricsTracker(cfg, loss_weights)
         self.history: list[dict] = []
+
+        # Scheduled sampling: corrupt context frames with noise to teach
+        # robustness to autoregressive drift. Anneals from 0 to target rate.
+        self.ss_rate = scheduled_sampling
+        self.ss_noise_scale = ss_noise_scale
+        self.ss_anneal_epochs = ss_anneal_epochs
+        self.ss_corrupt_frames = ss_corrupt_frames
+        if self.ss_rate > 0:
+            logger.info(
+                "Scheduled sampling: rate=%.2f, noise_scale=%.3f, anneal=%d epochs, corrupt=%d frames",
+                self.ss_rate, self.ss_noise_scale, self.ss_anneal_epochs, self.ss_corrupt_frames,
+            )
 
         # Shape preflight: pull one batch and verify dims match config
         self._verify_shapes(train_dataset)
@@ -174,7 +190,51 @@ class Trainer:
             K, expected_float, K, expected_int, expected_ctrl,
         )
 
-    def _train_epoch(self) -> dict[str, float]:
+    def _corrupt_context(self, float_ctx: torch.Tensor, epoch: int) -> torch.Tensor:
+        """Apply scheduled sampling: add noise to the last N context frames.
+
+        Simulates autoregressive drift by corrupting the continuous state values
+        (positions, velocities, dynamics) in recent context frames. The model
+        learns to produce physically coherent predictions even when context is
+        imperfect — which is exactly what it faces during rollout.
+
+        Only corrupts continuous state values (percent, x, y, shield, velocities,
+        dynamics). Never touches controller data or binary flags.
+        """
+        if self.ss_rate <= 0 or epoch < 1:
+            return float_ctx
+
+        # Anneal: ramp from 0 to target rate over ss_anneal_epochs
+        rate = self.ss_rate * min(1.0, epoch / self.ss_anneal_epochs)
+
+        B, K, F = float_ctx.shape
+        fp = self.cfg.float_per_player
+        cd = self.cfg.continuous_dim
+        n_corrupt = min(self.ss_corrupt_frames, K)
+
+        # Per-sample mask: which samples get corrupted
+        sample_mask = torch.rand(B, device=float_ctx.device) < rate  # (B,)
+        if not sample_mask.any():
+            return float_ctx
+
+        # Noise scale ramps with the anneal too
+        noise_scale = self.ss_noise_scale * min(1.0, epoch / self.ss_anneal_epochs)
+
+        # Clone to avoid corrupting the original tensor
+        float_ctx = float_ctx.clone()
+
+        # Corrupt the last n_corrupt frames' continuous values for both players
+        for frame_offset in range(K - n_corrupt, K):
+            for player_offset in [0, fp]:
+                noise = torch.randn(B, cd, device=float_ctx.device) * noise_scale
+                # Only apply to samples selected by the mask
+                float_ctx[sample_mask, frame_offset, player_offset:player_offset + cd] += (
+                    noise[sample_mask]
+                )
+
+        return float_ctx
+
+    def _train_epoch(self, epoch: int = 0) -> dict[str, float]:
         self.model.train()
         epoch_metrics = EpochMetrics()
         num_batches = len(self.train_loader)
@@ -186,6 +246,9 @@ class Trainer:
             next_ctrl = next_ctrl.to(self.device)
             float_tgt = float_tgt.to(self.device)
             int_tgt = int_tgt.to(self.device)
+
+            # Scheduled sampling: corrupt context to teach robustness
+            float_ctx = self._corrupt_context(float_ctx, epoch)
 
             self.optimizer.zero_grad()
             predictions = self.model(float_ctx, int_ctx, next_ctrl)
@@ -320,7 +383,7 @@ class Trainer:
 
         for epoch in range(self.start_epoch, self.num_epochs):
             t0 = time.time()
-            train_metrics = self._train_epoch()
+            train_metrics = self._train_epoch(epoch=epoch)
             val_metrics = self._val_epoch()
             self.scheduler.step()
 

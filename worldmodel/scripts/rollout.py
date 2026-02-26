@@ -39,6 +39,60 @@ from worldmodel.scripts.generate_demo import load_model_from_checkpoint
 logger = logging.getLogger(__name__)
 
 
+# Valid game state ranges (in normalized/scaled units)
+CLAMP_RANGES = {
+    "percent": (0.0, 999.0),
+    "x": (-300.0, 300.0),  # well outside any blast zone
+    "y": (-200.0, 300.0),
+    "shield": (0.0, 60.0),
+    "stocks": (0.0, 4.0),
+    "hitlag": (0.0, 50.0),
+    "combo_count": (0.0, 50.0),
+}
+
+
+def clamp_frame(
+    next_float: torch.Tensor,
+    cfg: EncodingConfig,
+) -> torch.Tensor:
+    """Clamp predicted frame values to physically valid ranges.
+
+    Prevents obviously wrong rollouts (negative stocks, 2000% damage, etc).
+    Operates in-place on normalized/scaled tensor values.
+    """
+    fp = cfg.float_per_player
+    cd = cfg.continuous_dim
+
+    for player_offset in [0, fp]:
+        # percent (index 0)
+        lo, hi = CLAMP_RANGES["percent"]
+        next_float[player_offset + 0].clamp_(lo * cfg.percent_scale, hi * cfg.percent_scale)
+        # x (index 1)
+        lo, hi = CLAMP_RANGES["x"]
+        next_float[player_offset + 1].clamp_(lo * cfg.xy_scale, hi * cfg.xy_scale)
+        # y (index 2)
+        lo, hi = CLAMP_RANGES["y"]
+        next_float[player_offset + 2].clamp_(lo * cfg.xy_scale, hi * cfg.xy_scale)
+        # shield (index 3)
+        lo, hi = CLAMP_RANGES["shield"]
+        next_float[player_offset + 3].clamp_(lo * cfg.shield_scale, hi * cfg.shield_scale)
+
+        # dynamics (stocks, hitlag, combo) — position depends on state_age_as_embed
+        vel_end = cfg.core_continuous_dim + cfg.velocity_dim
+        dyn_start = vel_end + (0 if cfg.state_age_as_embed else 1)
+        # hitlag
+        lo, hi = CLAMP_RANGES["hitlag"]
+        next_float[player_offset + dyn_start].clamp_(lo * cfg.hitlag_scale, hi * cfg.hitlag_scale)
+        # stocks
+        lo, hi = CLAMP_RANGES["stocks"]
+        next_float[player_offset + dyn_start + 1].clamp_(lo * cfg.stocks_scale, hi * cfg.stocks_scale)
+        # combo_count
+        lo, hi = CLAMP_RANGES["combo_count"]
+        next_float[player_offset + dyn_start + 2].clamp_(lo * cfg.combo_count_scale, hi * cfg.combo_count_scale)
+
+    return next_float
+
+
 def decode_continuous(normalized: torch.Tensor, cfg: EncodingConfig) -> dict:
     """Decode a player's continuous floats back to game units.
 
@@ -244,6 +298,9 @@ def rollout(
                     next_float[sa_idx] += 1.0 * cfg.state_age_scale
                 else:
                     next_float[sa_idx] = 0.0
+
+        # Clamp to valid ranges before appending
+        next_float = clamp_frame(next_float, cfg)
 
         # Append to simulation
         sim_floats = torch.cat([sim_floats, next_float.unsqueeze(0)], dim=0)

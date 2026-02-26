@@ -25,7 +25,7 @@ import torch
 import torch.nn as nn
 
 if TYPE_CHECKING:
-    from worldmodel.data.parse import PlayerFrame
+    from worldmodel.data.parse import FrameItems, PlayerFrame
 
 
 # --- Encoding config ---
@@ -70,18 +70,21 @@ class EncodingConfig:
     state_age_embed_dim: int = 8
     press_events: bool = False  # Exp 2a: 16 binary features for newly-pressed buttons
     lookahead: int = 0  # Exp 3a: predict frame t+d given ctrl(t) through ctrl(t+d)
+    projectiles: bool = False  # Exp 4: item/projectile encoding (per-player nearest)
 
-    # Derived dimensions (per player, default / state_age_as_embed)
+    # Derived dimensions (per player, default / state_age_as_embed / projectiles)
     # core_continuous: percent, x, y, shield = 4
     # velocity: speed_air_x, speed_y, speed_ground_x, speed_attack_x, speed_attack_y = 5
     # dynamics: [state_age], hitlag, stocks = 3 or 2 (state_age moves to embedding)
     # combat_continuous: combo_count = 1
+    # projectile_continuous: [nearest_dx, nearest_dy, n_active] = 0 or 3
     # binary: facing, invulnerable, on_ground = 3
     # controller: main_x, main_y, c_x, c_y, shoulder, 8 buttons = 13
     # embeddings: action(32) + jumps(4) + character(8) + l_cancel(2) + hurtbox(2) +
     #             ground(4) + last_attack(8) [+ state_age(8)] = 60 or 68
     # Default:          29 + 60 = 89 per player, 89*2 + 4 = 182 per frame
     # state_age_embed:  28 + 68 = 96 per player, 96*2 + 4 = 196 per frame
+    # + projectiles:    +3 per player (nearest item dx, dy, active count)
 
     @property
     def core_continuous_dim(self) -> int:
@@ -101,9 +104,14 @@ class EncodingConfig:
         return 1  # combo_count
 
     @property
+    def projectile_continuous_dim(self) -> int:
+        return 3 if self.projectiles else 0  # nearest_dx, nearest_dy, n_active
+
+    @property
     def continuous_dim(self) -> int:
         return (self.core_continuous_dim + self.velocity_dim
-                + self.dynamics_dim + self.combat_continuous_dim)  # 13
+                + self.dynamics_dim + self.combat_continuous_dim
+                + self.projectile_continuous_dim)
 
     @property
     def binary_dim(self) -> int:
@@ -168,11 +176,15 @@ class EncodingConfig:
 # --- Tensor encoding (numpy → torch, no learned params) ---
 
 
-def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torch.Tensor]:
+def encode_player_frames(
+    pf: PlayerFrame,
+    cfg: EncodingConfig,
+    items: Optional[FrameItems] = None,
+) -> dict[str, torch.Tensor]:
     """Convert a PlayerFrame's numpy arrays into normalized torch tensors.
 
     Returns dict with keys:
-        continuous: (T, continuous_dim) — core + velocity + dynamics + combat_continuous
+        continuous: (T, continuous_dim) — core + velocity + dynamics + combat + [projectile]
         binary: (T, 3) — [facing, invulnerable, on_ground]
         controller: (T, 13) — [main_x, main_y, c_x, c_y, shoulder, A..D_UP]
         action: (T,) — int64 action indices
@@ -183,6 +195,10 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
         ground: (T,) — int64 ground surface ID
         last_attack_landed: (T,) — int64 last attack ID
         state_age_int: (T,) — int64 (only when cfg.state_age_as_embed)
+
+    Args:
+        items: Frame-level item data. When cfg.projectiles is True and items
+               is provided, computes per-player nearest-item features.
     """
     T = len(pf.percent)
 
@@ -209,6 +225,36 @@ def encode_player_frames(pf: PlayerFrame, cfg: EncodingConfig) -> dict[str, torc
         # Combat continuous
         pf.combo_count * cfg.combo_count_scale,
     ])
+
+    # Projectile features: nearest active item relative to this player
+    if cfg.projectiles:
+        if items is not None and items.exists.any():
+            active = items.exists.astype(bool)  # (T, 15)
+            n_active = active.sum(axis=1).astype(np.float32)  # (T,)
+
+            # Distance from this player to each item
+            dx = items.x - pf.x[:, None]  # (T, 15)
+            dy = items.y - pf.y[:, None]  # (T, 15)
+            dist = np.sqrt(dx**2 + dy**2)  # (T, 15)
+
+            # Mask inactive items with large distance
+            dist_masked = np.where(active, dist, 1e6)
+            nearest_idx = dist_masked.argmin(axis=1)  # (T,)
+
+            # Gather nearest item's dx, dy
+            t_idx = np.arange(T)
+            has_any = n_active > 0
+            nearest_dx = np.where(has_any, dx[t_idx, nearest_idx], 0.0).astype(np.float32)
+            nearest_dy = np.where(has_any, dy[t_idx, nearest_idx], 0.0).astype(np.float32)
+
+            cont_cols.append(nearest_dx * cfg.xy_scale)
+            cont_cols.append(nearest_dy * cfg.xy_scale)
+            cont_cols.append(n_active * 0.1)  # scale: typically 0-3 items
+        else:
+            # No items data or no active items — zeros
+            cont_cols.append(np.zeros(T, dtype=np.float32))
+            cont_cols.append(np.zeros(T, dtype=np.float32))
+            cont_cols.append(np.zeros(T, dtype=np.float32))
     continuous = np.stack(cont_cols, axis=1)  # (T, 13) or (T, 12)
 
     binary = np.stack(

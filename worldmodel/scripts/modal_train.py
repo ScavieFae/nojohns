@@ -63,6 +63,7 @@ def train(
     epochs: int = 2,
     run_name: str = "mamba2-first-complete",
     encoded_file: str = "/encoded-2k.pt",
+    resume: str = "",
 ):
     """Train from pre-encoded .pt file — instant data loading."""
     import sys
@@ -175,20 +176,34 @@ def train(
     save_dir = f"{CHECKPOINT_DIR}/{run_name}"
     os.makedirs(save_dir, exist_ok=True)
 
+    # Resolve resume checkpoint path
+    resume_path = None
+    if resume:
+        resume_path = f"{CHECKPOINT_DIR}/{resume}"
+        if not os.path.exists(resume_path):
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        print(f"Resuming from: {resume_path}")
+
+    train_cfg = cfg["training"]
     trainer = Trainer(
         model=model,
         train_dataset=train_ds,
         val_dataset=val_ds,
         cfg=enc_cfg,
-        lr=cfg["training"]["lr"],
-        weight_decay=cfg["training"]["weight_decay"],
-        batch_size=cfg["training"]["batch_size"],
+        lr=train_cfg["lr"],
+        weight_decay=train_cfg["weight_decay"],
+        batch_size=train_cfg["batch_size"],
         num_epochs=epochs,
         loss_weights=loss_weights,
         save_dir=save_dir,
         device="cuda",
         rollout_every_n=0,
         num_workers=4,
+        resume_from=resume_path,
+        scheduled_sampling=train_cfg.get("scheduled_sampling", 0.0),
+        ss_noise_scale=train_cfg.get("ss_noise_scale", 0.1),
+        ss_anneal_epochs=train_cfg.get("ss_anneal_epochs", 3),
+        ss_corrupt_frames=train_cfg.get("ss_corrupt_frames", 3),
     )
 
     print(f"Training {epochs} epochs on {torch.cuda.get_device_name(0)}...")
