@@ -44,6 +44,7 @@ training:
   num_epochs: 10
   train_split: 0.9
   device: null
+  log_interval: 1000  # ~60s between log lines on A100 (vs 30+ min default at 181K batches)
   scheduled_sampling: 0.3
   ss_noise_scale: 0.1
   ss_anneal_epochs: 3

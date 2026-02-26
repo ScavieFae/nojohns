@@ -56,6 +56,7 @@ class Trainer:
         ss_noise_scale: float = 0.1,
         ss_anneal_epochs: int = 3,
         ss_corrupt_frames: int = 3,
+        log_interval: Optional[int] = None,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -125,6 +126,10 @@ class Trainer:
                 self.ss_rate, self.ss_noise_scale, self.ss_anneal_epochs, self.ss_corrupt_frames,
             )
 
+        # Log interval: default ~10x per epoch, but cap at 5 minutes of wall time
+        # for large datasets. Configurable via log_interval param.
+        self._log_interval_override = log_interval
+
         # Shape preflight: pull one batch and verify dims match config
         self._verify_shapes(train_dataset)
 
@@ -193,13 +198,15 @@ class Trainer:
     def _corrupt_context(self, float_ctx: torch.Tensor, epoch: int) -> torch.Tensor:
         """Apply scheduled sampling: add noise to the last N context frames.
 
-        Simulates autoregressive drift by corrupting the continuous state values
-        (positions, velocities, dynamics) in recent context frames. The model
-        learns to produce physically coherent predictions even when context is
-        imperfect — which is exactly what it faces during rollout.
+        Simulates autoregressive drift by corrupting core continuous + velocity
+        values in recent context frames. The model learns to produce physically
+        coherent predictions even when context is imperfect — which is exactly
+        what it faces during rollout.
 
-        Only corrupts continuous state values (percent, x, y, shield, velocities,
-        dynamics). Never touches controller data or binary flags.
+        Only corrupts core_continuous (percent, x, y, shield) and velocity.
+        Skips dynamics (hitlag, stocks, combo) — at 0.1 noise scale, stocks
+        noise = ±0.4 lives which teaches the model to distrust stocks info.
+        Never touches controller data or binary flags.
         """
         if self.ss_rate <= 0 or epoch < 1:
             return float_ctx
@@ -209,7 +216,8 @@ class Trainer:
 
         B, K, F = float_ctx.shape
         fp = self.cfg.float_per_player
-        cd = self.cfg.continuous_dim
+        # Only corrupt core_continuous + velocity, not dynamics/combat/projectile
+        corrupt_dim = self.cfg.core_continuous_dim + self.cfg.velocity_dim  # 4 + 5 = 9
         n_corrupt = min(self.ss_corrupt_frames, K)
 
         # Per-sample mask: which samples get corrupted
@@ -223,22 +231,27 @@ class Trainer:
         # Clone to avoid corrupting the original tensor
         float_ctx = float_ctx.clone()
 
-        # Corrupt the last n_corrupt frames' continuous values for both players
+        # Corrupt the last n_corrupt frames' core + velocity for both players
         for frame_offset in range(K - n_corrupt, K):
             for player_offset in [0, fp]:
-                noise = torch.randn(B, cd, device=float_ctx.device) * noise_scale
-                # Only apply to samples selected by the mask
-                float_ctx[sample_mask, frame_offset, player_offset:player_offset + cd] += (
+                noise = torch.randn(B, corrupt_dim, device=float_ctx.device) * noise_scale
+                float_ctx[sample_mask, frame_offset, player_offset:player_offset + corrupt_dim] += (
                     noise[sample_mask]
                 )
 
         return float_ctx
 
+    def _compute_log_interval(self, num_batches: int) -> int:
+        """Compute batch logging interval. Uses override if set, else ~10x per epoch."""
+        if self._log_interval_override is not None:
+            return max(1, self._log_interval_override)
+        return max(1, num_batches // 10)
+
     def _train_epoch(self, epoch: int = 0) -> dict[str, float]:
         self.model.train()
         epoch_metrics = EpochMetrics()
         num_batches = len(self.train_loader)
-        log_interval = max(1, num_batches // 10)  # Log ~10 times per epoch
+        log_interval = self._compute_log_interval(num_batches)
 
         for batch_idx, (float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt) in enumerate(self.train_loader):
             float_ctx = float_ctx.to(self.device)
@@ -264,6 +277,12 @@ class Trainer:
                     "  batch %d/%d (%.0f%%) loss=%.4f",
                     batch_idx + 1, num_batches, pct, batch_metrics.total_loss,
                 )
+                if wandb and wandb.run:
+                    wandb.log({
+                        "batch/loss": batch_metrics.total_loss,
+                        "batch/step": batch_idx + 1,
+                        "batch/pct": pct,
+                    })
 
         return epoch_metrics.averaged()
 
@@ -275,7 +294,7 @@ class Trainer:
         epoch_metrics = EpochMetrics()
         action_tracker = ActionBreakdown(self.cfg.action_vocab)
         num_batches = len(self.val_loader)
-        log_interval = max(1, num_batches // 10)
+        log_interval = self._compute_log_interval(num_batches)
 
         for batch_idx, (float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt) in enumerate(self.val_loader):
             float_ctx = float_ctx.to(self.device)

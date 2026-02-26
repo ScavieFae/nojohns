@@ -318,6 +318,11 @@ def main():
         rollout_every_n=args.rollout_every,
         rollout_games=args.rollout_games,
         num_workers=args.num_workers,
+        scheduled_sampling=train_cfg.get("scheduled_sampling", 0.0),
+        ss_noise_scale=train_cfg.get("ss_noise_scale", 0.1),
+        ss_anneal_epochs=train_cfg.get("ss_anneal_epochs", 3),
+        ss_corrupt_frames=train_cfg.get("ss_corrupt_frames", 3),
+        log_interval=train_cfg.get("log_interval"),
     )
 
     # Train

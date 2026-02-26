@@ -1,8 +1,78 @@
 # Modal Pipeline Handoff — ScavieFae Review
 
 **Branch**: `scav/combat-context-heads`
-**Date**: Feb 25, 2026 (evening)
-**Status**: Pipeline validated. Preparing overnight training runs. Need review before launch.
+**Date**: Feb 26, 2026 (late evening)
+**Status**: Parallel pre-encode running. Training launch imminent once encoding completes.
+
+---
+
+## Current: Parallel Pre-Encode Pipeline (Feb 26, 10:30 PM)
+
+### What's happening right now
+
+11 Modal workers encoding 2K games each in parallel → single `encoded-22k.pt` file on volume.
+
+**Modal app**: https://modal.com/apps/scaviefae/main/ap-fjsUUHcAAlXZRy5c4o5QB1
+
+### Architecture
+
+```
+pre_encode_parallel (local entrypoint)
+  → reads meta.json locally, splits 22K entries into 11 chunks
+  → _encode_chunk.starmap() — 11 parallel Modal containers
+      each: extract tar to local NVMe → load 2K games → encode → save chunk_NNNN.pt to volume
+  → _concat_chunks.remote() — single 128GB container
+      load chunks from volume → pre-allocate final tensor → fill → torch.save → commit
+```
+
+### Why parallel?
+
+| Approach | Bottleneck | Estimated time |
+|----------|-----------|---------------|
+| Local (MacBook 36GB) | OOM — 22K games = 88GB tensor data | impossible |
+| Sequential Modal (1 container) | CPU-bound parquet parsing | 3-5 hours |
+| **Parallel Modal (11 containers)** | Same work ÷ 11 | **~20-40 min** |
+
+The bottleneck is zlib decompression + pyarrow parsing of individual parquet files. Parallelism is the only way to speed this up without changing the data format.
+
+### Resource allocation
+
+| Function | CPU | RAM | Instances |
+|----------|-----|-----|-----------|
+| `_encode_chunk` | 4 | 32GB | 11 (parallel) |
+| `_concat_chunks` | 2 | 128GB | 1 (after all chunks) |
+
+### After encoding completes
+
+```bash
+# Launch overnight training
+.venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train \
+  --encoded-file /encoded-22k.pt --epochs 3 --run-name mamba2-22k-ss
+
+# Verify it started
+# Check wandb: https://wandb.ai/shinewave/melee-worldmodel
+```
+
+### Changes this session (uncommitted)
+
+| File | What |
+|------|------|
+| `scripts/modal_train.py` | Parallel pre-encode (`_encode_chunk`, `_concat_chunks`, `pre_encode_parallel`), chunked sequential `pre_encode`, per-game progress logging |
+| `training/trainer.py` | SS dynamics mask fix (only corrupts core_continuous + velocity, not stocks/hitlag/combo) |
+| `scripts/train.py` | SS params passthrough to Trainer |
+| `scripts/pre_encode_chunked.py` | Local chunked encode (memmap approach — works but we have no disk space) |
+
+### What ScavieFae should review
+
+1. **`_encode_chunk` → `_concat_chunks` data flow**: chunks save `{floats, ints, lengths}`, concat pre-allocates final tensors and fills. Any concern about tensor dtype mismatches or ordering?
+
+2. **Volume concurrency**: 11 workers calling `volume.commit()` simultaneously from different containers. Modal volumes support this, but worth verifying chunks don't clobber each other (they write to different paths: `chunk_0000.pt`, `chunk_0001.pt`, etc).
+
+3. **128GB RAM for concat**: final tensor is ~88GB (242M frames × 360 bytes). Pre-allocation + one chunk loaded = ~96GB peak. Tight but should fit in 128GB. If it OOMs, we'd need to bump to 192GB or use memmap.
+
+4. **SS dynamics mask** (`trainer.py`): `_corrupt_context()` now only corrupts `core_continuous_dim + velocity_dim` (9 values per player), skipping dynamics (hitlag, stocks, combo). This addresses ScavieFae's stocks noise concern from the previous review.
+
+---
 
 ## For Review Now
 
@@ -244,6 +314,95 @@ for proj in [False, True]:
 .venv/bin/python -m worldmodel.scripts.train_policy --dataset ~/claude-projects/nojohns-training/data/parsed-v2 \
   --config worldmodel/experiments/mamba2-medium-gpu.yaml --max-games 50 --epochs 2 --no-wandb
 ```
+
+---
+
+## ScavieFae Sprint Review Response (Feb 26, evening)
+
+Reviewed commit `50c1e1c` — 10 files, 325 insertions. All 5 features approved with notes.
+
+### 1. Scheduled Sampling — APPROVE with one concern
+
+**The code is correct.** Clean separation (only corrupts continuous state, never controller/binary), per-sample mask, epoch-0 skip, annealing on both rate and noise scale. The `.clone()` on line 224 is necessary and present — without it, noise would corrupt the DataLoader's underlying tensor.
+
+**Concern: heterogeneous noise impact.** The uniform `ss_noise_scale=0.1` hits features very differently due to normalization:
+
+| Feature | Scale | 0.1 noise in game units | Severity |
+|---------|-------|------------------------|----------|
+| position (x, y) | ×0.05 | 2 game units | trivial |
+| percent | ×0.01 | 10% damage | moderate |
+| hitlag | ×0.1 | 1 frame | moderate |
+| **stocks** | **×0.25** | **0.4 stocks** | **large** |
+| velocity | ×0.05 | 2 units/frame | small |
+| combo_count | ×0.1 | 1 combo | moderate |
+
+Stocks is the problem — ±0.4 stocks of noise is nearly half a life. The model might learn to distrust stocks information in context, which would hurt predictions in actual KO scenarios. Two options:
+
+- **Quick fix**: Mask dynamics indices out of the corruption (only corrupt core_continuous + velocity). This is the safest approach — dynamics values (hitlag, stocks, combo) are already absolute predictions, not deltas, so they're less prone to drift.
+- **Proper fix**: Per-feature-group noise scales (e.g., 0.1 for positions, 0.02 for dynamics). More work, do later.
+
+**Scav's review questions answered:**
+- Is 0.1 noise reasonable? → For positions/velocity, yes. For stocks/hitlag, too aggressive. See table above.
+- Only corrupting continuous (never controller/binary)? → Correct boundary. Controllers are ground-truth conditioning and binary flags are discrete.
+- Linear vs cosine annealing? → Linear is fine for 3-epoch ramp. Difference is marginal.
+
+**Before launching overnight with SS enabled**: Run the smoke test from the handoff doc. 50 games, 3 epochs, CPU. Verify loss still converges. This is non-negotiable — `_corrupt_context()` has literally never run under load.
+
+### 2. Projectile Encoding — APPROVE
+
+Clean infrastructure. `FrameItems` dataclass, `_extract_items()` parsing, nearest-item distance computation — all correct.
+
+**Key verification**: Both players compute distance to items independently using their own positions (`pf.x[:, None]`). Same item can be nearest to both players — correct game mechanically.
+
+**Scav's questions answered:**
+- Input-only features zeroing during rollout? → Acknowledged gap. Not an issue tonight (all items inactive in 22K data). When items go live, could forward-propagate item positions from replay data during rollout (items move independently of player state). Note for later.
+- `xy_scale` for item distances? → Correct. Items share the same coordinate space.
+- Nearest-item hardcoded scale `n_active * 0.1`? → Fine. Typically 0-3 active items. If this ever matters, promote to a cfg field, but not now.
+
+### 3. Config-driven PolicyMLP — APPROVE
+
+**I traced the int tensor layout end-to-end.** This is the load-bearing question.
+
+`_encode_game()` builds int columns as:
+```
+[p0: action(0), jumps(1), char(2), l_cancel(3), hurtbox(4), ground(5), last_attack(6), [state_age(7)],
+ p1: action(ipp), jumps(ipp+1), ..., last_attack(ipp+6), [state_age(ipp+7)],
+ stage(ipp*2)]
+```
+
+Where `ipp = cfg.int_per_player` = 7 (default) or 8 (state_age_as_embed).
+
+PolicyMLP's forward pass uses `int_ctx[:, :, ipp]` for p1_action → correct for both configurations.
+
+The state_age embedding indices (hardcoded 7 for p0, `ipp+7` for p1) are also correct:
+- p0 state_age is always at index 7 (8th column)
+- p1 state_age is at `ipp + 7` = `8 + 7` = 15 ✓
+
+**train_policy.py loss filtering** (lines 198-201): Filtering `loss_cfg` to only `{analog, button}` prevents TypeError from world model loss keys. Clean fix.
+
+### 4. Rollout Clamping — APPROVE
+
+**Stocks clamping is correct.** The clamping operates in normalized tensor space: `stocks` is stored as `game_stocks × 0.25`, so clamping to `[0 × 0.25, 4 × 0.25]` = `[0.0, 1.0]` correctly enforces 0-4 stocks in game units.
+
+Dynamics indices (`dyn_start` computation) matches the pattern in `MeleeFrameDataset.__init__` — consistent across the codebase.
+
+No velocity clamping, which is fine — knockback velocities can be extreme but not infinite, and position clamping catches the downstream effect.
+
+### 5. Checkpoint Resume — APPROVE
+
+My suggestion from previous review, cleanly implemented. Path resolution from `CHECKPOINT_DIR`, FileNotFoundError on missing, passed to Trainer's existing `resume_from`. Nothing to flag.
+
+### Summary
+
+| Feature | Verdict | Blocking? |
+|---------|---------|-----------|
+| Scheduled sampling | Approve with noise concern | **Before overnight**: run 50-game smoke test |
+| Projectile encoding | Approve | No — flag is off |
+| PolicyMLP config-driven | Approve | No |
+| Rollout clamping | Approve | No |
+| Checkpoint resume | Approve | No |
+
+**One action item for Scav**: Either mask dynamics out of SS corruption, or lower `ss_noise_scale` to 0.03. Then run the smoke test. After that, overnight runs are good to go.
 
 ---
 

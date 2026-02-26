@@ -934,6 +934,121 @@ We burned 8+ hours on RunPod (Feb 25, 2026). Core problems:
 
 RunPod is built for humans in Jupyter notebooks, not agents driving SSH. Modal eliminates the entire category of remote-machine problems.
 
+## Run Cards
+
+Every significant training run gets a **Run Card** — a pre-flight document reviewed by Scav, Mattie, and ScavieFae before launch. Never start a large run without one.
+
+Use `/run-card` to generate one. The skill reads the config, calculates batch counts and timing, and produces the card for review.
+
+### Template
+
+```markdown
+# Run Card: {run_name}
+
+## Goal
+What are we trying to learn? One sentence.
+
+## Target Metrics
+| Metric | Baseline (best prior) | Target | "Something is wrong" |
+|--------|----------------------|--------|---------------------|
+| val_change_acc | 68.3% (K=60 2K) | >72% | <60% after epoch 1 |
+| val_pos_mae | 0.55 (K=60 2K) | <0.50 | >1.0 |
+| val_loss/total | 0.289 (K=10 2K) | <0.25 | not decreasing after 5% |
+
+## Data
+- **Encoded file**: /encoded-22k.pt
+- **Games**: 22,000
+- **Total frames**: 206,754,081
+- **Train examples**: 185,648,963 (90%)
+- **Val examples**: 20,885,118 (10%)
+- **Data fingerprint**: {hash}
+
+## Model
+- **Architecture**: Mamba-2 (FrameStackMamba2)
+- **Config**: worldmodel/experiments/mamba2-medium-gpu.yaml
+- **Parameters**: 4,282,386
+- **Key hyperparams**: d_model=384, n_layers=4, d_state=64, K=10, chunk_size=10
+
+## Training
+- **Epochs**: 3
+- **Batch size**: 1024
+- **Learning rate**: 0.0005
+- **Scheduled sampling**: rate=0.30, noise=0.10, anneal=3ep, corrupt=3 frames
+- **Optimizer**: AdamW (weight_decay=1e-5), cosine LR schedule
+
+## Infrastructure
+- **GPU**: A100-SXM4-40GB (Modal)
+- **System RAM**: ~128GB
+- **num_workers**: 4 (persistent, prefetch=4)
+- **wandb**: shinewave/melee-worldmodel, run name: {run_name}
+
+## Logging
+- **Batches per epoch**: {train_examples // batch_size}
+- **log_interval**: {value} (every {human_time})
+- **wandb**: logs every batch (loss scalars)
+- **Stdout**: loss + pct every log_interval batches
+
+## Timing
+- **Estimated batch speed**: ~{ms}ms/batch (based on {prior_run})
+- **Estimated epoch time**: ~{hours}h
+- **Estimated total time**: ~{hours}h
+- **Timeout**: {seconds}s ({human_readable})
+- **Estimated cost**: ~${cost} (at $2.78/hr)
+
+## Escape Hatches
+- **Kill if**: loss not decreasing after 10% of epoch 1, or loss explodes (>10.0)
+- **Resume with**: `--resume {checkpoint_path}`
+- **Fallback**: {what to do if this run fails}
+
+## Prior Runs
+| Run | Data | Epochs | change_acc | pos_mae | Notes |
+|-----|------|--------|------------|---------|-------|
+| ... | ... | ... | ... | ... | ... |
+
+## Diff from Last Run
+What's different about THIS run vs the most comparable prior run?
+
+## Launch Command
+\`\`\`bash
+.venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train \
+  --encoded-file /encoded-22k.pt --epochs 3 --run-name {run_name}
+\`\`\`
+
+## Sign-off
+- [ ] Scav reviewed
+- [ ] Mattie reviewed
+- [ ] ScavieFae reviewed
+```
+
+### What Counts as "Significant"
+
+Use your judgment, but generally:
+- Any run expected to cost >$5 or take >2 hours
+- First run with a new model architecture or config
+- Runs on new/larger datasets
+- Runs with new training features (SS, new encoding, etc.)
+
+Quick smoke tests (50 games, 1 epoch, <$1) don't need a card.
+
+### Log Interval Guidelines
+
+The default `log_interval` (10x per epoch) is fine for small runs. For large datasets:
+
+| Train examples | Batches/epoch (bs=1024) | Default interval | Time between logs* | Recommendation |
+|---------------|------------------------|-----------------|-------------------|----------------|
+| 500K | 488 | 48 | ~2 min | Default is fine |
+| 5M | 4,882 | 488 | ~3 min | Default is fine |
+| 50M | 48,828 | 4,882 | ~30 min | Set log_interval: 1000 |
+| 185M | 181,298 | 18,129 | ~90 min | **Set log_interval: 1000** |
+
+*Assuming ~0.06s/batch on A100 with num_workers=4.
+
+Set `log_interval` in the experiment YAML under `training:`:
+```yaml
+training:
+  log_interval: 1000  # Log every 1000 batches (~60s on A100)
+```
+
 ## Autonomous World Model (Solana hackathon — deadline Feb 27)
 
 Research direction: decompose the monolithic model into subsystem models (movement, hit detection, damage/knockback, action transitions, shield/grab) for onchain deployment via MagicBlock ephemeral rollups + BOLT ECS.
