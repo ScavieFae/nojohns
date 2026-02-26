@@ -151,6 +151,7 @@ class PolicyTrainer:
         device: Optional[str] = None,
         resume_from: Optional[str | Path] = None,
         epoch_callback: Optional[Callable] = None,
+        log_interval: Optional[int] = None,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -191,16 +192,19 @@ class PolicyTrainer:
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=num_epochs)
         self.metrics = PolicyMetrics(loss_weights)
         self.epoch_callback = epoch_callback
+        total_batches = len(train_dataset) // batch_size
+        self.log_interval = log_interval or max(total_batches // 10, 1)
+        self.total_batches = total_batches
         self.history: list[dict] = []
 
         if resume_from:
             self._load_checkpoint(resume_from)
 
-    def _train_epoch(self) -> dict[str, float]:
+    def _train_epoch(self, epoch: int) -> dict[str, float]:
         self.model.train()
         epoch_metrics = PolicyEpochMetrics()
 
-        for float_ctx, int_ctx, ctrl_tgt in self.train_loader:
+        for batch_idx, (float_ctx, int_ctx, ctrl_tgt) in enumerate(self.train_loader):
             float_ctx = float_ctx.to(self.device)
             int_ctx = int_ctx.to(self.device)
             ctrl_tgt = ctrl_tgt.to(self.device)
@@ -212,6 +216,22 @@ class PolicyTrainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             epoch_metrics.update(batch_metrics)
+
+            if (batch_idx + 1) % self.log_interval == 0:
+                pct = 100.0 * (batch_idx + 1) / self.total_batches
+                logger.info(
+                    "Epoch %d batch %d/%d (%.1f%%) loss=%.4f stick_mae=%.4f btn_acc=%.3f",
+                    epoch + 1, batch_idx + 1, self.total_batches, pct,
+                    batch_metrics.total_loss, batch_metrics.stick_mae, batch_metrics.button_acc,
+                )
+                if wandb and wandb.run:
+                    wandb.log({
+                        "batch/loss": batch_metrics.total_loss,
+                        "batch/stick_mae": batch_metrics.stick_mae,
+                        "batch/button_acc": batch_metrics.button_acc,
+                        "batch/step": batch_idx + 1,
+                        "batch/pct": pct,
+                    })
 
         return epoch_metrics.averaged()
 
@@ -244,7 +264,7 @@ class PolicyTrainer:
 
         for epoch in range(self.start_epoch, self.num_epochs):
             t0 = time.time()
-            train_metrics = self._train_epoch()
+            train_metrics = self._train_epoch(epoch)
             val_metrics = self._val_epoch()
             self.scheduler.step()
 

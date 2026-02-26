@@ -856,6 +856,7 @@ def train_policy(
         device="cuda",
         resume_from=resume_path,
         epoch_callback=commit_checkpoints,
+        log_interval=1000,
     )
 
     print(f"Training {epochs} epochs on {torch.cuda.get_device_name(0)}...")
