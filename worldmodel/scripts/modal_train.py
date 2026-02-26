@@ -166,7 +166,11 @@ def train(
         )
         print(f"wandb: {wandb.run.url}")
     except Exception as e:
-        print(f"wandb failed: {e}")
+        print(f"\n{'='*60}")
+        print(f"WARNING: wandb init failed: {e}")
+        print(f"Training will continue WITHOUT monitoring.")
+        print(f"If running --detach, you have NO visibility into this run.")
+        print(f"{'='*60}\n")
         wandb = None
 
     # Train
@@ -185,6 +189,12 @@ def train(
         print(f"Resuming from: {resume_path}")
 
     train_cfg = cfg["training"]
+
+    def commit_checkpoints():
+        """Commit checkpoints to Modal volume after each epoch."""
+        volume.commit()
+        print("Checkpoints committed to volume.")
+
     trainer = Trainer(
         model=model,
         train_dataset=train_ds,
@@ -205,14 +215,15 @@ def train(
         ss_anneal_epochs=train_cfg.get("ss_anneal_epochs", 3),
         ss_corrupt_frames=train_cfg.get("ss_corrupt_frames", 3),
         log_interval=train_cfg.get("log_interval"),
+        epoch_callback=commit_checkpoints,
     )
 
     print(f"Training {epochs} epochs on {torch.cuda.get_device_name(0)}...")
     history = trainer.train()
 
-    # Commit checkpoints
+    # Final commit (final.pt)
     volume.commit()
-    print("Checkpoints committed to volume.")
+    print("Final checkpoints committed to volume.")
 
     # Summary
     if history:

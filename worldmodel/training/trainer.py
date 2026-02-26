@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -57,6 +57,7 @@ class Trainer:
         ss_anneal_epochs: int = 3,
         ss_corrupt_frames: int = 3,
         log_interval: Optional[int] = None,
+        epoch_callback: Optional[Callable[[], None]] = None,
     ):
         if device is None:
             if torch.backends.mps.is_available():
@@ -129,6 +130,9 @@ class Trainer:
         # Log interval: default ~10x per epoch, but cap at 5 minutes of wall time
         # for large datasets. Configurable via log_interval param.
         self._log_interval_override = log_interval
+
+        # Called after each epoch's checkpoint save (e.g., volume.commit() on Modal)
+        self._epoch_callback = epoch_callback
 
         # Shape preflight: pull one batch and verify dims match config
         self._verify_shapes(train_dataset)
@@ -446,9 +450,14 @@ class Trainer:
 
             if self.save_dir and val_metrics:
                 val_loss = val_metrics.get("val_loss/total", float("inf"))
+                self._save_checkpoint("latest.pt", epoch, val_loss)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     self._save_checkpoint("best.pt", epoch, val_loss)
+
+            # Per-epoch callback (e.g., commit checkpoints to Modal volume)
+            if self._epoch_callback:
+                self._epoch_callback()
 
         if self.save_dir:
             self._save_checkpoint("final.pt", self.num_epochs - 1)

@@ -93,8 +93,10 @@ Note: MLP on 22K/4ep hit 77.5% change_acc. Mamba-2 should match or beat that wit
 
 ## Escape Hatches
 
-- **Kill if**: val_loss not decreasing after ~9K batches (5% of epoch 1, ~9 min). Change_acc below 60% after full epoch 1. OOM. Loss explosion (NaN or >10).
-- **Resume command**: `.venv/bin/modal run worldmodel/scripts/modal_train.py::train --resume mamba2-22k-ss --encoded-file /encoded-22k.pt --epochs 3 --run-name mamba2-22k-ss-resumed`
+- **Kill if**: val_loss not decreasing after ~9K batches (5% of epoch 1, ~9 min). Change_acc below 60% after full epoch 1. OOM. Loss explosion (NaN or >10). Epoch 1 takes >8h (timing way off).
+- **Resume command**: `.venv/bin/modal run worldmodel/scripts/modal_train.py::train --resume mamba2-22k-ss/latest.pt --encoded-file /encoded-22k.pt --epochs 3 --run-name mamba2-22k-ss-resumed`
+- **Resume note**: `--epochs 3` means 3 total, not 3 more. If resuming from epoch 2 checkpoint, this trains 1 more epoch. Adjust accordingly.
+- **Checkpoint safety**: `volume.commit()` runs after every epoch via `epoch_callback`. Both `latest.pt` and `best.pt` are committed. If container dies mid-epoch, we lose at most the current epoch.
 - **Fallback plan**: If SS is causing issues (loss divergence vs comparable non-SS runs), disable SS and relaunch as `mamba2-22k-noss`. If 22K data load fails, fall back to `encoded-2k.pt` with 10 epochs.
 
 ## Prior Comparable Runs
