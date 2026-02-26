@@ -78,22 +78,60 @@ class PolicyMLP(nn.Module):
         self.analog_head = nn.Linear(trunk_dim, ANALOG_DIM)
         self.button_head = nn.Linear(trunk_dim, BUTTON_DIM)
 
-    def forward(
+    def swap_players(
         self,
         float_ctx: torch.Tensor,
         int_ctx: torch.Tensor,
-    ) -> dict[str, torch.Tensor]:
-        """Forward pass.
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Swap P0 and P1 columns so a P0-trained model can predict for P1.
+
+        The model always predicts for "P0" in its input layout. To predict P1's
+        controls, swap the player columns before calling forward().
 
         Args:
             float_ctx: (B, K, float_per_player*2) — context frames
             int_ctx:   (B, K, int_per_frame) — context categoricals
 
         Returns:
+            Swapped (float_ctx, int_ctx) with P0↔P1 columns exchanged.
+        """
+        fp = self.cfg.float_per_player
+        ipp = self.cfg.int_per_player
+
+        # Swap float columns: [P0 floats | P1 floats] → [P1 floats | P0 floats]
+        swapped_float = torch.cat([float_ctx[..., fp:fp*2], float_ctx[..., :fp]], dim=-1)
+
+        # Swap int columns: [P0 ints | P1 ints | stage] → [P1 ints | P0 ints | stage]
+        swapped_int = torch.cat([
+            int_ctx[..., ipp:ipp*2],
+            int_ctx[..., :ipp],
+            int_ctx[..., ipp*2:],  # stage stays at the end
+        ], dim=-1)
+
+        return swapped_float, swapped_int
+
+    def forward(
+        self,
+        float_ctx: torch.Tensor,
+        int_ctx: torch.Tensor,
+        predict_player: int = 0,
+    ) -> dict[str, torch.Tensor]:
+        """Forward pass.
+
+        Args:
+            float_ctx: (B, K, float_per_player*2) — context frames
+            int_ctx:   (B, K, int_per_frame) — context categoricals
+            predict_player: 0 or 1. If 1, swaps player columns internally
+                           so the P0-trained model predicts P1's controls.
+
+        Returns:
             Dict with:
                 analog_pred: (B, 5) — predicted stick/trigger values (sigmoid, [0,1])
                 button_logits: (B, 8) — predicted button logits (raw)
         """
+        if predict_player == 1:
+            float_ctx, int_ctx = self.swap_players(float_ctx, int_ctx)
+
         B, K, _ = float_ctx.shape
         cfg = self.cfg
         ipp = cfg.int_per_player
