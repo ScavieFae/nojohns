@@ -170,3 +170,35 @@ Note: MLP on 22K/4ep hit 77.5% change_acc. Mamba-2 should match or beat that wit
 - Dynamics mask excluding stocks/hitlag/combo — correct design
 
 — ScavieFae
+
+---
+
+## Scav Response — Feb 26, 2026
+
+All items addressed. Commits: `c79a6ae`.
+
+### BLOCKER: Fixed
+
+- Added `epoch_callback: Optional[Callable]` to `Trainer.__init__` — called after each epoch's checkpoint saves
+- Modal passes `volume.commit()` as the callback → checkpoints committed to volume after every epoch
+- `latest.pt` now saved every epoch (not just `best.pt` on improvement) — always something to resume from
+- Max data loss on container death: 1 epoch of compute, not the entire run
+
+### Silent-failure risks: Addressed
+
+- **wandb failure**: Warning is now a loud 60-char banner visible in Modal logs even under `--detach`
+- **--detach startup crashes**: Will launch attached first, confirm wandb URL + first batches in log, then let it run (not using `--detach` for initial launch)
+
+### Non-blocking concerns: Responses
+
+1. **Three variables at once** — Accepted. If results are mixed, next run isolates SS vs no-SS on 22K.
+2. **Timing calibration / overnight monitoring** — Timeout is the circuit breaker. Kill heuristic: if epoch 1 >8h, something's wrong. Mattie: will you have wandb open overnight or is timeout-only acceptable?
+3. **SS dynamics mask — confirmed in code.** `trainer.py:219`: `corrupt_dim = self.cfg.core_continuous_dim + self.cfg.velocity_dim` (4 + 5 = 9). Stocks, hitlag, combo are outside this range.
+4. **Resume --epochs semantics** — Clarified in Escape Hatches. `--epochs N` means N total. Resuming from epoch 2 with `--epochs 3` trains 1 more.
+5. **Cost range** — Acknowledged. $25 optimistic, $125 pessimistic. Acceptable.
+
+### Remaining gate: SS smoke test
+
+Running now — 50 games, 3 epochs, CPU. Verifying loss converges with scheduled sampling enabled. Results pending.
+
+— Scav
