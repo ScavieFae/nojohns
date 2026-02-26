@@ -1,12 +1,53 @@
 # Modal Pipeline Handoff — ScavieFae Review
 
 **Branch**: `scav/combat-context-heads`
-**Date**: Feb 26, 2026 (late evening)
-**Status**: Parallel pre-encode running. Training launch imminent once encoding completes.
+**Date**: Feb 26, 2026 (late)
+**Status**: Projectile extraction unblocked. Re-parse needed before projectile experiment.
 
 ---
 
-## Current: Parallel Pre-Encode Pipeline (Feb 26, 10:30 PM)
+## Current: Projectile Extraction Unblocked (Feb 26, late)
+
+### What changed
+
+Commit `86de069` — **real item/projectile data now extracted from .slp replays**.
+
+The blocker from commits `3919365` / `1a44244` is resolved. peppi_py's Python wrapper (`frames_from_sa()`) drops items from the raw arrow struct. Fix: access `peppi_py._peppi.read_slippi()` directly to get the arrow data, which has full item fields (id, type, state, position, velocity, damage, timer, owner).
+
+### How it works
+
+1. `_extract_items()` reads raw arrow struct, extracts flat numpy arrays from the ListArray using offsets (fast — no per-frame `.as_py()`)
+2. `ItemAssigner` (ported from slippi-ai) maps item spawn IDs to stable slot indices 0-14 so items keep their slot across frames
+3. Graceful fallback: if raw access fails for any reason, returns None → empty items (existing behavior)
+4. Both `build_dataset.py` and `parse_archive.py` updated with the same pattern
+
+### Verification results
+
+Tested on `Game_20260209T120845.slp` (Fox ditto, 13,607 frames):
+- 9,043 item-frame instances across 4 slots (types: 59, 61, 63, 65, 77)
+- 47.6% of frames have active items
+- Full pipeline: parse → load_game → MeleeDataset(projectiles=True) → non-zero projectile floats
+
+### What this unblocks
+
+1. Re-parse 2K+ games with the updated parser → items populated
+2. Run `projectile-2k-test` experiment (run card already approved in `4ca90c0`)
+3. Eventually re-parse the full 287K ranked dataset for home run training
+
+### What did NOT change
+
+- `parse.py`, `encoding.py`, `dataset.py` — downstream pipeline already handled items correctly
+- No model code changes
+- Existing parquet files still work with `projectiles=False`
+- Double-parses each .slp (once for players via wrapper, once for items via raw). ~2x parse time during dataset build only, not training.
+
+### Note on parse_archive.py schema
+
+`parse_archive.py` was also missing `randall`, `fod_platforms`, and `items` fields in its root struct (only had `p0, p1, stage`). Now matches `build_dataset.py`'s full schema. This fixes a latent bug where games parsed via `parse_archive.py` would fail to load items even with the encoding flag on.
+
+---
+
+## Parallel Pre-Encode Pipeline (Feb 26, 10:30 PM)
 
 ### What's happening right now
 
@@ -243,7 +284,7 @@ Infrastructure for item/projectile data (Fox laser, Samus charge shot, etc). Beh
 - Should nearest-item distance use `xy_scale` (0.05) normalization? Or a different scale? Items can be far away.
 - I compute nearest item per player independently. Two players could have the same "nearest item." That's correct game-mechanically (a projectile between two characters threatens both) but worth flagging.
 
-**Critical fact:** All 15 item slots are inactive in all 200 games I checked from the current 22K dataset. This encoding adds zero information to current training. It's pure infrastructure for ranked data.
+**Update (Feb 26):** Item extraction fixed in commit `86de069`. Existing 22K parquet files still have empty items — re-parsing required to populate them. New parses will have real item data.
 
 #### MEDIUM — policy + rollout fixes
 
