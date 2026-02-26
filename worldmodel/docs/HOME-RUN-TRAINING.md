@@ -132,7 +132,15 @@ The 4 skipped layers are tiny prediction heads (l_cancel: 384→3, hurtbox: 384�
 
 Decision: force INT8 everywhere (not INT32) for uniformity — one integer matmul path in the onchain verifier, not two.
 
-*Results pending — re-running benchmark with `--force-all`.*
+**Force-all results (Feb 26, 2026) — PASS:**
+
+| Metric | Float32 | INT8 (22/26) | INT8-ALL (26/26) | Force-all cost |
+|--------|---------|--------------|------------------|----------------|
+| Change Acc | 68.82% | 68.65% | 68.65% | **0.0%** |
+| Position MAE | 0.534 | 0.541 | 0.541 | **0.0%** |
+| Val Loss | 0.2581 | 0.2641 | 0.2641 | **0.0%** |
+
+Quantizing the 4 tiny heads costs literally nothing — they're too small (384→3) for INT8 rounding to matter. **Full INT8, all 26 layers, confirmed safe for onchain.**
 
 **Mamba-2 quantization notes:**
 - SSM scan ops (softplus, cumsum) are NOT in the linear layers — they survive quantization untouched
@@ -231,7 +239,7 @@ Mattie's call: quantization first, then projectiles and 10.6M smoke test.
 | # | Experiment | Cost | Time | Status |
 |---|-----------|------|------|--------|
 | **1a** | **PTQ on 4.3M checkpoint (default)** | **Free** | **~30 min** | **DONE — PASS (0.1% change_acc loss, 22/26 layers)** |
-| **1b** | **PTQ force-all (onchain mode)** | **Free** | **~30 min** | **RUNNING — quantize all 26/26 layers including tiny heads** |
+| **1b** | **PTQ force-all (onchain mode)** | **Free** | **~30 min** | **DONE — PASS (26/26 layers, 0.0% additional cost)** |
 | ~~2~~ | ~~Projectile encoding test (2K)~~ | ~~$6~~ | ~~2h~~ | **BLOCKED — ScavieFae working on parser fix** |
 | 3 | 10.6M × 2K smoke test | ~$20 | ~35 min (2ep on A100) | **LAUNCHING** |
 

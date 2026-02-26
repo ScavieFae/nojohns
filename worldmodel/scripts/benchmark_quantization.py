@@ -134,11 +134,14 @@ def quantize_model(model, force_all=False):
         torch.backends.quantized.engine = "qnnpack"
     logger.info("Quantization engine: %s", torch.backends.quantized.engine)
 
+    # Count linear layers in original model before quantization
+    n_linear_orig = sum(1 for m in model.modules() if isinstance(m, torch.nn.Linear))
+
     if force_all:
-        # Force INT8 on every Linear layer by setting qconfig explicitly.
-        # quantize_dynamic skips tiny layers (e.g. Linear(384,3)) as a CPU
-        # optimization — but for onchain we need uniform INT8 math everywhere.
-        model.qconfig = torch.quantization.default_dynamic_qconfig
+        # Force INT8 on every Linear layer by setting qconfig on Linear modules
+        # only (NOT on root model — that would propagate to Embeddings).
+        # quantize_dynamic may skip tiny layers as a CPU optimization, but for
+        # onchain we need uniform INT8 math everywhere.
         for name, module in model.named_modules():
             if isinstance(module, torch.nn.Linear):
                 module.qconfig = torch.quantization.default_dynamic_qconfig
@@ -147,8 +150,7 @@ def quantize_model(model, force_all=False):
             {torch.nn.Linear},
             dtype=torch.qint8,
         )
-        # Double-check: manually quantize any stragglers that quantize_dynamic
-        # still skipped (PyTorch may still skip based on internal heuristics)
+        # Force-wrap any remaining nn.Linear stragglers to DynamicQuantizedLinear
         for name, module in list(quantized.named_modules()):
             if isinstance(module, torch.nn.Linear):
                 logger.warning("Layer %s (%s) still float — force-wrapping to DynamicQuantizedLinear",
@@ -174,15 +176,11 @@ def quantize_model(model, force_all=False):
             dtype=torch.qint8,
         )
 
-    # Count quantized layers
-    n_quantized = sum(
-        1 for m in quantized.modules()
-        if hasattr(m, 'weight') and hasattr(m.weight, 'qscheme')
-    )
+    # Count: remaining nn.Linear in quantized model = layers NOT quantized
     n_linear_remaining = sum(1 for m in quantized.modules() if isinstance(m, torch.nn.Linear))
-    n_total = n_quantized + n_linear_remaining
+    n_quantized = n_linear_orig - n_linear_remaining
     logger.info("Quantized %d/%d linear layers to INT8 (%d remaining as float)",
-                n_quantized, n_total, n_linear_remaining)
+                n_quantized, n_linear_orig, n_linear_remaining)
 
     # Size comparison
     orig_size = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
