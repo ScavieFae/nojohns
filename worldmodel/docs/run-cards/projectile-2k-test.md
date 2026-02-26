@@ -1,7 +1,7 @@
 # Run Card: projectile-2k-test
 
 **Created**: Feb 26, 2026
-**Status**: BLOCKED — item data not populated in parsed games
+**Status**: BLOCKED — parser doesn't populate item data
 
 ## Blocker
 
@@ -169,5 +169,22 @@ Good variable isolation (no SS), correct decision metric (pos_mae not change_acc
 **Fix: launch command won't encode projectiles.** Lines 131-132 run `pre_encode` without any encoding override — it'll use the default config which has `projectiles: false`. The implementation section (lines 100-104) describes an `--encoding-override` flag, but the actual launch command doesn't use it. As written, re-encode produces an identical file to `encoded-2k.pt`.
 
 Also: card says "everything else identical to k10-compare baseline" (line 20), but batch_size is now 4096 (config change) while k10-compare ran at 1024. Minor confound for a 2K comparison — probably doesn't matter, but it's not perfectly controlled.
+
+— ScavieFae
+
+---
+
+## BLOCKED — Feb 26, 2026
+
+**Parser doesn't populate item data.** Scav tested: 0 out of 500 games have any item with `exists=True`. The item struct is in the schema but every field is empty. Flipping `projectiles=True` would add 6 dims of zeros — useless.
+
+**This does NOT affect existing training.** All runs (including 22K) used `projectiles=False` (the default). The projectile dims were never included in any encoded data. Nothing is invalidated.
+
+**To unblock:**
+1. Fix `parse.py` to extract item/projectile data from replays (libmelee exposes `gamestate.projectiles`)
+2. Re-parse raw .slp files — the existing parsed parquets are missing the data
+3. Re-encode with `projectiles=True`
+
+**Impact on home run plan:** Projectiles were Decision 2 in HOME-RUN-TRAINING.md. Now blocked behind parser work. The home run can proceed without projectiles (Decisions 1 + 4 still inform the plan). Projectiles only affect a subset of frames (characters with projectiles in matchups where they're used), so this may not be worth delaying the pipeline for.
 
 — ScavieFae

@@ -83,11 +83,19 @@ If no → the home run is 4.3M × 200K (cheaper, same accuracy).
 If yes → include in every future run and re-encode the big dataset with them.
 If no → skip, save encoding complexity.
 
-**Experiment: Projectile encoding on 2K ($6)**
-- Re-encode 2K games with `EncodingConfig(projectiles=True, state_age_as_embed=True)`
-- Train Mamba-2 4.3M, 2 epochs
-- Compare pos_mae specifically — projectiles should help position prediction
-- Also watch movement category — projectile dodging might unstick the 91% ceiling
+**STATUS: BLOCKED — parser doesn't populate item data.**
+
+Scav tested: 0/500 games have any item with `exists=True`. The struct is in the schema but every field is empty. Flipping `projectiles=True` adds 6 dims of zeros. The parsing pipeline (`parse.py`) needs to extract item/projectile data from raw replays (libmelee's `gamestate.projectiles`), then raw .slp files need re-parsing — existing parquets are missing the data.
+
+**This does NOT invalidate any existing training.** All runs used `projectiles=False` (the default). No projectile dims were ever in any encoded data.
+
+**Impact on home run:** The home run can proceed without projectiles — Decisions 1 + 4 still inform model size and data scale. Projectiles only affect a subset of frames (characters with projectiles in relevant matchups). Fixing the parser is real work but not on the critical path. See `run-cards/projectile-2k-test.md` for details.
+
+~~**Experiment: Projectile encoding on 2K ($6)**~~
+~~- Re-encode 2K games with `EncodingConfig(projectiles=True, state_age_as_embed=True)`~~
+~~- Train Mamba-2 4.3M, 2 epochs~~
+~~- Compare pos_mae specifically — projectiles should help position prediction~~
+~~- Also watch movement category — projectile dodging might unstick the 91% ceiling~~
 
 ### Decision 3: How much accuracy do we lose to INT8?
 
@@ -215,10 +223,11 @@ Mattie's call: quantization first, then projectiles and 10.6M smoke test.
 | # | Experiment | Cost | Time | Status |
 |---|-----------|------|------|--------|
 | **1** | **PTQ on 4.3M checkpoint** | **Free** | **~30 min** | **DONE — PASS (0.1% change_acc loss)** |
-| 2 | Projectile encoding test (2K) | ~$6 | ~2h (re-encode + 2ep) | **BLOCKED — parsed data has empty items** |
+| ~~2~~ | ~~Projectile encoding test (2K)~~ | ~~$6~~ | ~~2h~~ | **BLOCKED — parser doesn't populate item data** |
 | 3 | 10.6M × 2K smoke test | ~$20 | ~3h (2ep on A100) | Ready — encoded-2k.pt exists |
 
-Experiments 2 and 3 can run in parallel on Modal.
+~~Experiments 2 and 3 can run in parallel on Modal.~~
+Experiment 3 can launch independently. Experiment 2 blocked until parser fix.
 
 ## Current Runs
 
