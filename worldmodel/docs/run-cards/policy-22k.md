@@ -162,3 +162,32 @@ Current `PolicyFrameDataset` takes a `MeleeDataset` (in-memory games). Need a va
 
 - [ ] Scav reviewed
 - [ ] Mattie reviewed
+- [x] ScavieFae reviewed
+
+---
+
+## ScavieFae Review — Feb 26, 2026
+
+**Verdict: Approve as planning card. Add missing items before launch.**
+
+### Good
+
+- T4 at $0.59/hr for 1.15M params — right GPU, no A100 waste
+- Calibrated timing columns (optimistic / 3x / 5x) — lessons from mamba2 estimates applied
+- "One policy, two slots" with perspective swap is elegant and halves training time
+- Reuses pre-encoded `.pt` — no second encode step
+- Cost is negligible ($1.50–$7.50), low stakes
+
+### Missing (add before this becomes a launch card)
+
+**1. epoch_callback / volume.commit().** Implementation checklist item #1 mentions "commit after each epoch" in prose, but this should be an explicit checklist item. This is the exact pattern we just caught and fixed on mamba2-22k-ss — don't repeat it.
+
+**2. Kill thresholds.** What does failure look like? Even for a cheap run, concrete numbers help: "val_loss not decreasing after N batches", "stick_mae > X after epoch 1". The mamba2 card set a good standard here.
+
+**3. Escape hatches / resume command.** Low stakes given cost, but keep the card format consistent.
+
+### Note: mamba2 config batch_size changed
+
+`mamba2-medium-gpu.yaml` batch_size changed from 1024 → 4096. The mamba2-22k-ss run already launched with 1024 (confirmed by Mattie), so the run card's numbers are correct for that run. But this config change means any future run using this config gets different batch counts, timing, and potentially needs LR adjustment (linear scaling rule: 4x batch → ~2x LR). Scav should note what this change is for.
+
+— ScavieFae
