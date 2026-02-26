@@ -359,7 +359,14 @@ def play_match(
             next_int[ipp + 6] = preds["p1_last_attack_logits"][0].cpu().argmax()
 
         # State_age: rules-based
-        if not cfg.state_age_as_embed:
+        if cfg.state_age_as_embed:
+            sa_int_idx = cfg.int_per_player - 1
+            for sa, act_col in [(sa_int_idx, 0), (ipp + sa_int_idx, ipp)]:
+                if next_int[act_col] == sim_ints[-1][act_col]:
+                    next_int[sa] = min(int(sim_ints[-1][sa].item()) + 1, cfg.state_age_embed_vocab - 1)
+                else:
+                    next_int[sa] = 0
+        else:
             for sa_idx, act_col in [(p0_state_age_idx, 0), (p1_state_age_idx, ipp)]:
                 if next_int[act_col] == sim_ints[-1][act_col]:
                     next_float[sa_idx] += 1.0 * cfg.state_age_scale

@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Model Demo Viewer</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface2: #1e1e2e;
+    --border: #2a2a3e;
+    --text: #e0e0e8;
+    --text-dim: #8888a0;
+    --p0: #4488ff;
+    --p0-dim: rgba(68, 136, 255, 0.3);
+    --p1: #ff4466;
+    --p1-dim: rgba(255, 68, 102, 0.3);
+    --correct: #44cc88;
+    --wrong: #ff6644;
+    --seed-color: #6644cc;
+    --accent: #8866ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* --- Drop zone --- */
+  #drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 100vh;
+    gap: 20px;
+    transition: background 0.2s;
+  }
+
+  #drop-zone.dragover {
+    background: rgba(136, 102, 255, 0.08);
+  }
+
+  #drop-zone h1 {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  #drop-zone p {
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  #drop-zone label {
+    background: var(--surface2);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 40px 60px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    text-align: center;
+  }
+
+  #drop-zone label:hover {
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+
+  #file-input { display: none; }
+
+  /* --- Main viewer --- */
+  #viewer {
+    display: none;
+    width: 100%;
+    max-width: 900px;
+    padding: 16px;
+    gap: 12px;
+    flex-direction: column;
+  }
+
+  /* Header */
+  #header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+  }
+
+  .header-tag {
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .header-tag.mode-tf { border-color: var(--correct); color: var(--correct); }
+  .header-tag.mode-ar { border-color: var(--accent); color: var(--accent); }
+  .header-tag.mode-agent { border-color: #ffaa22; color: #ffaa22; }
+
+  /* Stage canvas */
+  #stage-container {
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 12px;
+    position: relative;
+  }
+
+  #stage-canvas {
+    width: 100%;
+    display: block;
+    border-radius: 4px;
+  }
+
+  #legend {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* Player info */
+  #player-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .player-card {
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+    font-size: 13px;
+  }
+
+  .player-card.p0 { border-left: 3px solid var(--p0); }
+  .player-card.p1 { border-left: 3px solid var(--p1); }
+
+  .player-card h3 {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .player-card .action-line {
+    font-size: 14px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .player-card .stats-line {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .action-correct { color: var(--correct); }
+  .action-wrong { color: var(--wrong); }
+
+  .top3 {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .top3 .prob-bar {
+    display: inline-block;
+    height: 8px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+    opacity: 0.6;
+  }
+
+  /* Controls */
+  #controls {
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 12px 16px;
+  }
+
+  #controls-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  #controls-row button {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 4px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    transition: background 0.15s;
+  }
+
+  #controls-row button:hover { background: var(--border); }
+  #controls-row button.active { background: var(--accent); border-color: var(--accent); }
+
+  #frame-display {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  #speed-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  /* Timeline */
+  #timeline-container {
+    position: relative;
+    height: 28px;
+    cursor: pointer;
+  }
+
+  #timeline-bg {
+    position: absolute;
+    top: 8px;
+    left: 0;
+    right: 0;
+    height: 12px;
+    background: var(--surface2);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  #seed-region {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: var(--seed-color);
+    opacity: 0.3;
+  }
+
+  #timeline-progress {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: var(--accent);
+    opacity: 0.4;
+    transition: width 0.05s linear;
+  }
+
+  #timeline-thumb {
+    position: absolute;
+    top: 4px;
+    width: 4px;
+    height: 20px;
+    background: var(--text);
+    border-radius: 2px;
+    transform: translateX(-2px);
+    transition: left 0.05s linear;
+  }
+
+  #timeline-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Stats */
+  #stats-bar {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .stat-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    flex: 1;
+    min-width: 120px;
+    text-align: center;
+  }
+
+  .stat-chip .label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  .stat-chip .value {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .stat-chip .value.good { color: var(--correct); }
+  .stat-chip .value.warn { color: #ffaa44; }
+  .stat-chip .value.bad { color: var(--wrong); }
+
+  /* New file button */
+  #new-file-btn {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    z-index: 10;
+  }
+
+  #new-file-btn:hover { color: var(--text); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div id="drop-zone">
+  <h1>World Model Demo Viewer</h1>
+  <p>No Johns — Melee frame prediction visualization</p>
+  <label for="file-input">
+    <div style="font-size: 40px; margin-bottom: 12px;">&#128506;</div>
+    <div>Drop a demo.json here or click to browse</div>
+    <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">
+      Generated by <code>worldmodel.scripts.generate_demo</code>
+    </div>
+  </label>
+  <input type="file" id="file-input" accept=".json">
+</div>
+
+<button id="new-file-btn" style="display:none;">Load new file</button>
+
+<div id="viewer">
+  <div id="header"></div>
+  <div id="stage-container">
+    <canvas id="stage-canvas" width="868" height="360"></canvas>
+    <div id="legend"></div>
+  </div>
+  <div id="player-info">
+    <div class="player-card p0" id="p0-card"></div>
+    <div class="player-card p1" id="p1-card"></div>
+  </div>
+  <div id="controls">
+    <div id="controls-row">
+      <button id="btn-rew" title="Rewind 10 frames">&#9198;</button>
+      <button id="btn-back" title="Step back 1 frame">&#9664;</button>
+      <button id="btn-play" title="Play/Pause" class="active">&#9654;</button>
+      <button id="btn-fwd" title="Step forward 1 frame">&#9654;</button>
+      <button id="btn-ffwd" title="Forward 10 frames">&#9197;</button>
+      <select id="speed-select">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+        <option value="4">4x</option>
+        <option value="10">10x</option>
+      </select>
+      <span id="frame-display">Frame 0/0</span>
+    </div>
+    <div id="timeline-container">
+      <div id="timeline-bg">
+        <div id="seed-region"></div>
+        <div id="timeline-progress"></div>
+      </div>
+      <div id="timeline-thumb"></div>
+    </div>
+  </div>
+  <div id="stats-bar"></div>
+</div>
+
+<script>
+// ===== State =====
+let demoData = null;
+let currentFrame = 0;
+let playing = false;
+let playInterval = null;
+let speed = 1;
+
+// ===== File loading =====
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const viewer = document.getElementById('viewer');
+const newFileBtn = document.getElementById('new-file-btn');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) loadFile(fileInput.files[0]); });
+newFileBtn.addEventListener('click', () => {
+  viewer.style.display = 'none';
+  newFileBtn.style.display = 'none';
+  dropZone.style.display = 'flex';
+  stop();
+  demoData = null;
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      demoData = JSON.parse(reader.result);
+      initViewer();
+    } catch (e) {
+      alert('Failed to parse JSON: ' + e.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ===== Viewer init =====
+function initViewer() {
+  dropZone.style.display = 'none';
+  viewer.style.display = 'flex';
+  newFileBtn.style.display = 'block';
+  currentFrame = 0;
+
+  const m = demoData.meta;
+  const modeClass = m.mode === 'teacher-forced' ? 'mode-tf'
+    : m.mode === 'agent-vs-agent' ? 'mode-agent' : 'mode-ar';
+  const modeLabel = m.mode === 'teacher-forced' ? 'Teacher-Forced'
+    : m.mode === 'agent-vs-agent' ? 'Agent vs Agent' : 'Autoregressive';
+
+  const agentTag = m.mode === 'agent-vs-agent'
+    ? `<span class="header-tag">${m.p0_agent || '?'} vs ${m.p1_agent || '?'}</span>` : '';
+
+  document.getElementById('header').innerHTML = `
+    <span class="header-tag">${m.model_name}</span>
+    <span class="header-tag">${m.arch.toUpperCase()}</span>
+    <span class="header-tag">${m.stage.name}</span>
+    <span class="header-tag">${m.characters.p0.name} vs ${m.characters.p1.name}</span>
+    <span class="header-tag ${modeClass}">${modeLabel}</span>
+    ${agentTag}
+    <span class="header-tag">K=${m.context_len}</span>
+  `;
+
+  const isTF = m.mode === 'teacher-forced';
+  document.getElementById('legend').innerHTML = isTF ? `
+    <div class="legend-item"><span class="legend-dot" style="background:var(--p0)"></span> P0 actual</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--p0);opacity:0.4"></span> P0 predicted</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--p1)"></span> P1 actual</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--p1);opacity:0.4"></span> P1 predicted</div>
+  ` : `
+    <div class="legend-item"><span class="legend-dot" style="background:var(--p0)"></span> P0</div>
+    <div class="legend-item"><span class="legend-dot" style="background:var(--p1)"></span> P1</div>
+  `;
+
+  // Seed region on timeline
+  const seedPct = (m.seed_frames / m.total_frames * 100).toFixed(2);
+  document.getElementById('seed-region').style.width = seedPct + '%';
+
+  // Stats bar
+  renderStats();
+
+  renderFrame();
+}
+
+// ===== Stats =====
+function renderStats() {
+  const s = demoData.summary;
+  const bar = document.getElementById('stats-bar');
+
+  if (!s || s.total_frames_predicted === 0) {
+    bar.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+
+  if (s.p0_action_acc !== undefined) {
+    const avg = ((s.p0_action_acc + s.p1_action_acc) / 2 * 100).toFixed(1);
+    const cls = avg >= 90 ? 'good' : avg >= 70 ? 'warn' : 'bad';
+    html += `<div class="stat-chip"><div class="label">Action Accuracy</div><div class="value ${cls}">${avg}%</div></div>`;
+  }
+
+  if (s.action_change_acc !== undefined) {
+    const v = (s.action_change_acc * 100).toFixed(1);
+    const cls = v >= 60 ? 'good' : v >= 40 ? 'warn' : 'bad';
+    html += `<div class="stat-chip"><div class="label">Change Accuracy</div><div class="value ${cls}">${v}%</div></div>`;
+  }
+
+  if (s.avg_position_error !== undefined) {
+    const cls = s.avg_position_error < 2 ? 'good' : s.avg_position_error < 5 ? 'warn' : 'bad';
+    html += `<div class="stat-chip"><div class="label">Avg Pos Error</div><div class="value ${cls}">${s.avg_position_error.toFixed(1)}</div></div>`;
+  }
+
+  html += `<div class="stat-chip"><div class="label">Frames</div><div class="value">${s.total_frames_predicted}</div></div>`;
+  bar.innerHTML = html;
+}
+
+// ===== Canvas rendering =====
+function renderFrame() {
+  if (!demoData) return;
+  const frame = demoData.frames[currentFrame];
+  if (!frame) return;
+
+  drawStage(frame);
+  drawPlayerCards(frame);
+  updateControls();
+}
+
+function drawStage(frame) {
+  const canvas = document.getElementById('stage-canvas');
+  const ctx = canvas.getContext('2d');
+  const geo = demoData.stage_geometry;
+  const cam = geo.camera_bounds || { left: -160, right: 160, top: 100, bottom: -50 };
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // Coordinate transform: game coords → canvas coords
+  const gameW = cam.right - cam.left;
+  const gameH = cam.top - cam.bottom;
+  const scale = Math.min(W / gameW, H / gameH) * 0.9;
+  const cx = W / 2;
+  const cy = H / 2;
+
+  function tx(gx) { return cx + (gx - (cam.left + cam.right) / 2) * scale; }
+  function ty(gy) { return cy - (gy - (cam.bottom + cam.top) / 2) * scale; }
+
+  // Clear
+  ctx.fillStyle = '#0c0c18';
+  ctx.fillRect(0, 0, W, H);
+
+  // Blast zones (dashed)
+  const bz = geo.blast_zones;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(tx(bz.left), ty(bz.top), (bz.right - bz.left) * scale, (bz.top - bz.bottom) * scale);
+  ctx.setLineDash([]);
+
+  // Ground
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(tx(geo.ground_x_range[0]), ty(geo.ground_y));
+  ctx.lineTo(tx(geo.ground_x_range[1]), ty(geo.ground_y));
+  ctx.stroke();
+
+  // Ground edge caps
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(tx(geo.ground_x_range[0]), ty(geo.ground_y));
+  ctx.lineTo(tx(geo.ground_x_range[0]), ty(geo.ground_y) + 8);
+  ctx.moveTo(tx(geo.ground_x_range[1]), ty(geo.ground_y));
+  ctx.lineTo(tx(geo.ground_x_range[1]), ty(geo.ground_y) + 8);
+  ctx.stroke();
+
+  // Platforms
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 2;
+  for (const plat of geo.platforms || []) {
+    ctx.beginPath();
+    ctx.moveTo(tx(plat.x_range[0]), ty(plat.y));
+    ctx.lineTo(tx(plat.x_range[1]), ty(plat.y));
+    ctx.stroke();
+  }
+
+  const isTF = demoData.meta.mode === 'teacher-forced';
+  const isSeed = frame.source === 'seed';
+
+  // Draw players
+  const r = 10; // player radius
+  const colors = { p0: '#4488ff', p1: '#ff4466' };
+
+  for (const pid of ['p0', 'p1']) {
+    const color = colors[pid];
+
+    if (isSeed || !isTF) {
+      // Single dot: actual (seed) or predicted (autoregressive)
+      const data = isSeed ? frame.actual[pid] : (frame.predicted ? frame.predicted[pid] : frame.actual[pid]);
+      if (!data) continue;
+      const px = tx(data.x);
+      const py = ty(data.y);
+
+      // Facing indicator
+      const dir = data.facing_right ? 1 : -1;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + dir * 14, py);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Player dot
+      ctx.fillStyle = color;
+      ctx.globalAlpha = isSeed ? 0.5 : 1;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Percent label
+      ctx.fillStyle = color;
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${Math.round(data.percent)}%`, px, py - r - 6);
+
+      // Stock dots
+      for (let s = 0; s < data.stocks; s++) {
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.arc(px - 8 + s * 6, py + r + 8, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+    } else if (isTF && frame.predicted) {
+      // Teacher-forced: both actual (solid) and predicted (translucent)
+      const actual = frame.actual[pid];
+      const pred = frame.predicted[pid];
+
+      const ax = tx(actual.x);
+      const ay = ty(actual.y);
+      const ppx = tx(pred.x);
+      const ppy = ty(pred.y);
+
+      // Error line
+      const dist = Math.sqrt((actual.x - pred.x) ** 2 + (actual.y - pred.y) ** 2);
+      if (dist > 0.5) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.25;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ppx, ppy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+
+      // Predicted (translucent, behind)
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.arc(ppx, ppy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Actual (solid)
+      const adir = actual.facing_right ? 1 : -1;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax + adir * 14, ay);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(ax, ay, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Percent label
+      ctx.fillStyle = color;
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${Math.round(actual.percent)}%`, ax, ay - r - 6);
+
+      // Stock dots
+      for (let s = 0; s < actual.stocks; s++) {
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.arc(ax - 8 + s * 6, ay + r + 8, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Frame source label
+  ctx.fillStyle = frame.source === 'seed' ? 'rgba(102,68,204,0.6)' : 'rgba(136,102,255,0.4)';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(frame.source.toUpperCase(), 12, 18);
+}
+
+// ===== Player cards =====
+function drawPlayerCards(frame) {
+  for (const pid of ['p0', 'p1']) {
+    const card = document.getElementById(`${pid}-card`);
+    const actual = frame.actual ? frame.actual[pid] : null;
+    const pred = frame.predicted ? frame.predicted[pid] : null;
+    const isTF = demoData.meta.mode === 'teacher-forced';
+    const charName = demoData.meta.characters[pid].name;
+
+    let html = `<h3>${pid === 'p0' ? 'Player 1' : 'Player 2'} — ${charName}</h3>`;
+
+    if (frame.source === 'seed' && actual) {
+      html += `<div class="action-line">${actual.action_name}</div>`;
+      html += `<div class="stats-line">${actual.percent.toFixed(0)}% &middot; ${actual.stocks} stocks &middot; (${actual.x.toFixed(0)}, ${actual.y.toFixed(0)})</div>`;
+    } else if (isTF && actual && pred) {
+      const correct = pred.action_correct;
+      const icon = correct ? '&#10003;' : '&#10007;';
+      const cls = correct ? 'action-correct' : 'action-wrong';
+
+      if (actual.action_name === pred.action_name) {
+        html += `<div class="action-line"><span class="${cls}">${icon}</span> ${actual.action_name}</div>`;
+      } else {
+        html += `<div class="action-line"><span class="${cls}">${icon}</span> ${actual.action_name} <span style="color:var(--text-dim)">&rarr;</span> ${pred.action_name}</div>`;
+      }
+
+      html += `<div class="stats-line">${actual.percent.toFixed(0)}% &middot; ${actual.stocks} stocks &middot; err ${pred.position_error !== undefined ? pred.position_error.toFixed(1) : '?'}</div>`;
+
+      // Top 3 actions
+      if (pred.top3_actions) {
+        html += '<div class="top3">';
+        for (const a of pred.top3_actions) {
+          const barW = Math.max(1, a.prob * 80);
+          html += `<div><span class="prob-bar" style="width:${barW}px"></span>${a.name} ${(a.prob * 100).toFixed(1)}%</div>`;
+        }
+        html += '</div>';
+      }
+    } else if (pred) {
+      // Autoregressive
+      html += `<div class="action-line">${pred.action_name}</div>`;
+      html += `<div class="stats-line">${pred.percent.toFixed(0)}% &middot; ${pred.stocks} stocks &middot; (${pred.x.toFixed(0)}, ${pred.y.toFixed(0)})</div>`;
+
+      if (pred.top3_actions) {
+        html += '<div class="top3">';
+        for (const a of pred.top3_actions) {
+          const barW = Math.max(1, a.prob * 80);
+          html += `<div><span class="prob-bar" style="width:${barW}px"></span>${a.name} ${(a.prob * 100).toFixed(1)}%</div>`;
+        }
+        html += '</div>';
+      }
+    }
+
+    card.innerHTML = html;
+  }
+}
+
+// ===== Controls =====
+function updateControls() {
+  const total = demoData.frames.length;
+  document.getElementById('frame-display').textContent = `Frame ${currentFrame}/${total - 1}`;
+
+  const pct = total > 1 ? (currentFrame / (total - 1) * 100) : 0;
+  document.getElementById('timeline-progress').style.width = pct + '%';
+  document.getElementById('timeline-thumb').style.left = pct + '%';
+}
+
+function stop() {
+  playing = false;
+  if (playInterval) { clearInterval(playInterval); playInterval = null; }
+  document.getElementById('btn-play').classList.remove('active');
+  document.getElementById('btn-play').innerHTML = '&#9654;';
+}
+
+function play() {
+  if (playing) { stop(); return; }
+  playing = true;
+  document.getElementById('btn-play').classList.add('active');
+  document.getElementById('btn-play').innerHTML = '&#9646;&#9646;';
+
+  const fps = 60;
+  const interval = 1000 / (fps * speed);
+  playInterval = setInterval(() => {
+    if (currentFrame >= demoData.frames.length - 1) { stop(); return; }
+    currentFrame++;
+    renderFrame();
+  }, interval);
+}
+
+function stepTo(frame) {
+  const total = demoData.frames.length;
+  currentFrame = Math.max(0, Math.min(total - 1, frame));
+  renderFrame();
+}
+
+// Button handlers
+document.getElementById('btn-play').addEventListener('click', play);
+document.getElementById('btn-back').addEventListener('click', () => { stop(); stepTo(currentFrame - 1); });
+document.getElementById('btn-fwd').addEventListener('click', () => { stop(); stepTo(currentFrame + 1); });
+document.getElementById('btn-rew').addEventListener('click', () => { stop(); stepTo(currentFrame - 10); });
+document.getElementById('btn-ffwd').addEventListener('click', () => { stop(); stepTo(currentFrame + 10); });
+
+document.getElementById('speed-select').addEventListener('change', e => {
+  speed = parseFloat(e.target.value);
+  if (playing) { stop(); play(); }
+});
+
+// Timeline click/drag
+const timelineContainer = document.getElementById('timeline-container');
+let draggingTimeline = false;
+
+function setFrameFromMouse(e) {
+  const rect = timelineContainer.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  stepTo(Math.round(pct * (demoData.frames.length - 1)));
+}
+
+timelineContainer.addEventListener('mousedown', e => { draggingTimeline = true; stop(); setFrameFromMouse(e); });
+document.addEventListener('mousemove', e => { if (draggingTimeline) setFrameFromMouse(e); });
+document.addEventListener('mouseup', () => { draggingTimeline = false; });
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (!demoData) return;
+  switch (e.code) {
+    case 'Space': e.preventDefault(); play(); break;
+    case 'ArrowRight':
+      e.preventDefault();
+      stop();
+      stepTo(currentFrame + (e.shiftKey ? 10 : 1));
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      stop();
+      stepTo(currentFrame - (e.shiftKey ? 10 : 1));
+      break;
+    case 'Home': e.preventDefault(); stop(); stepTo(0); break;
+    case 'End': e.preventDefault(); stop(); stepTo(demoData.frames.length - 1); break;
+  }
+});
+</script>
+
+</body>
+</html>
