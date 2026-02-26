@@ -220,9 +220,9 @@ def train(
 @app.function(
     volumes={DATA_VOLUME_PATH: volume},
     image=image,
-    timeout=3600,
+    timeout=14400,
     cpu=4,
-    memory=16384,
+    memory=32768,
 )
 def pre_encode(
     config: str = "worldmodel/experiments/mamba2-medium-gpu.yaml",
