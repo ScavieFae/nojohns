@@ -41,126 +41,7 @@ import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
-NUM_ITEM_SLOTS = 15
-
-
-class ItemAssigner:
-    """Map item spawn IDs to stable slot indices 0..NUM_ITEM_SLOTS-1.
-
-    Items keep their slot across frames so the model can track individual
-    projectiles over time. Ported from slippi-ai/slippi_db/parsing_utils.py.
-    """
-
-    def __init__(self):
-        self.assignments: dict[int, int] = {}
-        self.free_slots = list(range(NUM_ITEM_SLOTS - 1, -1, -1))
-
-    def assign(self, item_ids) -> list[int]:
-        ids_set = set(item_ids)
-        for item_id in list(self.assignments):
-            if item_id not in ids_set:
-                self.free_slots.append(self.assignments.pop(item_id))
-
-        slots = []
-        for item_id in item_ids:
-            if item_id in self.assignments:
-                slots.append(self.assignments[item_id])
-            elif self.free_slots:
-                slot = self.free_slots.pop()
-                self.assignments[item_id] = slot
-                slots.append(slot)
-            else:
-                slots.append(-1)
-        return slots
-
-
-def _extract_items_from_path(slp_path: str, num_frames: int):
-    """Extract items from raw peppi_py arrow struct.
-
-    Returns a PyArrow StructArray with 15 item slots, or None on failure.
-    """
-    try:
-        import peppi_py._peppi as raw_peppi
-        raw_game = raw_peppi.read_slippi(slp_path)
-        items_list = raw_game.frames.field('item')
-    except Exception:
-        return None
-
-    if items_list is None or len(items_list) == 0:
-        return None
-
-    offsets = items_list.offsets.to_numpy()
-    values = items_list.values
-    if len(values) == 0:
-        return None
-
-    all_ids = values.field('id').to_numpy()
-    all_types = values.field('type').to_numpy()
-    all_states = values.field('state').to_numpy()
-    all_x = values.field('position').field('x').to_numpy()
-    all_y = values.field('position').field('y').to_numpy()
-
-    exists = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=bool)
-    type_id = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.uint16)
-    state = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.uint8)
-    x = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.float32)
-    y = np.zeros((num_frames, NUM_ITEM_SLOTS), dtype=np.float32)
-
-    assigner = ItemAssigner()
-    n_arrow_frames = min(len(items_list), num_frames)
-    for frame_idx in range(n_arrow_frames):
-        start, end = offsets[frame_idx], offsets[frame_idx + 1]
-        if start == end:
-            assigner.assign([])
-            continue
-        frame_ids = all_ids[start:end]
-        slots = assigner.assign(frame_ids)
-        for i, slot in enumerate(slots):
-            if slot < 0:
-                continue
-            idx = start + i
-            exists[frame_idx, slot] = True
-            type_id[frame_idx, slot] = all_types[idx]
-            state[frame_idx, slot] = all_states[idx]
-            x[frame_idx, slot] = all_x[idx]
-            y[frame_idx, slot] = all_y[idx]
-
-    item_slots = []
-    for i in range(NUM_ITEM_SLOTS):
-        slot_struct = pa.StructArray.from_arrays(
-            [
-                pa.array(exists[:, i]),
-                pa.array(type_id[:, i]),
-                pa.array(state[:, i]),
-                pa.array(x[:, i]),
-                pa.array(y[:, i]),
-            ],
-            names=["exists", "type", "state", "x", "y"],
-        )
-        item_slots.append(slot_struct)
-
-    return pa.StructArray.from_arrays(
-        item_slots, names=[f"item_{i}" for i in range(NUM_ITEM_SLOTS)]
-    )
-
-
-def _empty_items_pa(num_frames: int):
-    """Build 15 empty item slots as a PyArrow StructArray."""
-    empty_item = pa.StructArray.from_arrays(
-        [
-            pa.array(np.zeros(num_frames, dtype=bool)),
-            pa.array(np.zeros(num_frames, dtype=np.uint16)),
-            pa.array(np.zeros(num_frames, dtype=np.uint8)),
-            pa.array(np.zeros(num_frames, dtype=np.float32)),
-            pa.array(np.zeros(num_frames, dtype=np.float32)),
-        ],
-        names=["exists", "type", "state", "x", "y"],
-    )
-    return pa.StructArray.from_arrays(
-        [empty_item] * NUM_ITEM_SLOTS,
-        names=[f"item_{i}" for i in range(NUM_ITEM_SLOTS)],
-    )
-
+from worldmodel.scripts.item_utils import extract_items, empty_items_pa
 
 # Button bitmasks (matching slippi_db/libmelee convention)
 BUTTON_MASKS = {
@@ -206,22 +87,6 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
                 (button_bits & mask).astype(bool)
             )
 
-        controller = pa.StructArray.from_arrays(
-            [
-                pa.array(joy_x),
-                pa.array(joy_y),
-                pa.array(c_x),
-                pa.array(c_y),
-                pa.array(shoulder),
-                pa.StructArray.from_arrays(
-                    list(button_arrays.values()),
-                    names=list(button_arrays.keys()),
-                ),
-            ],
-            names=["x", "y", "x", "y", "shoulder", "buttons"],
-        )
-        # pyarrow doesn't allow duplicate field names in a struct, so
-        # nest sticks properly
         main_stick = pa.StructArray.from_arrays(
             [pa.array(joy_x), pa.array(joy_y)], names=["x", "y"]
         )
@@ -311,9 +176,9 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
     # Extract items from raw arrow data if path available
     items_pa = None
     if slp_path is not None:
-        items_pa = _extract_items_from_path(slp_path, num_frames)
+        items_pa = extract_items(slp_path, num_frames)
     if items_pa is None:
-        items_pa = _empty_items_pa(num_frames)
+        items_pa = empty_items_pa(num_frames)
 
     root = pa.StructArray.from_arrays(
         [players["p0"], players["p1"], stage, randall, fod, items_pa],
