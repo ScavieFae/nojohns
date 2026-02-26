@@ -120,8 +120,33 @@ Script: `worldmodel/scripts/benchmark_quantization.py`
 
 **Mamba-2 quantization notes:**
 - SSM scan ops (softplus, cumsum) are NOT in the linear layers — they survive quantization untouched
-- The 4 non-quantized layers are likely embedding-related (already discrete)
+- The 4 non-quantized layers are small prediction heads (in=384, out=3 for l_cancel/hurtbox) — `quantize_dynamic` skips very small layers where INT8 packing isn't beneficial. The heavy hitters — the 8 Mamba in_proj/out_proj layers (~70% of all params) — all got quantized.
 - On CUDA with proper INT8 kernels, expect actual speedup (qnnpack on ARM was 0.94x)
+
+**Scrutiny of "0.1% degradation, ship it" (Scav + Mattie discussion, Feb 26):**
+
+The headline is promising but the evidence is narrower than it looks.
+
+*Statistical power:* 0.09pp drop on 62K frames. Standard error on a binary metric at this sample size is ~0.18pp (sqrt(0.69×0.31/62533)). The 0.1% difference is within statistical noise — we can't distinguish it from zero. That's actually good (no detectable degradation), but it also means we can't confidently bound the true degradation.
+
+*What we tested vs what we'd deploy:*
+- **Dynamic quantization** (what we tested): weights → INT8, activations stay float32. Each forward pass: float32 input → INT8 weight matmul → float32 output. Cheapest, safest form.
+- **Static quantization** (what onchain/rollup needs): weights AND activations → INT8. Requires a calibration dataset to measure activation ranges, then fixed scale factors per layer. Harder, likely degrades more. **Not yet tested.**
+
+*Assumptions we're making:*
+1. Dynamic quant is representative of deployment. We only quantized weights. Static quant (needed for ephemeral rollup) could be worse.
+2. 50 games is enough for relative delta. Absolute numbers (68.8% vs 75.9% on real val set) don't match because different sample. But float32-vs-INT8 delta should be stable. Probably true, worth confirming on larger set.
+3. qnnpack (ARM) ≈ CUDA INT8. Different backends have different rounding behavior.
+4. **Single-step accuracy ≈ autoregressive accuracy. Biggest leap.** Benchmark is teacher-forced (one step). In autoregressive rollout, errors compound. If INT8 introduces slightly different error patterns (even at same magnitude), drift could diverge differently. Not tested.
+5. 4.3M generalizes to 10.6M. Larger models sometimes quantize better (more redundancy), sometimes worse (more precision-dependent layers).
+
+*What we don't know:*
+- Autoregressive drift under INT8 — the real deployment scenario
+- Static quantization degradation (needed for onchain)
+- Whether a more-trained checkpoint (epochs 2-3) is more or less fragile
+- CUDA INT8 kernel behavior specifically
+
+*Honest assessment:* PTQ looks very promising — quantization barely touches the metrics that matter. But "no QAT needed" is a claim about deployment, and we only tested one step of inference on 62K frames with ARM kernels. **Before shipping INT8, run an autoregressive demo with the quantized model and compare drift visually.**
 
 ### Decision 4: How much data actually helps? (answered by current runs)
 

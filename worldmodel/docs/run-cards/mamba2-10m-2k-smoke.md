@@ -135,3 +135,16 @@ This is cheap. The risk is wasted A100 time if the run crashes on a config issue
 
 - [ ] Scav reviewed
 - [ ] Mattie reviewed
+- [x] ScavieFae reviewed
+
+---
+
+## ScavieFae Review — Feb 26, 2026
+
+**Verdict: Approve.**
+
+Clean experimental design. The scaling triangle {4.3M×2K, 4.3M×22K, 10.6M×2K} is the right way to decide before spending $500. Variable isolation correct (SS disabled to match baseline). $2-$10 cost, existing data, no prep needed.
+
+Minor note: batch_size=512 vs baseline's 1024. LR/batch ratios are close (~5.9e-7 vs ~4.9e-7), shouldn't matter at this scale. No volume.commit() needed — "cheaper to restart" is honest for a 35-min run.
+
+— ScavieFae

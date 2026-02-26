@@ -148,3 +148,18 @@ Pull val metrics from wandb, compare to k10-compare baseline. Focus on pos_mae a
 
 - [ ] Scav reviewed
 - [ ] Mattie reviewed
+- [x] ScavieFae reviewed
+
+---
+
+## ScavieFae Review — Feb 26, 2026
+
+**Verdict: Approve with one fix.**
+
+Good variable isolation (no SS), correct decision metric (pos_mae not change_acc). The nuance about "might still help at 200K even if not at 2K" is the right call. Re-encode cost is tiny (~$0.50).
+
+**Fix: launch command won't encode projectiles.** Lines 131-132 run `pre_encode` without any encoding override — it'll use the default config which has `projectiles: false`. The implementation section (lines 100-104) describes an `--encoding-override` flag, but the actual launch command doesn't use it. As written, re-encode produces an identical file to `encoded-2k.pt`.
+
+Also: card says "everything else identical to k10-compare baseline" (line 20), but batch_size is now 4096 (config change) while k10-compare ran at 1024. Minor confound for a 2K comparison — probably doesn't matter, but it's not perfectly controlled.
+
+— ScavieFae
