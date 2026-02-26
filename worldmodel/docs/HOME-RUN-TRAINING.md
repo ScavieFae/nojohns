@@ -240,7 +240,7 @@ Mattie's call: quantization first, then projectiles and 10.6M smoke test.
 |---|-----------|------|------|--------|
 | **1a** | **PTQ on 4.3M checkpoint (default)** | **Free** | **~30 min** | **DONE — PASS (0.1% change_acc loss, 22/26 layers)** |
 | **1b** | **PTQ force-all (onchain mode)** | **Free** | **~30 min** | **DONE — PASS (26/26 layers, 0.0% additional cost)** |
-| ~~2~~ | ~~Projectile encoding test (2K)~~ | ~~$6~~ | ~~2h~~ | **BLOCKED — ScavieFae working on parser fix** |
+| **2** | **Projectile encoding test (1859 games)** | **~$5** | **~1.5h** | **TRAINING — wandb `n04xz9v3`** |
 | 3 | 10.6M × 2K smoke test | ~$20 | ~35 min (2ep on A100) | **LAUNCHING** |
 
 ~~Experiments 2 and 3 can run in parallel on Modal.~~

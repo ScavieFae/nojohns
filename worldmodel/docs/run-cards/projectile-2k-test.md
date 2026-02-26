@@ -1,17 +1,11 @@
 # Run Card: projectile-2k-test
 
 **Created**: Feb 26, 2026
-**Status**: BLOCKED — parser doesn't populate item data
+**Status**: TRAINING — launched on A100, wandb `n04xz9v3`
 
-## Blocker
+## Blocker — RESOLVED
 
-Checked 500 parsed games: the `items` struct exists in the parquet schema (15 slots × {exists, type, state, x, y}) but every `exists` field is `False`. The parsing pipeline creates the struct but doesn't populate it from Slippi replays. Projectile encoding would add 6 dims of zeros.
-
-**Fix needed**: Update the Slippi replay parser (`slippi_db` or equivalent) to actually extract projectile/item state from frame data. This is upstream of the world model — requires changes to the data pipeline, not just flipping a flag.
-
-**Unblocked by**: Parser fix + re-parse of at least 2K games with item data populated.
-
-**Owner**: ScavieFae is working on the parser fix (Feb 26).
+Parser fix by ScavieFae (commit `c95dda0`): `item_utils.py` extracts items from peppi_py's raw arrow struct. Re-parsed 1,859 games locally, verified 50% have active items (6.4% of frames). Re-encoded with `projectiles=True` → 62-dim floats (was 56). Uploaded `encoded-2k-proj.pt` to Modal volume.
 
 ## Goal
 
