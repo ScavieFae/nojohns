@@ -7,6 +7,42 @@ Last updated: Feb 25, 2026
 
 ---
 
+## Task Calendar — 48hr Sprint to Friday (Feb 27 deadline)
+
+### Tuesday night (Feb 25, now → midnight)
+- K10 vs K60 results come in (running)
+- 22K pre-encode finishes (running)
+- Pick K, launch **4.3M × 22K × 5 epochs** overnight (~$50-60, ~12hr)
+- While overnight runs: implement **checkpoint resume (#2)** and **rollout clamping (#4)** — both are small
+
+### Wednesday morning (Feb 26, wake up)
+- Check overnight results on wandb
+- Evaluate: does 22K move the needle? (MLP went 64.5% → 77.5% on the same jump)
+- If yes → data scaling works. Start staging 287K ranked data from ScavieFae.
+- If flattening → architecture bottleneck. Pivot to 15M immediately.
+
+### Wednesday day (Feb 26)
+- **Projectile encoding (#1)** — biggest encoding gap, data already in parquet
+- **Scheduled sampling (#3)** — train the model to recover from its own errors
+- **Pre-encode at new scale** — 50K+ games if staging ranked data
+- Launch **Wednesday overnight run**: best config so far + new improvements
+
+### Thursday morning (Feb 27 eve)
+- Evaluate Wednesday overnight results
+- If capacity allows: launch **15M model smoke test** on 2K games (~3hr, ~$10)
+- Cherry-pick from experiments list if time: **hierarchical action loss (#6)** is cheapest bang
+- **INT8 QAT (#5)** if onchain demo is part of the hackathon deliverable
+
+### Friday (Feb 27 — deadline)
+- Results in hand. Best checkpoint downloaded.
+- Rollout demos generated with clamping
+- Ship whatever we've got
+
+### What we're racing against
+Each overnight run is 1 iteration. We get **2 overnight runs** (Tue night, Wed night) and maybe a **daytime run** Wed if configs are ready early. Every improvement that isn't ready before a launch window waits 12+ hours for the next one.
+
+---
+
 ## Now: Active (Feb 25 evening)
 
 ### K=10 vs K=60 comparison
@@ -52,7 +88,7 @@ Last updated: Feb 25, 2026
 
 ### 4. Rollout clamping
 **Priority**: Medium — cheap, prevents obviously wrong rollouts
-**What**: Clamp predictions to valid ranges during autoregressive rollout. Positions inside blast zones, stocks 0-4, percent 0-999, shield 0-60.
+**What**: Clamp predictions to valid ranges during autoregressive rollout. Positions inside blast zones, stocks 0-4, percent 0-999%, shield 0-60.
 **Cost**: ~30 lines in rollout.py.
 **Source**: GPU-RUN-PLAN.md
 
