@@ -126,4 +126,45 @@ Note: MLP on 22K/4ep hit 77.5% change_acc. Mamba-2 should match or beat that wit
 
 - [ ] Scav reviewed
 - [ ] Mattie reviewed
-- [ ] ScavieFae reviewed (via HANDOFF-MODAL.md)
+- [x] ScavieFae reviewed
+
+---
+
+## ScavieFae Review — Feb 25, 2026
+
+**Verdict: BLOCKED — one fix required before launch**
+
+### BLOCKER: Checkpoints not committed to Modal volume until training ends
+
+`modal_train.py:211-214` — `volume.commit()` only runs after all 3 epochs complete. The trainer saves `best.pt` to the container's local filesystem, but if Modal kills the container for any reason (timeout, OOM, spot preemption), **every checkpoint from every completed epoch is lost**. At ~3h per epoch, this means waking up to zero artifacts after 6+ hours of A100 time.
+
+**Fix:** Add `volume.commit()` after each epoch's checkpoint save — either in the trainer as a callback or in the Modal launcher wrapping `trainer.train()`. This is the difference between "run died at hour 8, resume from epoch 2" and "run died at hour 8, start over."
+
+### Also flagging: two silent-failure risks for overnight runs
+
+**wandb failure is swallowed.** `modal_train.py:160-170` catches wandb init exceptions, prints a warning, and continues with no monitoring. With `--detach`, you won't see the warning. Training runs but is invisible — no dashboard, no way to check progress.
+
+**`--detach` hides startup crashes.** If the function dies on startup (import error, missing encoded file, config mismatch), the error goes to Modal logs, not your terminal. You could launch, go to sleep, and it died 30 seconds later. Consider: launch attached first, confirm wandb URL + first few batches in the log, then detach or just let it run.
+
+### Other Concerns (non-blocking)
+
+**1. Three new variables at once.** Data scale (2K→22K), scheduled sampling, and combat context heads all change simultaneously. If metrics move, attribution is ambiguous. Acceptable for an overnight bet — but if results are mixed, the next run should isolate SS vs no-SS on the same data/heads.
+
+**2. Timing calibration.** At the pessimistic end (45h), the 24h timeout won't cover it. The "kill if epoch 1 >8h" heuristic is good — but who is actually monitoring overnight? Specify whether Mattie will have wandb/Modal open, or if the timeout is the only circuit breaker.
+
+**3. SS dynamics mask — confirm in code.** Card says SS corrupts core_continuous + velocity but NOT stocks/hitlag/combo. This was my review feedback and it's the right design. But has the mask actually been wired up in `trainer.py`? Scav should confirm before launch.
+
+**4. Resume `--epochs` semantics.** The resume command passes `--epochs 3` — does that mean 3 more or 3 total? If total, resuming from epoch 2 would only train 1 more. Clarify.
+
+**5. Cost range.** $25–$125 is a 5x spread. Fine for a one-off, just noting we're accepting the upper end.
+
+### Looks Good
+
+- Kill thresholds are concrete and actionable
+- log_interval at 1000 batches (~60s) — massive improvement over 30-min gaps
+- Batch-level wandb logging — essential for overnight monitoring
+- 3 epochs instead of 10 — right call for a first scaling bet
+- SS params (rate=0.3, noise=0.1, anneal=3ep) are reasonable
+- Dynamics mask excluding stocks/hitlag/combo — correct design
+
+— ScavieFae
