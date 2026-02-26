@@ -1,7 +1,15 @@
 # Run Card: projectile-2k-test
 
 **Created**: Feb 26, 2026
-**Status**: PENDING REVIEW
+**Status**: BLOCKED — item data not populated in parsed games
+
+## Blocker
+
+Checked 500 parsed games: the `items` struct exists in the parquet schema (15 slots × {exists, type, state, x, y}) but every `exists` field is `False`. The parsing pipeline creates the struct but doesn't populate it from Slippi replays. Projectile encoding would add 6 dims of zeros.
+
+**Fix needed**: Update the Slippi replay parser (`slippi_db` or equivalent) to actually extract projectile/item state from frame data. This is upstream of the world model — requires changes to the data pipeline, not just flipping a flag.
+
+**Unblocked by**: Parser fix + re-parse of at least 2K games with item data populated.
 
 ## Goal
 

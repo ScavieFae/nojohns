@@ -215,7 +215,7 @@ Mattie's call: quantization first, then projectiles and 10.6M smoke test.
 | # | Experiment | Cost | Time | Status |
 |---|-----------|------|------|--------|
 | **1** | **PTQ on 4.3M checkpoint** | **Free** | **~30 min** | **DONE — PASS (0.1% change_acc loss)** |
-| 2 | Projectile encoding test (2K) | ~$6 | ~2h (re-encode + 2ep) | Ready — flip flag, re-encode |
+| 2 | Projectile encoding test (2K) | ~$6 | ~2h (re-encode + 2ep) | **BLOCKED — parsed data has empty items** |
 | 3 | 10.6M × 2K smoke test | ~$20 | ~3h (2ep on A100) | Ready — encoded-2k.pt exists |
 
 Experiments 2 and 3 can run in parallel on Modal.
