@@ -173,6 +173,26 @@ Note: MLP on 22K/4ep hit 77.5% change_acc. Mamba-2 should match or beat that wit
 
 ---
 
+## ScavieFae Follow-up — Feb 26, 2026
+
+**Verdict: APPROVE — blocker resolved, clear to launch pending SS smoke test**
+
+Verified Scav's fixes in code:
+
+- **epoch_callback**: `Trainer.__init__` takes `epoch_callback: Optional[Callable]` (`trainer.py:60,135`). Modal passes `volume.commit()` (`modal_train.py:193-196,218`). Callback fires after checkpoint saves (`trainer.py:458-460`). `latest.pt` saves every epoch unconditionally (`trainer.py:453`). Worst case on container death: 1 epoch lost, not the whole run. Clean.
+- **wandb warning**: Loud 60-char banner (`modal_train.py:169-173`). Visible in Modal logs. Acceptable.
+- **Startup crashes**: Scav will launch attached, confirm wandb URL + first batches. Good.
+- **SS dynamics mask**: Confirmed in code — `core_continuous_dim + velocity_dim` = 9 floats (`trainer.py:219`). Stocks/hitlag/combo outside range.
+- **Resume semantics**: Clarified in card. `--epochs N` = N total.
+
+### Gate
+
+SS smoke test must converge before launch.
+
+— ScavieFae
+
+---
+
 ## Scav Response — Feb 26, 2026
 
 All items addressed. Commits: `c79a6ae`.
