@@ -180,6 +180,8 @@ def _train_single_gpu(config, epochs, run_name, encoded_file, resume):
 
     # Validate encoding config matches what was used to pre-encode
     # Compare resolved configs (not raw dicts) so YAML subsets match full defaults
+    # Skip training-time-only fields that don't affect tensor dimensions
+    _TRAINING_ONLY_FIELDS = {"focal_offset", "multi_position", "bidirectional"}
     enc_cfg_dict = cfg.get("encoding", {})
     saved_cfg = payload.get("encoding_config", {})
     if saved_cfg:
@@ -189,8 +191,10 @@ def _train_single_gpu(config, epochs, run_name, encoded_file, resume):
         if resolved_yaml != resolved_saved:
             diffs = {k: (resolved_yaml.get(k), resolved_saved.get(k))
                      for k in set(list(resolved_yaml) + list(resolved_saved))
-                     if resolved_yaml.get(k) != resolved_saved.get(k)}
-            raise ValueError(f"Config mismatch! Differences: {diffs}")
+                     if resolved_yaml.get(k) != resolved_saved.get(k)
+                     and k not in _TRAINING_ONLY_FIELDS}
+            if diffs:
+                raise ValueError(f"Config mismatch! Differences: {diffs}")
     from worldmodel.model.mamba2 import FrameStackMamba2
     from worldmodel.training.metrics import LossWeights
     from worldmodel.training.trainer import Trainer

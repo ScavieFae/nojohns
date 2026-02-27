@@ -102,7 +102,8 @@ def main():
     from worldmodel.training.metrics import LossWeights
     from worldmodel.training.trainer import Trainer
 
-    # Validate encoding config
+    # Validate encoding config (skip training-time-only fields that don't affect tensors)
+    _TRAINING_ONLY_FIELDS = {"focal_offset", "multi_position", "bidirectional"}
     enc_cfg_dict = cfg.get("encoding", {})
     saved_cfg = payload.get("encoding_config", {})
     if saved_cfg:
@@ -111,8 +112,10 @@ def main():
         if resolved_yaml != resolved_saved:
             diffs = {k: (resolved_yaml.get(k), resolved_saved.get(k))
                      for k in set(list(resolved_yaml) + list(resolved_saved))
-                     if resolved_yaml.get(k) != resolved_saved.get(k)}
-            raise ValueError(f"Config mismatch! Differences: {diffs}")
+                     if resolved_yaml.get(k) != resolved_saved.get(k)
+                     and k not in _TRAINING_ONLY_FIELDS}
+            if diffs:
+                raise ValueError(f"Config mismatch! Differences: {diffs}")
 
     enc_cfg = EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None})
 

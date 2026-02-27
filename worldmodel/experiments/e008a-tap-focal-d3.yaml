@@ -13,7 +13,7 @@ encoding:
   press_events: false
   lookahead: 0
   focal_offset: 3
-  projectiles: false
+  projectiles: true  # match pre-encoded data on Modal
   state_flags: true
   hitstun: true
 
