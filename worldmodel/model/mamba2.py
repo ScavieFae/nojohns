@@ -333,6 +333,7 @@ class FrameStackMamba2(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.context_len = context_len
+        self.multi_position = cfg.multi_position  # E008c
 
         # --- Embeddings (identical to FrameStackMLP) ---
         self.action_embed = nn.Embedding(cfg.action_vocab, cfg.action_embed_dim)
@@ -453,24 +454,15 @@ class FrameStackMamba2(nn.Module):
 
         return torch.cat(parts, dim=-1)  # (B, K, frame_dim)
 
-    def forward(
-        self,
-        float_ctx: torch.Tensor,
-        int_ctx: torch.Tensor,
-        next_ctrl: torch.Tensor,
-    ) -> dict[str, torch.Tensor]:
-        """Forward pass — same signature as FrameStackMLP."""
-        B, K, _ = float_ctx.shape
+    def _apply_heads(self, h: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Apply all prediction heads to hidden state(s).
 
-        frame_enc = self._encode_frames(float_ctx, int_ctx)
-        x = self.input_dropout(self.frame_proj(frame_enc))
+        Args:
+            h: (B, d_model) for single-position, or (B*K, d_model) for multi-position.
 
-        for layer in self.layers:
-            x = x + layer["mamba"](layer["norm"](x))
-
-        h = self.final_norm(x[:, -1, :])
-        h = h + self.ctrl_proj(next_ctrl)
-
+        Returns:
+            Dict of prediction tensors.
+        """
         return {
             "continuous_delta": self.continuous_head(h),
             "binary_logits": self.binary_head(h),
@@ -489,3 +481,71 @@ class FrameStackMamba2(nn.Module):
             "p0_last_attack_logits": self.p0_last_attack_head(h),
             "p1_last_attack_logits": self.p1_last_attack_head(h),
         }
+
+    def forward(
+        self,
+        float_ctx: torch.Tensor,
+        int_ctx: torch.Tensor,
+        next_ctrl: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Forward pass — same signature as FrameStackMLP.
+
+        When multi_position is True (E008c), predicts at every position in the
+        context window. At position i, the model predicts frame i+1's state from
+        the causal hidden state at position i. This gives K x more training signal.
+        Output tensors are (B, K, ...) instead of (B, ...).
+        """
+        B, K, _ = float_ctx.shape
+
+        frame_enc = self._encode_frames(float_ctx, int_ctx)
+        x = self.input_dropout(self.frame_proj(frame_enc))
+
+        for layer in self.layers:
+            x = x + layer["mamba"](layer["norm"](x))
+
+        if self.multi_position:
+            # E008c: predict at every position. At position i, predict frame i+1.
+            # Controller conditioning: for pos 0..K-2, ctrl comes from context frame i+1.
+            # For pos K-1, ctrl comes from next_ctrl (the standard target frame's ctrl).
+            h_all = self.final_norm(x)  # (B, K, d_model)
+
+            # Extract controller floats from context for positions 1..K-1.
+            # float_ctx layout per player: [continuous | binary | controller]
+            # Controller starts at continuous_dim + binary_dim for each player.
+            cfg = self.cfg
+            fp = cfg.float_per_player
+            cd = cfg.continuous_dim
+            bd = cfg.binary_dim
+            ctrl_start = cd + bd
+            ctrl_end = ctrl_start + cfg.controller_dim
+
+            # Build per-position ctrl: concat p0_ctrl and p1_ctrl from the NEXT context frame
+            ctx_p0_ctrl = float_ctx[:, 1:, ctrl_start:ctrl_end]  # (B, K-1, 13)
+            ctx_p1_ctrl = float_ctx[:, 1:, fp + ctrl_start:fp + ctrl_end]  # (B, K-1, 13)
+            ctx_ctrl = torch.cat([ctx_p0_ctrl, ctx_p1_ctrl], dim=-1)  # (B, K-1, 26)
+
+            # Last position uses next_ctrl
+            last_ctrl = next_ctrl[:, :cfg.controller_dim * 2].unsqueeze(1)  # (B, 1, 26)
+            all_ctrl = torch.cat([ctx_ctrl, last_ctrl], dim=1)  # (B, K, 26)
+
+            # Project ctrl and add to hidden states.
+            # For inner positions (0..K-2), pad to ctrl_conditioning_dim if needed
+            # (press_events=false means ctrl_conditioning_dim == 26, so no real pad).
+            # Last position gets full next_ctrl through a separate path for correctness.
+            h_inner = h_all[:, :-1, :] + self.ctrl_proj(
+                F.pad(ctx_ctrl, (0, cfg.ctrl_conditioning_dim - cfg.controller_dim * 2))
+            )  # (B, K-1, d_model)
+            h_last = h_all[:, -1:, :] + self.ctrl_proj(next_ctrl).unsqueeze(1)  # (B, 1, d_model)
+            h = torch.cat([h_inner, h_last], dim=1)  # (B, K, d_model)
+
+            # Apply prediction heads to all positions
+            h_flat = h.reshape(B * K, -1)
+            preds = self._apply_heads(h_flat)
+            # Reshape all outputs to (B, K, ...)
+            preds = {k: v.reshape(B, K, *v.shape[1:]) for k, v in preds.items()}
+            preds["_multi_position"] = True  # signal to loss computation
+            return preds
+        else:
+            h = self.final_norm(x[:, -1, :])
+            h = h + self.ctrl_proj(next_ctrl)
+            return self._apply_heads(h)

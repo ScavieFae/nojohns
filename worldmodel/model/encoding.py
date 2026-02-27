@@ -75,6 +75,7 @@ class EncodingConfig:
     hitstun: bool = True  # hitstun_remaining as continuous feature
     hitstun_scale: float = 0.02  # normalization: range 0-50 → 0-1
     focal_offset: int = 0  # E008: last D context frames are ctrl-only, predict frame t-D
+    multi_position: bool = False  # E008c: predict at every context position
 
     # Derived dimensions (per player, default / state_age_as_embed / projectiles)
     # core_continuous: percent, x, y, shield = 4
