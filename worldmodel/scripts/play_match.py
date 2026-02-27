@@ -52,9 +52,12 @@ from worldmodel.model.encoding import EncodingConfig
 from worldmodel.scripts.generate_demo import (
     STAGE_GEOMETRY,
     _build_predicted_player,
+    _compute_drift_indicators,
     _resolve_character_name,
+    compute_summary,
     load_model_from_checkpoint,
 )
+from worldmodel.scripts.game_harness import apply_game_rules
 from worldmodel.scripts.rollout import clamp_frame, decode_frame
 
 logger = logging.getLogger(__name__)
@@ -142,7 +145,8 @@ class HoldForwardAgent(Agent):
 class PolicyAgent(Agent):
     """Trained imitation learning policy."""
 
-    def __init__(self, checkpoint_path: str, cfg: EncodingConfig, device: str = "cpu"):
+    def __init__(self, checkpoint_path: str, cfg: EncodingConfig, device: str = "cpu", player: int = 0):
+        self.player = player
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
         from worldmodel.model.policy_mlp import PolicyMLP
@@ -186,7 +190,7 @@ class PolicyAgent(Agent):
         ctx_f = float_ctx.unsqueeze(0).to(self.device)
         ctx_i = int_ctx.unsqueeze(0).to(self.device)
 
-        preds = self.model(ctx_f, ctx_i)
+        preds = self.model(ctx_f, ctx_i, predict_player=self.player)
 
         # analog_pred: (5,) — already [0,1] from sigmoid
         # button_logits: (8,) — threshold at 0
@@ -221,7 +225,7 @@ def make_agent(
     elif spec == "hold-forward":
         return HoldForwardAgent()
     elif spec.startswith("policy:"):
-        return PolicyAgent(spec[7:], cfg=cfg, device=device)
+        return PolicyAgent(spec[7:], cfg=cfg, device=device, player=player)
     else:
         raise ValueError(f"Unknown agent spec: {spec!r}. Use: replay, random, noop, hold-forward, policy:<path>")
 
@@ -240,6 +244,8 @@ def play_match(
     max_frames: int = 600,
     device: str = "cpu",
     no_early_ko: bool = False,
+    stage_geometry: dict | None = None,
+    game_harness: bool = False,
 ) -> list[dict]:
     """Run a two-agent match inside the world model.
 
@@ -376,6 +382,14 @@ def play_match(
         # Clamp to valid ranges
         next_float = clamp_frame(next_float, cfg)
 
+        # Apply game rules harness (blast zone KO, respawn, velocity clamping)
+        harness_events = None
+        if game_harness and stage_geometry:
+            harness_events = apply_game_rules(
+                next_float, next_int, curr_float, cfg,
+                blast_zones=stage_geometry["blast_zones"],
+            )
+
         # Append to simulation buffer
         sim_floats = torch.cat([sim_floats, next_float.unsqueeze(0)], dim=0)
         sim_ints = torch.cat([sim_ints, next_int.unsqueeze(0)], dim=0)
@@ -393,6 +407,7 @@ def play_match(
             cfg=cfg,
             vel_delta=vel_d[:5] if vel_d is not None else None,
             dynamics=dyn[:3] if dyn is not None else None,
+            include_entropy=True,
         )
         pred_p1 = _build_predicted_player(
             prev_float=curr_float[fp:2 * fp],
@@ -403,14 +418,36 @@ def play_match(
             cfg=cfg,
             vel_delta=vel_d[5:10] if vel_d is not None else None,
             dynamics=dyn[3:6] if dyn is not None else None,
+            include_entropy=True,
         )
 
-        frames.append({
+        # If harness triggered a KO, override predicted position to show respawn
+        if harness_events:
+            prev_decoded = decode_frame(curr_float, sim_ints[-1], cfg)
+            for pid, pred_p in [("p0", pred_p0), ("p1", pred_p1)]:
+                if harness_events[pid]["ko"]:
+                    pred_p["x"] = 0.0
+                    pred_p["y"] = 40.0
+                    pred_p["percent"] = 0.0
+                    pred_p["shield"] = 60.0
+                    pred_p["stocks"] = max(0, prev_decoded[pid]["stocks"] - 1)
+                elif harness_events[pid]["stock_protected"]:
+                    pred_p["stocks"] = prev_decoded[pid]["stocks"]
+
+        # Drift indicators
+        sg = stage_geometry
+        for pred_p in [pred_p0, pred_p1]:
+            pred_p.update(_compute_drift_indicators(pred_p, sg))
+
+        frame_dict = {
             "t": t,
             "source": "agent",
             "actual": None,
             "predicted": {"p0": pred_p0, "p1": pred_p1},
-        })
+        }
+        if harness_events:
+            frame_dict["harness_events"] = harness_events
+        frames.append(frame_dict)
 
         # Check for KO (optional — dynamics head hallucinates stock loss on weak models)
         frame = decode_frame(next_float, next_int, cfg)
@@ -434,6 +471,7 @@ def main():
     parser.add_argument("--output", default="match.json", help="Output JSON path")
     parser.add_argument("--device", default="cpu", help="Device (cpu/mps/cuda)")
     parser.add_argument("--no-early-ko", action="store_true", help="Don't stop on KO detection")
+    parser.add_argument("--game-harness", action="store_true", help="Enable game rules harness (blast zone KO, respawn, velocity clamping)")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -454,6 +492,19 @@ def main():
     float_data, int_data = _encode_game(game, cfg)
     logger.info("Seed game: %d frames", game.num_frames)
 
+    # Stage geometry (needed for harness + output)
+    stage_id = game.stage
+    p0_char_id = int(game.p0.character[0])
+    p1_char_id = int(game.p1.character[0])
+
+    stage_geo = STAGE_GEOMETRY.get(stage_id, {
+        "name": f"Stage {stage_id}",
+        "ground_y": 0, "ground_x_range": [-85, 85],
+        "platforms": [],
+        "blast_zones": {"left": -240, "right": 240, "top": 200, "bottom": -140},
+        "camera_bounds": {"left": -160, "right": 160, "top": 100, "bottom": -50},
+    })
+
     # Create agents
     p0_agent = make_agent(args.p0, player=0, float_data=float_data, cfg=cfg, device=args.device)
     p1_agent = make_agent(args.p1, player=1, float_data=float_data, cfg=cfg, device=args.device)
@@ -466,21 +517,12 @@ def main():
         max_frames=args.max_frames,
         device=args.device,
         no_early_ko=args.no_early_ko,
+        stage_geometry=stage_geo if args.game_harness else None,
+        game_harness=args.game_harness,
     )
     logger.info("Generated %d frames", len(frames))
 
-    # Build output JSON (viewer-compatible format)
-    stage_id = game.stage
-    p0_char_id = int(game.p0.character[0])
-    p1_char_id = int(game.p1.character[0])
-
-    stage_geo = STAGE_GEOMETRY.get(stage_id, {
-        "name": f"Stage {stage_id}",
-        "ground_y": 0, "ground_x_range": [-85, 85],
-        "platforms": [],
-        "blast_zones": {"left": -240, "right": 240, "top": 200, "bottom": -140},
-        "camera_bounds": {"left": -160, "right": 160, "top": 100, "bottom": -50},
-    })
+    summary = compute_summary(frames, "agent-vs-agent")
 
     output = {
         "meta": {
@@ -500,6 +542,7 @@ def main():
         },
         "stage_geometry": stage_geo,
         "frames": frames,
+        "summary": summary,
     }
 
     with open(args.output, "w") as f:

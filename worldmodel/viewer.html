@@ -82,7 +82,7 @@
   #viewer {
     display: none;
     width: 100%;
-    max-width: 900px;
+    max-width: 1100px;
     padding: 16px;
     gap: 12px;
     flex-direction: column;
@@ -313,6 +313,45 @@
     margin-top: 2px;
   }
 
+  /* Heatmap overlay on timeline */
+  #timeline-heatmap {
+    position: absolute;
+    top: 8px;
+    left: 0;
+    right: 0;
+    height: 12px;
+    border-radius: 6px;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Live stats row */
+  #live-stats {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 28px;
+  }
+
+  .live-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .live-chip .lc-label {
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+
+  .live-chip .lc-val { font-weight: 600; }
+  .live-chip .lc-val.good { color: var(--correct); }
+  .live-chip .lc-val.warn { color: #ffaa44; }
+  .live-chip .lc-val.bad { color: var(--wrong); }
+
   /* Stats */
   #stats-bar {
     display: flex;
@@ -365,6 +404,102 @@
   }
 
   #new-file-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* Error log */
+  #error-log-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  #error-log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #error-log-header:hover { background: var(--surface2); }
+
+  #error-log-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+  }
+
+  #error-log-count {
+    font-weight: 600;
+    color: var(--wrong);
+    margin-left: 8px;
+  }
+
+  #error-log-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  #error-log-actions button {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+  }
+
+  #error-log-actions button:hover { color: var(--text); border-color: var(--accent); }
+
+  #error-log-body {
+    max-height: 400px;
+    overflow-y: auto;
+    display: none;
+  }
+
+  #error-log-body.open { display: block; }
+
+  #error-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  #error-log-table th {
+    position: sticky;
+    top: 0;
+    background: var(--surface2);
+    color: var(--text-dim);
+    text-align: left;
+    padding: 6px 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 10px;
+  }
+
+  #error-log-table td {
+    padding: 4px 10px;
+    border-top: 1px solid rgba(42, 42, 62, 0.5);
+    white-space: nowrap;
+  }
+
+  #error-log-table tr:hover { background: var(--surface2); }
+
+  #error-log-table tr.clickable { cursor: pointer; }
+
+  .err-player { font-weight: 600; }
+  .err-player.p0 { color: var(--p0); }
+  .err-player.p1 { color: var(--p1); }
+
+  .err-pos { color: var(--wrong); }
+  .err-action-wrong { color: var(--wrong); }
+  .err-action-right { color: var(--correct); }
 </style>
 </head>
 <body>
@@ -387,7 +522,7 @@
 <div id="viewer">
   <div id="header"></div>
   <div id="stage-container">
-    <canvas id="stage-canvas" width="868" height="360"></canvas>
+    <canvas id="stage-canvas" width="1060" height="520"></canvas>
     <div id="legend"></div>
   </div>
   <div id="player-info">
@@ -416,10 +551,30 @@
         <div id="seed-region"></div>
         <div id="timeline-progress"></div>
       </div>
-      <div id="timeline-thumb"></div>
+      <canvas id="timeline-heatmap"></canvas>
+      <div id="timeline-thumb" style="z-index:2"></div>
     </div>
   </div>
+  <div id="live-stats"></div>
   <div id="stats-bar"></div>
+  <div id="error-log-container" style="display:none;">
+    <div id="error-log-header" onclick="toggleErrorLog()">
+      <span><span id="error-log-title">Prediction Errors</span><span id="error-log-count"></span></span>
+      <div id="error-log-actions">
+        <button onclick="event.stopPropagation(); copyErrorLog()">Copy</button>
+        <span id="error-log-chevron">&#9660;</span>
+      </div>
+    </div>
+    <div id="error-log-body">
+      <table id="error-log-table">
+        <thead><tr>
+          <th>Frame</th><th>Player</th><th>Type</th>
+          <th>Predicted</th><th>Actual</th><th>Pos Err</th>
+        </tr></thead>
+        <tbody id="error-log-tbody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -429,6 +584,11 @@ let currentFrame = 0;
 let playing = false;
 let playInterval = null;
 let speed = 1;
+
+// Precomputed cumulative arrays for O(1) running stats
+let cumActionCorrect = null;  // [p0_correct, p1_correct] cumulative
+let cumPosError = null;       // cumulative sum of position errors
+let frameCount = 0;
 
 // ===== File loading =====
 const dropZone = document.getElementById('drop-zone');
@@ -506,10 +666,207 @@ function initViewer() {
   const seedPct = (m.seed_frames / m.total_frames * 100).toFixed(2);
   document.getElementById('seed-region').style.width = seedPct + '%';
 
-  // Stats bar
+  // Precompute cumulative arrays for running stats
+  precomputeCumulatives();
+
+  // Paint timeline heatmap
+  paintHeatmap();
+
+  // Stats bar (aggregate)
   renderStats();
 
+  // Error log (teacher-forced only)
+  buildErrorLog();
+
   renderFrame();
+}
+
+// ===== Precompute cumulative arrays =====
+function precomputeCumulatives() {
+  const frames = demoData.frames;
+  const n = frames.length;
+  cumActionCorrect = new Float32Array(n);  // running p0+p1 correct count
+  cumPosError = new Float32Array(n);       // running sum of avg pos error
+  frameCount = n;
+
+  let correctCount = 0;
+  let posErrSum = 0;
+  let predCount = 0;
+
+  for (let i = 0; i < n; i++) {
+    const f = frames[i];
+    if (f.predicted) {
+      predCount++;
+      if (f.predicted.p0 && f.predicted.p0.action_correct) correctCount++;
+      if (f.predicted.p1 && f.predicted.p1.action_correct) correctCount++;
+
+      const e0 = f.predicted.p0 ? f.predicted.p0.position_error : null;
+      const e1 = f.predicted.p1 ? f.predicted.p1.position_error : null;
+      if (e0 != null && e1 != null) posErrSum += (e0 + e1) / 2;
+      else if (e0 != null) posErrSum += e0;
+      else if (e1 != null) posErrSum += e1;
+    }
+    cumActionCorrect[i] = correctCount;
+    cumPosError[i] = posErrSum;
+  }
+}
+
+// ===== Timeline heatmap =====
+function paintHeatmap() {
+  const canvas = document.getElementById('timeline-heatmap');
+  const container = document.getElementById('timeline-container');
+  const rect = container.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = 12;
+  canvas.style.width = rect.width + 'px';
+
+  const ctx = canvas.getContext('2d');
+  const frames = demoData.frames;
+  const n = frames.length;
+  if (n === 0) return;
+
+  const w = canvas.width;
+  const isTF = demoData.meta.mode === 'teacher-forced';
+  const isAgent = demoData.meta.mode === 'agent-vs-agent';
+
+  for (let i = 0; i < n; i++) {
+    const x = (i / n) * w;
+    const pw = Math.max(1, w / n);
+    const f = frames[i];
+
+    let color;
+    if (f.source === 'seed') {
+      color = 'rgba(102, 68, 204, 0.6)';  // purple
+    } else if (isTF && f.predicted) {
+      // Color by position error: green < 2, orange < 5, red >= 5
+      const e0 = f.predicted.p0 ? (f.predicted.p0.position_error || 0) : 0;
+      const e1 = f.predicted.p1 ? (f.predicted.p1.position_error || 0) : 0;
+      const err = (e0 + e1) / 2;
+      if (err < 2) color = 'rgba(68, 204, 136, 0.7)';
+      else if (err < 5) color = 'rgba(255, 170, 68, 0.7)';
+      else color = 'rgba(255, 68, 68, 0.7)';
+    } else if (isAgent && f.predicted) {
+      // Color by speed anomaly or off-stage
+      const p0 = f.predicted.p0 || {};
+      const p1 = f.predicted.p1 || {};
+      const offStage = p0.off_stage || p1.off_stage;
+      const spd = Math.max(p0.speed_magnitude || 0, p1.speed_magnitude || 0);
+      if (offStage) color = 'rgba(255, 170, 68, 0.7)';
+      else if (spd > 3) color = 'rgba(255, 170, 68, 0.6)';
+      else color = 'rgba(68, 204, 136, 0.5)';
+    } else {
+      color = 'rgba(136, 102, 255, 0.3)';  // autoregressive default
+    }
+
+    ctx.fillStyle = color;
+    ctx.fillRect(x, 0, pw, 12);
+
+    // KO event: bright red tick mark
+    const he = f.harness_events;
+    if (he && ((he.p0 && he.p0.ko) || (he.p1 && he.p1.ko))) {
+      ctx.fillStyle = 'rgba(255, 40, 40, 1.0)';
+      ctx.fillRect(x, 0, Math.max(2, pw), 12);
+    }
+  }
+}
+
+// ===== Live per-frame stats =====
+function renderLiveStats(frame, idx) {
+  const bar = document.getElementById('live-stats');
+  const isTF = demoData.meta.mode === 'teacher-forced';
+  const isAgent = demoData.meta.mode === 'agent-vs-agent';
+  let chips = '';
+
+  if (frame.source === 'seed') {
+    chips = '<span class="live-chip"><span class="lc-label">Seed frame</span></span>';
+    bar.innerHTML = chips;
+    return;
+  }
+
+  if (isTF && frame.predicted) {
+    // Action correct this frame
+    const p0c = frame.predicted.p0 && frame.predicted.p0.action_correct;
+    const p1c = frame.predicted.p1 && frame.predicted.p1.action_correct;
+    const both = p0c && p1c;
+    const cls = both ? 'good' : (p0c || p1c) ? 'warn' : 'bad';
+    chips += `<span class="live-chip"><span class="lc-label">Action</span><span class="lc-val ${cls}">${both ? 'Both correct' : p0c ? 'P0 only' : p1c ? 'P1 only' : 'Both wrong'}</span></span>`;
+
+    // Position error this frame
+    const e0 = frame.predicted.p0 ? frame.predicted.p0.position_error : null;
+    const e1 = frame.predicted.p1 ? frame.predicted.p1.position_error : null;
+    if (e0 != null || e1 != null) {
+      const avg = e0 != null && e1 != null ? ((e0 + e1) / 2) : (e0 || e1);
+      const ecls = avg < 2 ? 'good' : avg < 5 ? 'warn' : 'bad';
+      chips += `<span class="live-chip"><span class="lc-label">Pos err</span><span class="lc-val ${ecls}">${avg.toFixed(1)}</span></span>`;
+    }
+
+    // Running accuracy (using precomputed cumulatives)
+    const seedFrames = demoData.meta.seed_frames || 0;
+    const predIdx = idx - seedFrames;
+    if (predIdx > 0 && cumActionCorrect) {
+      const correct = cumActionCorrect[idx];
+      const runAcc = (correct / (predIdx * 2) * 100).toFixed(1);
+      const rcls = runAcc >= 90 ? 'good' : runAcc >= 70 ? 'warn' : 'bad';
+      chips += `<span class="live-chip"><span class="lc-label">Running acc</span><span class="lc-val ${rcls}">${runAcc}%</span></span>`;
+    }
+
+    // Running pos error
+    if (cumPosError && idx > seedFrames) {
+      const predIdx2 = idx - seedFrames;
+      const runErr = (cumPosError[idx] / predIdx2).toFixed(1);
+      const ecls2 = runErr < 2 ? 'good' : runErr < 5 ? 'warn' : 'bad';
+      chips += `<span class="live-chip"><span class="lc-label">Running pos err</span><span class="lc-val ${ecls2}">${runErr}</span></span>`;
+    }
+  }
+
+  if (isAgent && frame.predicted) {
+    const p0 = frame.predicted.p0 || {};
+    const p1 = frame.predicted.p1 || {};
+
+    // Stocks
+    const s0 = p0.stocks != null ? p0.stocks : '?';
+    const s1 = p1.stocks != null ? p1.stocks : '?';
+    chips += `<span class="live-chip"><span class="lc-label">Stocks</span><span class="lc-val" style="color:var(--p0)">${s0}</span> <span class="lc-val" style="color:var(--p1)">${s1}</span></span>`;
+
+    // Speed
+    const spd0 = p0.speed_magnitude;
+    const spd1 = p1.speed_magnitude;
+    if (spd0 != null || spd1 != null) {
+      const maxSpd = Math.max(spd0 || 0, spd1 || 0);
+      const scls = maxSpd < 2 ? 'good' : maxSpd < 4 ? 'warn' : 'bad';
+      chips += `<span class="live-chip"><span class="lc-label">Max speed</span><span class="lc-val ${scls}">${maxSpd.toFixed(1)}</span></span>`;
+    }
+
+    // Action entropy
+    const ent0 = p0.action_entropy;
+    const ent1 = p1.action_entropy;
+    if (ent0 != null || ent1 != null) {
+      const avgEnt = (ent0 != null && ent1 != null) ? ((ent0 + ent1) / 2) : (ent0 || ent1);
+      const entCls = avgEnt < 1 ? 'good' : avgEnt < 3 ? 'warn' : 'bad';
+      chips += `<span class="live-chip"><span class="lc-label">Entropy</span><span class="lc-val ${entCls}">${avgEnt.toFixed(2)}</span></span>`;
+    }
+
+    // Off-stage
+    if (p0.off_stage || p1.off_stage) {
+      const who = p0.off_stage && p1.off_stage ? 'Both' : p0.off_stage ? 'P0' : 'P1';
+      chips += `<span class="live-chip"><span class="lc-label">Off-stage</span><span class="lc-val warn">${who}</span></span>`;
+    }
+
+    // Harness events
+    const he = frame.harness_events;
+    if (he) {
+      for (const pid of ['p0', 'p1']) {
+        if (he[pid] && he[pid].ko) {
+          chips += `<span class="live-chip" style="border-color:var(--wrong)"><span class="lc-val bad">KO ${pid.toUpperCase()}</span></span>`;
+        }
+        if (he[pid] && he[pid].stock_protected) {
+          chips += `<span class="live-chip"><span class="lc-label">Protected</span><span class="lc-val good">${pid.toUpperCase()}</span></span>`;
+        }
+      }
+    }
+  }
+
+  bar.innerHTML = chips;
 }
 
 // ===== Stats =====
@@ -541,8 +898,123 @@ function renderStats() {
     html += `<div class="stat-chip"><div class="label">Avg Pos Error</div><div class="value ${cls}">${s.avg_position_error.toFixed(1)}</div></div>`;
   }
 
+  // Agent mode stats
+  if (s.avg_speed !== undefined) {
+    const cls = s.avg_speed < 1.5 ? 'good' : s.avg_speed < 3 ? 'warn' : 'bad';
+    html += `<div class="stat-chip"><div class="label">Avg Speed</div><div class="value ${cls}">${s.avg_speed.toFixed(1)}</div></div>`;
+  }
+
+  if (s.ko_events !== undefined) {
+    html += `<div class="stat-chip"><div class="label">KO Events</div><div class="value">${s.ko_events}</div></div>`;
+  }
+
+  if (s.stock_protections !== undefined && s.stock_protections > 0) {
+    html += `<div class="stat-chip"><div class="label">Stock Saves</div><div class="value good">${s.stock_protections}</div></div>`;
+  }
+
+  if (s.final_p0_stocks !== undefined) {
+    html += `<div class="stat-chip"><div class="label">Final Stocks</div><div class="value"><span style="color:var(--p0)">${s.final_p0_stocks}</span> - <span style="color:var(--p1)">${s.final_p1_stocks}</span></div></div>`;
+  }
+
+  if (s.avg_action_entropy !== undefined) {
+    const cls = s.avg_action_entropy < 1 ? 'good' : s.avg_action_entropy < 3 ? 'warn' : 'bad';
+    html += `<div class="stat-chip"><div class="label">Avg Entropy</div><div class="value ${cls}">${s.avg_action_entropy.toFixed(2)}</div></div>`;
+  }
+
   html += `<div class="stat-chip"><div class="label">Frames</div><div class="value">${s.total_frames_predicted}</div></div>`;
   bar.innerHTML = html;
+}
+
+// ===== Error log (teacher-forced) =====
+let errorLogData = [];  // [{frame, player, type, predicted, actual, posErr}]
+
+function buildErrorLog() {
+  errorLogData = [];
+  const container = document.getElementById('error-log-container');
+
+  if (!demoData || demoData.meta.mode !== 'teacher-forced') {
+    container.style.display = 'none';
+    return;
+  }
+
+  for (const f of demoData.frames) {
+    if (!f.predicted || !f.actual) continue;
+    for (const pid of ['p0', 'p1']) {
+      const pred = f.predicted[pid];
+      const act = f.actual[pid];
+      if (!pred || !act) continue;
+
+      const actionWrong = !pred.action_correct;
+      const posErr = pred.position_error || 0;
+      const bigPosErr = posErr >= 3;
+
+      if (actionWrong) {
+        errorLogData.push({
+          frame: f.t,
+          player: pid,
+          type: 'action',
+          predicted: pred.action_name,
+          actual: act.action_name,
+          posErr: posErr,
+        });
+      }
+      if (bigPosErr && !actionWrong) {
+        errorLogData.push({
+          frame: f.t,
+          player: pid,
+          type: 'position',
+          predicted: `(${pred.x.toFixed(0)}, ${pred.y.toFixed(0)})`,
+          actual: `(${act.x.toFixed(0)}, ${act.y.toFixed(0)})`,
+          posErr: posErr,
+        });
+      }
+    }
+  }
+
+  container.style.display = errorLogData.length > 0 ? 'block' : 'none';
+  document.getElementById('error-log-count').textContent = ` (${errorLogData.length})`;
+
+  const tbody = document.getElementById('error-log-tbody');
+  let html = '';
+  for (const e of errorLogData) {
+    const pCls = e.player === 'p0' ? 'p0' : 'p1';
+    const typeCls = e.type === 'action' ? 'err-action-wrong' : 'err-pos';
+    html += `<tr class="clickable" onclick="jumpToFrame(${e.frame})">`;
+    html += `<td>${e.frame}</td>`;
+    html += `<td><span class="err-player ${pCls}">${e.player.toUpperCase()}</span></td>`;
+    html += `<td class="${typeCls}">${e.type}</td>`;
+    html += `<td>${e.predicted}</td>`;
+    html += `<td>${e.actual}</td>`;
+    html += `<td>${e.posErr.toFixed(1)}</td>`;
+    html += `</tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function toggleErrorLog() {
+  const body = document.getElementById('error-log-body');
+  const chevron = document.getElementById('error-log-chevron');
+  const isOpen = body.classList.toggle('open');
+  chevron.innerHTML = isOpen ? '&#9650;' : '&#9660;';
+}
+
+function jumpToFrame(idx) {
+  stop();
+  stepTo(idx);
+}
+
+function copyErrorLog() {
+  if (!errorLogData.length) return;
+  let text = 'Frame\tPlayer\tType\tPredicted\tActual\tPos Error\n';
+  for (const e of errorLogData) {
+    text += `${e.frame}\t${e.player.toUpperCase()}\t${e.type}\t${e.predicted}\t${e.actual}\t${e.posErr.toFixed(1)}\n`;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('#error-log-actions button');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  });
 }
 
 // ===== Canvas rendering =====
@@ -553,6 +1025,7 @@ function renderFrame() {
 
   drawStage(frame);
   drawPlayerCards(frame);
+  renderLiveStats(frame, currentFrame);
   updateControls();
 }
 
@@ -568,7 +1041,7 @@ function drawStage(frame) {
   // Coordinate transform: game coords → canvas coords
   const gameW = cam.right - cam.left;
   const gameH = cam.top - cam.bottom;
-  const scale = Math.min(W / gameW, H / gameH) * 0.9;
+  const scale = Math.min(W / gameW, H / gameH) * 1.35;
   const cx = W / 2;
   const cy = H / 2;
 
@@ -579,13 +1052,29 @@ function drawStage(frame) {
   ctx.fillStyle = '#0c0c18';
   ctx.fillRect(0, 0, W, H);
 
-  // Blast zones (dashed)
+  // Blast zones (dashed, or red flash on KO)
   const bz = geo.blast_zones;
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([6, 4]);
-  ctx.strokeRect(tx(bz.left), ty(bz.top), (bz.right - bz.left) * scale, (bz.top - bz.bottom) * scale);
-  ctx.setLineDash([]);
+  const hasKO = frame.harness_events && (
+    (frame.harness_events.p0 && frame.harness_events.p0.ko) ||
+    (frame.harness_events.p1 && frame.harness_events.p1.ko)
+  );
+
+  if (hasKO) {
+    // Red flash on KO event
+    ctx.strokeStyle = 'rgba(255, 40, 40, 0.6)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([]);
+    ctx.strokeRect(tx(bz.left), ty(bz.top), (bz.right - bz.left) * scale, (bz.top - bz.bottom) * scale);
+    // Red vignette
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.04)';
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(tx(bz.left), ty(bz.top), (bz.right - bz.left) * scale, (bz.top - bz.bottom) * scale);
+    ctx.setLineDash([]);
+  }
 
   // Ground
   ctx.strokeStyle = 'rgba(255,255,255,0.35)';

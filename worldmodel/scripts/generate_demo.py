@@ -282,6 +282,7 @@ def _build_predicted_player(
     actual_action: int | None = None,
     actual_x: float | None = None,
     actual_y: float | None = None,
+    include_entropy: bool = False,
 ) -> dict:
     """Build a predicted player dict from model outputs.
 
@@ -366,7 +367,46 @@ def _build_predicted_player(
             math.sqrt((pred_x - actual_x) ** 2 + (pred_y - actual_y) ** 2), 2
         )
 
+    if include_entropy:
+        # Shannon entropy of action distribution (bits)
+        log_probs = F.log_softmax(action_logits, dim=-1)
+        entropy = -(probs * log_probs).sum().item()
+        result["action_entropy"] = round(entropy, 3)
+
     return result
+
+
+def _compute_drift_indicators(pred_dict: dict, stage_geometry: dict | None) -> dict:
+    """Compute drift indicators from a predicted player dict.
+
+    Returns dict with:
+      - speed_magnitude: sqrt(air_x² + speed_y²) if velocity present
+      - off_stage: position outside ground range and below platform height
+      - near_blast_zone: within 20 units of a blast zone edge
+    """
+    indicators = {}
+
+    vel = pred_dict.get("velocity")
+    if vel:
+        air_x = vel.get("speed_air_x", 0)
+        speed_y = vel.get("speed_y", 0)
+        indicators["speed_magnitude"] = round(math.sqrt(air_x ** 2 + speed_y ** 2), 2)
+
+    if stage_geometry:
+        x, y = pred_dict["x"], pred_dict["y"]
+        gx = stage_geometry["ground_x_range"]
+        indicators["off_stage"] = (x < gx[0] or x > gx[1]) and y < 0
+
+        bz = stage_geometry["blast_zones"]
+        margin = 20
+        indicators["near_blast_zone"] = (
+            x < bz["left"] + margin
+            or x > bz["right"] - margin
+            or y > bz["top"] - margin
+            or y < bz["bottom"] + margin
+        )
+
+    return indicators
 
 
 # --- Prediction modes ---
@@ -665,6 +705,48 @@ def compute_summary(frames: list[dict], mode: str) -> dict:
                         change_correct += 1
         if change_total > 0:
             summary["action_change_acc"] = round(change_correct / change_total, 4)
+
+    elif mode == "agent-vs-agent":
+        # Agent mode metrics: speed, off-stage, entropy, harness events
+        speeds = []
+        entropies = []
+        off_stage_count = 0
+        ko_count = 0
+        stock_protected_count = 0
+
+        for f in predicted_frames:
+            pred = f["predicted"]
+            for p in ["p0", "p1"]:
+                spd = pred[p].get("speed_magnitude")
+                if spd is not None:
+                    speeds.append(spd)
+                ent = pred[p].get("action_entropy")
+                if ent is not None:
+                    entropies.append(ent)
+                if pred[p].get("off_stage"):
+                    off_stage_count += 1
+
+            he = f.get("harness_events")
+            if he:
+                for p in ["p0", "p1"]:
+                    if he.get(p, {}).get("ko"):
+                        ko_count += 1
+                    if he.get(p, {}).get("stock_protected"):
+                        stock_protected_count += 1
+
+        if speeds:
+            summary["avg_speed"] = round(sum(speeds) / len(speeds), 2)
+            summary["max_speed"] = round(max(speeds), 2)
+        summary["off_stage_frames"] = off_stage_count
+        if entropies:
+            summary["avg_action_entropy"] = round(sum(entropies) / len(entropies), 3)
+        summary["ko_events"] = ko_count
+        summary["stock_protections"] = stock_protected_count
+
+        # Final stocks
+        last = predicted_frames[-1]["predicted"]
+        summary["final_p0_stocks"] = last["p0"]["stocks"]
+        summary["final_p1_stocks"] = last["p1"]["stocks"]
 
     return summary
 
