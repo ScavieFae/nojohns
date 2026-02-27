@@ -870,7 +870,7 @@ def _split_into_chunks(entries, chunk_size):
 
 
 @app.function(
-    gpu="T4",
+    gpu="A100",
     volumes={DATA_VOLUME_PATH: volume},
     image=image,
     timeout=43200,  # 12h — covers 3x calibrated estimate
@@ -908,18 +908,43 @@ def train_policy(
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"CUDA: {torch.version.cuda}")
 
-    # Load pre-encoded data
-    encoded_path = f"{DATA_VOLUME_PATH}{encoded_file}"
-    if not os.path.exists(encoded_path):
-        raise FileNotFoundError(
-            f"No encoded data at {encoded_path}. "
-            "Pre-encode first: modal run worldmodel/scripts/modal_train.py::pre_encode"
-        )
+    # Load pre-encoded data — single file or multiple comma-separated files
+    import numpy as np
+    encoded_files = [f.strip() for f in encoded_file.split(",")]
+    payloads = []
+    for ef in encoded_files:
+        ep = f"{DATA_VOLUME_PATH}{ef}"
+        if not os.path.exists(ep):
+            raise FileNotFoundError(
+                f"No encoded data at {ep}. "
+                "Pre-encode first: modal run worldmodel/scripts/modal_train.py::pre_encode"
+            )
+        print(f"Loading {ep}...")
+        t0 = time.time()
+        payloads.append(torch.load(ep, weights_only=False))
+        print(f"  Loaded in {time.time() - t0:.1f}s — {payloads[-1]['floats'].shape}")
 
-    print(f"Loading {encoded_path}...")
-    t0 = time.time()
-    payload = torch.load(encoded_path, weights_only=False)
-    print(f"Loaded in {time.time() - t0:.1f}s")
+    if len(payloads) == 1:
+        payload = payloads[0]
+    else:
+        print(f"Merging {len(payloads)} encoded files...")
+        all_floats = torch.cat([p["floats"] for p in payloads])
+        all_ints = torch.cat([p["ints"] for p in payloads])
+        all_lengths = []
+        for p in payloads:
+            all_lengths.extend(p["game_lengths"])
+        total_games = sum(p["num_games"] for p in payloads)
+        payload = {
+            "floats": all_floats,
+            "ints": all_ints,
+            "game_offsets": torch.tensor(np.cumsum([0] + all_lengths)),
+            "game_lengths": all_lengths,
+            "num_games": total_games,
+            "encoding_config": payloads[0].get("encoding_config", {}),
+        }
+        del payloads, all_floats, all_ints
+        import gc; gc.collect()
+
     print(f"  Floats: {payload['floats'].shape}")
     print(f"  Ints: {payload['ints'].shape}")
     print(f"  Games: {payload['num_games']}")
