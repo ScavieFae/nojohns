@@ -96,9 +96,24 @@ The plan specified 6 targeted binary features from state_flags (is_dead, is_dyin
 - **`mlp.py`/`mamba2.py`** — `binary_head` uses `cfg.predicted_binary_dim`, dynamics_head uses `cfg.predicted_dynamics_dim`
 - **Game metadata** (`game_end_method`, `is_pal`) — clean additions, correct defaults
 
-### After fixes, re-parse is unblocked
+### ScavieFae re-review after fixes (Feb 26, late)
 
-Once the two NameErrors are fixed, both parsers should produce valid v3 parquet files with stage, invulnerable, state_flags, and hitstun all populated. The encoding pipeline is ready — just needs `state_flags=True, hitstun=True` in the YAML config.
+Scav's fix commit `ae0f35e` resolves both NameErrors:
+
+1. **build_dataset.py**: `start = peppi_game.start` moved before `stage_val = int(start.stage)` — correct.
+2. **parse_archive.py**: `combat` extraction moved before the `for i, port` loop — correct.
+
+**Full end-to-end pipeline trace verified all 5 data paths:**
+
+| Path | Verdict |
+|------|---------|
+| Stage ID (parser → parquet → parse.py → dataset.py) | int64 chain, lossless |
+| State flags (parser → parquet → encoding) | uint8 preserved, 40-bit extraction correct |
+| Hitstun (parser → parquet → encoding) | subnormal recovery correct, placed after combo_count |
+| Target dimensions (dataset → metrics → model heads) | all slicing matches |
+| Dynamics indices (dataset offsets) | correct for both state_age_as_embed modes |
+
+**Parser v3 is approved. Re-parse is unblocked.** Both parsers should produce valid v3 parquet with stage, invulnerable, state_flags, and hitstun populated. The encoding pipeline is ready — just needs `state_flags=True, hitstun=True` in the YAML config.
 
 ---
 
