@@ -74,6 +74,7 @@ class EncodingConfig:
     state_flags: bool = True  # all 40 bits from 5 state_flags bytes as binary features
     hitstun: bool = True  # hitstun_remaining as continuous feature
     hitstun_scale: float = 0.02  # normalization: range 0-50 → 0-1
+    focal_offset: int = 0  # E008: last D context frames are ctrl-only, predict frame t-D
 
     # Derived dimensions (per player, default / state_age_as_embed / projectiles)
     # core_continuous: percent, x, y, shield = 4

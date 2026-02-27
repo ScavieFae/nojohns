@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Model Training Improvements — Research & Prior Art</title>
+<style>
+  /* ── Reset & Base ───────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:          #0d1117;
+    --bg-card:     #161b22;
+    --bg-card-alt: #1c2330;
+    --bg-table-row:#1a2030;
+    --bg-table-alt:#151c28;
+    --bg-header:   rgba(13,17,23,0.92);
+    --border:      #30363d;
+    --border-light:#3d444d;
+    --text:        #c9d1d9;
+    --text-dim:    #8b949e;
+    --text-bright: #e6edf3;
+    --accent:      #58a6ff;
+    --accent-dim:  #1f6feb;
+    --green:       #3fb950;
+    --green-dim:   rgba(63,185,80,0.15);
+    --amber:       #d29922;
+    --amber-dim:   rgba(210,153,34,0.15);
+    --red:         #f85149;
+    --red-dim:     rgba(248,81,73,0.15);
+    --purple:      #bc8cff;
+    --purple-dim:  rgba(188,140,255,0.12);
+    --cyan:        #39d0d8;
+    --font-sans:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono:   'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+    --max-w:       960px;
+    --nav-w:       220px;
+  }
+
+  html { scroll-behavior: smooth; font-size: 15px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent); text-decoration: none; transition: color .15s; }
+  a:hover { color: #79c0ff; text-decoration: underline; }
+
+  code, .mono {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: rgba(110,118,129,0.12);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+  }
+
+  /* ── Navigation Sidebar ─────────────────────────────── */
+  .sidebar {
+    position: fixed;
+    top: 0; left: 0;
+    width: var(--nav-w);
+    height: 100vh;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    padding: 80px 16px 24px;
+    overflow-y: auto;
+    z-index: 90;
+  }
+
+  .sidebar-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .sidebar a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    line-height: 1.4;
+    transition: background .15s, color .15s;
+    margin-bottom: 2px;
+  }
+  .sidebar a:hover, .sidebar a.active {
+    background: rgba(88,166,255,0.08);
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .sidebar .sec-num {
+    display: inline-block;
+    width: 20px;
+    font-weight: 600;
+    color: var(--accent-dim);
+  }
+
+  /* ── Header Bar ─────────────────────────────────────── */
+  .header {
+    position: fixed;
+    top: 0; left: var(--nav-w); right: 0;
+    height: 56px;
+    background: var(--bg-header);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 32px;
+    z-index: 100;
+  }
+  .header-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header-date {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+  }
+
+  /* ── Main Content ───────────────────────────────────── */
+  .main {
+    margin-left: var(--nav-w);
+    padding: 80px 40px 100px;
+    max-width: calc(var(--max-w) + 80px);
+  }
+
+  /* Hero */
+  .hero {
+    margin-bottom: 56px;
+    padding-bottom: 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 2.1rem;
+    font-weight: 800;
+    color: var(--text-bright);
+    line-height: 1.2;
+    margin-bottom: 10px;
+  }
+  .hero .subtitle {
+    font-size: 1.05rem;
+    color: var(--text-dim);
+    max-width: 640px;
+  }
+  .hero .meta {
+    margin-top: 14px;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+  }
+  .hero .meta span {
+    display: inline-block;
+    margin-right: 18px;
+  }
+
+  /* Section */
+  .section {
+    margin-bottom: 64px;
+  }
+  .section-anchor {
+    display: block;
+    position: relative;
+    top: -72px;
+    visibility: hidden;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .section-num {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--accent-dim);
+    flex-shrink: 0;
+  }
+  .section-header h2 {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: var(--text-bright);
+    line-height: 1.3;
+  }
+  .section-intro {
+    margin: 12px 0 24px;
+    padding: 14px 18px;
+    background: var(--bg-card);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    font-size: 0.92rem;
+    color: var(--text);
+  }
+  .section-intro strong { color: var(--text-bright); }
+
+  /* Paragraphs & Lists */
+  .prose p { margin-bottom: 14px; }
+  .prose ul, .prose ol { margin: 10px 0 14px 22px; }
+  .prose li { margin-bottom: 6px; }
+  .prose li::marker { color: var(--text-dim); }
+  .prose h3 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin: 32px 0 10px;
+  }
+  .prose h4 {
+    font-size: 0.98rem;
+    font-weight: 600;
+    color: var(--purple);
+    margin: 22px 0 8px;
+  }
+
+  /* ── Tables ─────────────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 16px 0 24px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+  }
+  th {
+    background: var(--bg-card-alt);
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(48,54,61,0.5);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--bg-table-alt); }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 0.82em; }
+
+  /* ── Cards ──────────────────────────────────────────── */
+  .card-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin: 18px 0 24px;
+  }
+  @media (min-width: 700px) {
+    .card-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-bright);
+    margin-bottom: 6px;
+  }
+  .card-body {
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .card-body p { margin-bottom: 8px; }
+
+  .card.highlight-green  { border-color: var(--green);  background: var(--green-dim); }
+  .card.highlight-amber  { border-color: var(--amber);  background: var(--amber-dim); }
+  .card.highlight-red    { border-color: var(--red);     background: var(--red-dim); }
+  .card.highlight-purple { border-color: var(--purple);  background: var(--purple-dim); }
+
+  /* ── Priority List ──────────────────────────────────── */
+  .priority-list {
+    list-style: none;
+    margin: 18px 0;
+    padding: 0;
+    counter-reset: pri;
+  }
+  .priority-item {
+    counter-increment: pri;
+    display: flex;
+    gap: 16px;
+    padding: 18px 20px;
+    margin-bottom: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: border-color .15s;
+  }
+  .priority-item:hover { border-color: var(--border-light); }
+
+  .pri-rank {
+    flex-shrink: 0;
+    width: 38px; height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-weight: 800;
+    font-size: 0.95rem;
+    font-family: var(--font-mono);
+  }
+  .pri-rank::before { content: counter(pri); }
+
+  .pri-rank.tier-1 { background: var(--green-dim); color: var(--green); border: 2px solid var(--green); }
+  .pri-rank.tier-2 { background: var(--green-dim); color: var(--green); border: 2px solid var(--green); }
+  .pri-rank.tier-3 { background: var(--amber-dim); color: var(--amber); border: 2px solid var(--amber); }
+  .pri-rank.tier-4 { background: var(--amber-dim); color: var(--amber); border: 2px solid var(--amber); }
+  .pri-rank.tier-5 { background: var(--purple-dim); color: var(--purple); border: 2px solid var(--purple); }
+  .pri-rank.tier-6 { background: var(--purple-dim); color: var(--purple); border: 2px solid var(--purple); }
+  .pri-rank.tier-7 { background: var(--red-dim); color: var(--red); border: 2px solid var(--red); }
+
+  .pri-content { flex: 1; }
+  .pri-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-bright);
+    margin-bottom: 4px;
+  }
+  .pri-desc {
+    font-size: 0.84rem;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+  .pri-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge-effort-low    { background: var(--green-dim);  color: var(--green); }
+  .badge-effort-med    { background: var(--amber-dim);  color: var(--amber); }
+  .badge-effort-high   { background: var(--red-dim);    color: var(--red); }
+  .badge-impact-high   { background: rgba(88,166,255,0.12); color: var(--accent); }
+  .badge-impact-med    { background: rgba(188,140,255,0.12); color: var(--purple); }
+  .badge-impact-spec   { background: rgba(139,148,158,0.12); color: var(--text-dim); }
+
+  /* ── Verdict / Callout Boxes ────────────────────────── */
+  .callout {
+    margin: 20px 0;
+    padding: 16px 20px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+  .callout-verdict {
+    background: var(--green-dim);
+    border: 1px solid rgba(63,185,80,0.3);
+  }
+  .callout-insight {
+    background: rgba(88,166,255,0.06);
+    border: 1px solid rgba(88,166,255,0.2);
+  }
+  .callout-warning {
+    background: var(--amber-dim);
+    border: 1px solid rgba(210,153,34,0.3);
+  }
+  .callout-skip {
+    background: rgba(139,148,158,0.06);
+    border: 1px solid rgba(139,148,158,0.2);
+  }
+  .callout-label {
+    font-weight: 700;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .callout-verdict .callout-label { color: var(--green); }
+  .callout-insight .callout-label { color: var(--accent); }
+  .callout-warning .callout-label { color: var(--amber); }
+  .callout-skip .callout-label { color: var(--text-dim); }
+
+  /* ── Resources Grid ─────────────────────────────────── */
+  .resources-category {
+    margin-bottom: 24px;
+  }
+  .resources-category h4 {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .resources-list {
+    list-style: none;
+    padding: 0;
+  }
+  .resources-list li {
+    padding: 6px 0;
+    font-size: 0.85rem;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .resources-list .res-tag {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 4px;
+    background: rgba(110,118,129,0.12);
+    color: var(--text-dim);
+  }
+
+  /* ── Separator ──────────────────────────────────────── */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0;
+  }
+
+  /* ── Responsive ─────────────────────────────────────── */
+  @media (max-width: 860px) {
+    .sidebar { display: none; }
+    .header { left: 0; }
+    .main { margin-left: 0; padding: 80px 20px 60px; }
+  }
+
+  /* ── Scrollbar ──────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════
+     SIDEBAR
+     ════════════════════════════════════════════════════════ -->
+<nav class="sidebar">
+  <div class="sidebar-label">Sections</div>
+  <a href="#model-paradigms"><span class="sec-num">1</span>Model Paradigms</a>
+  <a href="#preframe-postframe"><span class="sec-num">2</span>Preframe / Postframe</a>
+  <a href="#training-techniques"><span class="sec-num">3</span>Training Techniques</a>
+  <a href="#aux-physics">&nbsp;&nbsp;&nbsp; 3a. Auxiliary Physics Losses</a>
+  <a href="#constraint-layers">&nbsp;&nbsp;&nbsp; 3b. Constraint Layers</a>
+  <a href="#curriculum">&nbsp;&nbsp;&nbsp; 3c. Curriculum Learning</a>
+  <a href="#scheduled-sampling">&nbsp;&nbsp;&nbsp; 3d. Scheduled Sampling</a>
+  <a href="#beefier-data"><span class="sec-num">4</span>Beefier Data</a>
+  <a href="#hitbox-data">&nbsp;&nbsp;&nbsp; Hitbox Frame Data</a>
+  <a href="#stage-geometry">&nbsp;&nbsp;&nbsp; Stage Geometry</a>
+  <a href="#recommendations"><span class="sec-num">5</span>Recommendations</a>
+  <a href="#resources"><span class="sec-num">&mdash;</span>Curated Resources</a>
+</nav>
+
+<!-- ════════════════════════════════════════════════════════
+     HEADER
+     ════════════════════════════════════════════════════════ -->
+<header class="header">
+  <div class="header-title">World Model Training Improvements &mdash; Research &amp; Prior Art</div>
+  <div class="header-date">2026-02-27</div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════
+     MAIN CONTENT
+     ════════════════════════════════════════════════════════ -->
+<main class="main">
+
+<!-- ── HERO ────────────────────────────────────────────── -->
+<div class="hero">
+  <h1>World Model Training Improvements</h1>
+  <p class="subtitle">Research &amp; Prior Art &mdash; Exploring architectures, training techniques, and data enrichment for the Melee world model</p>
+  <div class="meta">
+    <span>Date: 2026-02-27</span>
+    <span>Project: No Johns / worldmodel</span>
+    <span>Current: Mamba-2 4.3M params, 67.3% change_acc</span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     SECTION 1: MODEL PARADIGMS
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="model-paradigms">
+  <span class="section-anchor" id="model-paradigms-anchor"></span>
+  <div class="section-header">
+    <span class="section-num">01</span>
+    <h2>Model Paradigms &mdash; Should We Use Transformers?</h2>
+  </div>
+
+  <div class="section-intro">
+    <strong>Key finding:</strong> Mamba-2 is validated as the right choice. Transformers aren't out of the question but evidence says they'd be slower for no clear gain.
+  </div>
+
+  <div class="prose">
+    <h3>Evidence from SSM World Models</h3>
+    <ul>
+      <li><strong><a href="https://arxiv.org/abs/2502.20168">S5WM</a></strong> (ICLR 2025 Workshop) &mdash; Replaced DreamerV3's recurrent backbone with an S5 state-space model. Got <strong>10x faster</strong> world model training with comparable performance.</li>
+      <li><strong><a href="https://arxiv.org/abs/2403.04253">R2I (Recall to Imagine)</a></strong> (ICLR 2024) &mdash; Integrates S4-variant SSMs into DreamerV3's world model. New SOTA on memory-intensive RL tasks.</li>
+      <li><strong>Decision Mamba-Hybrid</strong> &mdash; 28x faster inference than attention-based RL in offline RL benchmarks.</li>
+      <li>For K=10&ndash;60 context windows, transformers give quadratic attention cost with no clear benefit.</li>
+    </ul>
+
+    <h3>Major Video-Prediction World Models</h3>
+    <p>For context, not direct comparisons &mdash; they predict pixels, we predict state vectors:</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>System</th>
+          <th>Source</th>
+          <th>What It Does</th>
+          <th>Relevance to Us</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><a href="https://diamond-wm.github.io/">DIAMOND</a></strong></td>
+          <td>NeurIPS 2024 Spotlight</td>
+          <td>Diffusion model for next-pixel-frame prediction. 4.4M params for Atari, 381M for CS:GO. EDM diffusion with 3 denoising steps avoids error accumulation.</td>
+          <td>Their exposure bias solution (diffusion) is an alternative to our scheduled sampling.</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://arxiv.org/abs/2408.14837">GameNGen</a></strong></td>
+          <td>Google, 2024</td>
+          <td>Simulates DOOM at 20+ FPS using augmented Stable Diffusion v1.4. Two-phase: RL agent plays, diffusion model learns. Only 3 seconds of memory.</td>
+          <td>Pixel prediction, not state vectors. Shows scale needed for video-based approaches.</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://arxiv.org/abs/2402.15391">Genie / Genie 2</a></strong></td>
+          <td>DeepMind, 2024</td>
+          <td>11B parameter foundation world model. Learns action representations from unlabeled video.</td>
+          <td>Latent action model concept is interesting but we have explicit controller inputs.</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://gamegen-x.github.io/">GameGen-X</a></strong></td>
+          <td>ICLR 2025</td>
+          <td>Diffusion transformer for open-world game video generation with interactive control.</td>
+          <td>Pixel-level generation. Different paradigm entirely.</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://arxiv.org/abs/2310.09615">STORM</a></strong></td>
+          <td>NeurIPS 2023</td>
+          <td>Stochastic transformer world model. 126.7% mean human performance on Atari 100k. Trainable in 4.3 hours on single RTX 3090.</td>
+          <td>Transformer-based but Atari-scale. Training speed is notable.</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://danijar.com/project/dreamerv3/">DreamerV3</a></strong></td>
+          <td>Nature 2025</td>
+          <td>Learns latent world model (RSSM) + imagination-based planning. Results across 150+ tasks.</td>
+          <td>Closest conceptually, but works in learned latent space, not structured state.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <h3>What IS Worth Testing</h3>
+    <div class="card-grid cols-2">
+      <div class="card highlight-green">
+        <div class="card-title">Hybrid Attention-SSM</div>
+        <div class="card-body">
+          <p>A single attention layer after the Mamba stack. Some papers show this captures long-range dependencies the SSM misses (rare interactions like tech chases or edge guard sequences). Cheap to add &mdash; one layer, not a full transformer.</p>
+        </div>
+      </div>
+      <div class="card highlight-purple">
+        <div class="card-title">Diffusion Heads</div>
+        <div class="card-body">
+          <p>Diffusion heads instead of direct regression for continuous predictions. DIAMOND showed diffusion handles autoregressive error accumulation better than MSE regression. Exotic &mdash; probably a moonshot.</p>
+        </div>
+      </div>
+    </div>
+
+    <h3>What to Skip</h3>
+    <div class="callout callout-skip">
+      <div class="callout-label">Skip</div>
+      <ul>
+        <li><strong>Full transformer backbone</strong> &mdash; slower, no demonstrated benefit for structured state prediction.</li>
+        <li><strong>Video prediction models</strong> &mdash; they predict pixels, we predict state vectors. Our approach is more honest and interpretable.</li>
+      </ul>
+    </div>
+
+    <h3>Our Niche in the Literature</h3>
+  </div>
+
+  <div class="callout callout-insight">
+    <div class="callout-label">Key Insight</div>
+    Our architecture occupies an underexplored niche in the literature. Nobody else combines structured game state prediction with SSM backbones and explicit controller conditioning.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>Published Work</th>
+          <th>Our Approach</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Prediction target</td>
+          <td>Pixels or learned latents</td>
+          <td>Structured game state vectors</td>
+        </tr>
+        <tr>
+          <td>Architecture</td>
+          <td>Transformers, diffusion, RSSM</td>
+          <td>Mamba-2 SSM</td>
+        </tr>
+        <tr>
+          <td>Action conditioning</td>
+          <td>Implicit in next-frame</td>
+          <td>Explicit controller input separation</td>
+        </tr>
+        <tr>
+          <td>Game domain</td>
+          <td>Atari, Doom, CS:GO, driving</td>
+          <td>Melee (frame-level fighting game)</td>
+        </tr>
+        <tr>
+          <td>Feature engineering</td>
+          <td>Minimal (pixels) or generic</td>
+          <td>Rich domain-specific encoding (86+ features/player)</td>
+        </tr>
+        <tr>
+          <td>Hitbox/hurtbox data</td>
+          <td>Nobody does this</td>
+          <td>We have the infrastructure for it</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     SECTION 2: PREFRAME / POSTFRAME
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="preframe-postframe">
+  <span class="section-anchor" id="preframe-postframe-anchor"></span>
+  <div class="section-header">
+    <span class="section-num">02</span>
+    <h2>Preframe / Postframe vs t+1</h2>
+  </div>
+
+  <div class="section-intro">
+    Good instinct &mdash; sharpens the framing, and practically close to what we already have.
+  </div>
+
+  <div class="prose">
+    <p>Our v2.2 input-conditioned architecture already does the conceptually right thing:</p>
+    <ul>
+      <li><strong>Input:</strong> context frames [t-K, ..., t-1] + frame t's controller input</li>
+      <li><strong>Output:</strong> frame t's resulting state</li>
+    </ul>
+    <p>That <strong>IS</strong> the preframe &rarr; postframe mapping. The model learns the physics step.</p>
+
+    <h3>Where the Current Implementation Is Slightly Sloppy</h3>
+    <p>The dataset (<code>dataset.py</code> lines 244&ndash;315) grabs <code>self.data.floats[t-K:t]</code> for context and <code>self.data.floats[t+d]</code> for targets. The indexing is frame-count-based from the replay, and Slippi's replay format gives us postframe data. So we're predicting <strong>postframe &rarr; postframe</strong> with controller conditioning in between.</p>
+
+    <h3>What Leaning Harder into Pre/Post Would Mean</h3>
+    <ul>
+      <li>If we could extract preframe states from Slippi (before the game engine runs), we'd have cleaner training signal.</li>
+      <li>Slippi does expose both pre and post frame data in its replay format. Worth checking if parsed parquet files have both.</li>
+      <li>Main gain: removes ambiguity about what the model is predicting.</li>
+      <li>With explicit preframe data: <code>preframe(t) + controller(t) &rarr; postframe(t)</code> = literally &ldquo;given the world state and what buttons were pressed, what happens.&rdquo;</li>
+    </ul>
+
+    <h3>Related Prior Art</h3>
+    <ul>
+      <li><strong>Action-conditioned transition models</strong> are the standard in model-based RL (DreamerV3, IRIS, DIAMOND). Given state s<sub>t</sub> and action a<sub>t</sub>, predict s<sub>t+1</sub>.</li>
+      <li><strong>Physics-informed forward models</strong> in robotics (Science Robotics 2025) predict state conditioned on geometry + proprioception. Same principle.</li>
+      <li><strong>Differentiable physics engines</strong> (gradSim, DiffTaichi) make the physics step itself differentiable. Our model is a differentiable approximation of Melee's game engine.</li>
+    </ul>
+  </div>
+
+  <div class="callout callout-verdict">
+    <div class="callout-label">Verdict</div>
+    Investigate what's in the parsed data. If preframe states are available, switching to pre &rarr; post would be cleaner with minimal code changes. If not, our current formulation is already the right shape.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     SECTION 3: TRAINING TECHNIQUES
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="training-techniques">
+  <span class="section-anchor" id="training-techniques-anchor"></span>
+  <div class="section-header">
+    <span class="section-num">03</span>
+    <h2>Training Techniques &mdash; Teaching the Model Rules</h2>
+  </div>
+
+  <div class="section-intro">
+    <strong>This is where the biggest untapped gains are.</strong> Four approaches, ranked by bang-for-buck.
+  </div>
+
+  <!-- ── 3a: Auxiliary Physics Losses ──────────────────── -->
+  <div class="prose" id="aux-physics">
+    <h3>3a) Auxiliary Physics Losses <span style="color:var(--green); font-size:0.8em;">&mdash; do this first</span></h3>
+    <p>Add soft penalty terms to the existing loss in <code>metrics.py</code>. Minimal code changes, immediate signal.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Loss Name</th>
+          <th>What It Enforces</th>
+          <th>Implementation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>stock_monotonic</code></td>
+          <td>Stocks can only decrease</td>
+          <td>Penalize &Delta;stocks &gt; 0 when no blast zone crossing</td>
+        </tr>
+        <tr>
+          <td><code>percent_monotonic</code></td>
+          <td>Damage doesn't decrease within a stock</td>
+          <td>Penalize &Delta;percent &lt; 0 (except on respawn)</td>
+        </tr>
+        <tr>
+          <td><code>blast_zone_penalty</code></td>
+          <td>Positions stay in bounds</td>
+          <td>Soft penalty for predicted x/y outside stage boundaries</td>
+        </tr>
+        <tr>
+          <td><code>shield_range</code></td>
+          <td>Shield &isin; [0, 60]</td>
+          <td>Clamp penalty</td>
+        </tr>
+        <tr>
+          <td><code>velocity_consistency</code></td>
+          <td>position_delta &asymp; velocity &times; dt</td>
+          <td>Penalize when &Delta;x diverges from <code>speed_ground_x</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <p>These are all things the harness currently clamps post-hoc. Moving them into training means the model <strong>learns the rules</strong> instead of having them duct-taped on after.</p>
+
+    <div class="callout callout-insight">
+      <div class="callout-label">Prior Art &mdash; Physics-Informed Neural Networks (PINNs)</div>
+      PINNs have been doing auxiliary physics losses since 2019. The literature shows these consistently improve generalization, especially on out-of-distribution inputs &mdash; which is exactly what autoregressive rollout is.
+      <br><br>
+      <a href="https://www.sciencedirect.com/science/article/pii/S0957417425017865">Survey: Expert Systems with Applications (2025)</a>
+    </div>
+  </div>
+
+  <!-- ── 3b: Constraint / Projection Layers ───────────── -->
+  <div class="prose" id="constraint-layers">
+    <h3>3b) Constraint / Projection Layers <span style="color:var(--amber); font-size:0.8em;">&mdash; medium effort, strong guarantees</span></h3>
+    <p>Instead of soft losses, enforce constraints architecturally:</p>
+  </div>
+
+  <div class="card-grid cols-2">
+    <div class="card">
+      <div class="card-title"><a href="https://proceedings.neurips.cc/paper/2020/file/37bc5e7fb6931a50b3464ec66179085f-Paper.pdf">Neural Projection Layers</a></div>
+      <div class="card-body">NeurIPS 2020. Embed convex optimization as a differentiable layer. Output projected onto feasible set.</div>
+    </div>
+    <div class="card">
+      <div class="card-title"><a href="https://arxiv.org/pdf/2410.10807">HardNet</a></div>
+      <div class="card-body">2024. Projects violated outputs using minimum L2-norm projection. Fully differentiable.</div>
+    </div>
+    <div class="card">
+      <div class="card-title"><a href="https://arxiv.org/abs/2402.07251">KKT-hPINN</a></div>
+      <div class="card-body">2024. Rigorously guarantees hard linear equality constraints through KKT-derived projection layers.</div>
+    </div>
+    <div class="card">
+      <div class="card-title"><a href="https://openreview.net/forum?id=u3dX2CEIZb">MoE Constraint Scaling</a></div>
+      <div class="card-body">2024. Scales hard physics constraints using mixture-of-experts.</div>
+    </div>
+  </div>
+
+  <div class="prose">
+    <p>For us: continuous prediction head outputs whatever it wants, then a projection layer snaps stocks to non-increasing, positions within blast zones, percent to non-decreasing. Fully differentiable.</p>
+
+    <div class="callout callout-warning">
+      <div class="callout-label">Tradeoff</div>
+      More complex than auxiliary losses, but gives hard guarantees. Probably overkill until we've exhausted the soft loss approach.
+    </div>
+  </div>
+
+  <!-- ── 3c: Curriculum Learning ──────────────────────── -->
+  <div class="prose" id="curriculum">
+    <h3>3c) Curriculum Learning <span style="color:var(--amber); font-size:0.8em;">&mdash; medium effort, speculative</span></h3>
+    <p>Start training on &ldquo;easy&rdquo; game states and progressively add harder ones:</p>
+    <ul>
+      <li><strong>Level 1:</strong> Standing/walking, no combat</li>
+      <li><strong>Level 2:</strong> Grounded attacks, simple knockback</li>
+      <li><strong>Level 3:</strong> Aerial combos, edge guards</li>
+      <li><strong>Level 4:</strong> Multi-hit moves with hitlag, projectiles</li>
+    </ul>
+
+    <h4>Prior Art</h4>
+    <ul>
+      <li><strong><a href="https://arxiv.org/html/2509.13790v2">CAMPUS (Competence-Aware Curriculum)</a></strong> (2025) &mdash; Maintains multiple difficulty-based sub-curricula, adaptively advances based on model competence.</li>
+      <li><strong>NetHack / Neural MMO curriculum learning work</strong> (2024) found that existing curriculum methods don't easily transfer to complex new environments &mdash; we'd need a Melee-specific difficulty scorer.</li>
+    </ul>
+
+    <div class="callout callout-warning">
+      <div class="callout-label">Honest Assessment</div>
+      Interesting but adds significant complexity to the data pipeline. Try auxiliary losses first &mdash; they address the same underlying problem with far less engineering.
+    </div>
+  </div>
+
+  <!-- ── 3d: Scheduled Sampling ───────────────────────── -->
+  <div class="prose" id="scheduled-sampling">
+    <h3>3d) Scheduled Sampling Improvements <span style="color:var(--amber); font-size:0.8em;">&mdash; already in progress</span></h3>
+    <p>We already have scheduled sampling in <code>trainer.py</code> (lines 220&ndash;264). Literature confirms it's the right approach.</p>
+
+    <p><strong>Key refinement worth trying:</strong> Instead of random Gaussian noise corruption, use the <strong>model's own predictions</strong> as the corrupted context frames. This is &ldquo;true&rdquo; scheduled sampling &mdash; during training, with increasing probability, replace ground truth context frames with what the model would have predicted. More expensive per batch but directly teaches the model to handle its own errors.</p>
+
+    <h4>Prior Art</h4>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-title"><a href="https://www.researchgate.net/publication/278048447_Scheduled_Sampling_for_Sequence_Prediction_with_Recurrent_Neural_Networks">Original Scheduled Sampling</a></div>
+        <div class="card-body">Bengio et al. The foundational paper. During training, stochastically replace ground truth inputs with model predictions.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><a href="https://openreview.net/pdf?id=UmHG2bD7X3w">Dynamic Scheduled Sampling</a></div>
+        <div class="card-body">ICLR 2024 Workshop. Uses action-tree based scheduling for better curriculum over the sampling probability.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><a href="https://diamond-wm.github.io/">DIAMOND's Alternative</a></div>
+        <div class="card-body">Uses EDM diffusion to inherently handle noise from previous predictions, bypassing scheduled sampling entirely.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     SECTION 4: BEEFIER DATA
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="beefier-data">
+  <span class="section-anchor" id="beefier-data-anchor"></span>
+  <div class="section-header">
+    <span class="section-num">04</span>
+    <h2>Beefier Data &mdash; Hitbox Frame Data + Stage Geometry</h2>
+  </div>
+
+  <div class="section-intro">
+    <strong>Nobody has done this in published Melee AI work.</strong> That's either because it's not worth it or because nobody's gotten this far. We think it's the latter.
+  </div>
+
+  <div class="prose">
+    <h3>Existing Melee AI Projects &mdash; State Representations</h3>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Hitboxes</th>
+          <th>Projectiles</th>
+          <th>Stage Geo</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><a href="https://github.com/vladfi1/slippi-ai">slippi-ai</a></strong></td>
+          <td>No</td>
+          <td>No</td>
+          <td>No</td>
+          <td>Chose Captain Falcon to avoid projectiles</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://github.com/blasphemetheus/exphil">ExPhil</a></strong></td>
+          <td>No</td>
+          <td>Yes</td>
+          <td>Stage ID embedding</td>
+          <td>Mamba achieves 8.9ms inference (viable for 60fps). Most architecturally similar to us.</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://arxiv.org/abs/1702.06230">MIT SmashBot</a></strong></td>
+          <td>No</td>
+          <td>No</td>
+          <td>No</td>
+          <td>Explicitly avoided projectile characters</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://cs231n.stanford.edu/2025/papers/text_file_840589945-Parsing_Super_Smash_Bros__Melee_Frames.pdf">Slippify (Stanford)</a></strong></td>
+          <td>No</td>
+          <td>No</td>
+          <td>No</td>
+          <td>ResNet for visual frame parsing, not state prediction</td>
+        </tr>
+        <tr>
+          <td><strong><a href="https://ericyuegu.com/melee-pt1">Eric Gu's Melee AI</a></strong></td>
+          <td>No</td>
+          <td>No</td>
+          <td>No</td>
+          <td>Behavioral cloning from ~100K replays</td>
+        </tr>
+        <tr>
+          <td><strong>Our world model</strong></td>
+          <td style="color:var(--green);">Infrastructure exists</td>
+          <td style="color:var(--amber);">Flagged, data available</td>
+          <td>4-dim stage embedding</td>
+          <td>Rich 86+ features/player</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Hitbox Data -->
+  <div class="prose" id="hitbox-data">
+    <h3>Hitbox Frame Data as Input Features</h3>
+    <p>The data exists (<a href="https://ikneedata.com">ikneedata.com</a>). Every move's hitbox positions, sizes, damage, knockback angles, active frames are reverse-engineered.</p>
+
+    <h4>Practical Encoding &mdash; Hitbox Properties, Not Raw Geometry</h4>
+    <p>Raw hitbox geometry is too high-dimensional. Instead, encode hitbox properties:</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Source</th>
+          <th>What It Tells the Model</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>attack_base_damage</code></td>
+          <td>Frame data DB</td>
+          <td>How hard this hit should land</td>
+        </tr>
+        <tr>
+          <td><code>attack_kb_angle</code></td>
+          <td>Frame data DB</td>
+          <td>Which direction knockback goes</td>
+        </tr>
+        <tr>
+          <td><code>attack_bkb</code> / <code>attack_kbg</code></td>
+          <td>Frame data DB</td>
+          <td>Knockback scaling (base + growth)</td>
+        </tr>
+        <tr>
+          <td><code>is_hitbox_active</code></td>
+          <td><code>action_state</code> + <code>state_age</code> &rarr; frame data</td>
+          <td>Whether this frame can hit</td>
+        </tr>
+        <tr>
+          <td><code>hitbox_range</code></td>
+          <td>Frame data DB</td>
+          <td>Reach of the attack</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <div class="callout callout-insight">
+      <div class="callout-label">Key Insight</div>
+      You don't need to encode hitbox geometry. You encode hitbox <em>properties</em>, indexed by <code>action_state</code> + <code>state_age</code> (which we already have). The model already knows Fox is in <code>ATTACK_AIR_F</code> at frame 7 &mdash; it just doesn't know frame 7 is the active hitbox frame with 15% damage and a 45&deg; knockback angle.
+    </div>
+
+    <p><strong>Implementation path:</strong> Build a lookup table <code>(action_state, state_age) &rarr; hitbox_properties</code>, apply during encoding in <code>encode_player_frames()</code>. Data enrichment step, not architecture change.</p>
+
+    <div class="callout callout-warning">
+      <div class="callout-label">The Catch</div>
+      Need to source frame data in structured format. <a href="https://ikneedata.com">ikneedata</a> has it but may need scraping/parsing into a lookup table. The Melee modding community may have JSON/CSV exports.
+    </div>
+  </div>
+
+  <!-- Stage Geometry -->
+  <div class="prose" id="stage-geometry">
+    <h3>Stage Geometry as Explicit Features</h3>
+    <p><strong>Current:</strong> 4-dim stage embedding. Lossy &mdash; the model has to learn from data that Battlefield has 3 platforms and FD has 0.</p>
+
+    <h4>Concrete Replacement</h4>
+    <p>For each stage, encode as fixed feature vector:</p>
+    <ul>
+      <li><strong>Platform positions:</strong> <code>[(x, y, width)]</code> for each platform (padded to max 3)</li>
+      <li><strong>Blast zone boundaries:</strong> <code>(left, right, top, bottom)</code></li>
+      <li><strong>Main platform:</strong> <code>(left_edge, right_edge)</code></li>
+    </ul>
+    <p>~20 floats per stage, static per game. Concatenate once, broadcast across all frames. Direct geometric information instead of learned embeddings.</p>
+
+    <div class="callout callout-verdict">
+      <div class="callout-label">Easy Win</div>
+      Lookup table in <code>encoding.py</code>, populated from known stage data. No scraping needed &mdash; Melee community has exact values for every legal stage.
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ══════════════════════════════════════════════════════════
+     SECTION 5: PRIORITIZED RECOMMENDATIONS
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="recommendations">
+  <span class="section-anchor" id="recommendations-anchor"></span>
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <h2>Prioritized Recommendations</h2>
+  </div>
+
+  <ol class="priority-list">
+    <!-- 1 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-1"></div>
+      <div class="pri-content">
+        <div class="pri-title">Auxiliary Physics Losses</div>
+        <div class="pri-desc">Smallest change, clearest signal, addresses known failure modes (hallucinated KOs, percent going backwards). Add soft penalty terms to <code>metrics.py</code> for stock monotonicity, percent monotonicity, blast zone bounds, shield range, and velocity consistency.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-low">Effort: Low</span>
+          <span class="badge badge-impact-high">Impact: High</span>
+        </div>
+      </div>
+    </li>
+    <!-- 2 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-2"></div>
+      <div class="pri-content">
+        <div class="pri-title">Stage Geometry as Explicit Features</div>
+        <div class="pri-desc">Replace 4-dim learned stage embedding with ~20 floats of explicit geometry: platform positions, blast zone boundaries, main stage edges. Lookup table in <code>encoding.py</code>, no external data needed.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-low">Effort: Low</span>
+          <span class="badge badge-impact-med">Impact: Medium-High</span>
+        </div>
+      </div>
+    </li>
+    <!-- 3 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-3"></div>
+      <div class="pri-content">
+        <div class="pri-title">Hitbox Properties as Input Features</div>
+        <div class="pri-desc">Bigger data pipeline change but fills the biggest information gap &mdash; the model can't predict knockback without knowing knockback values. Build <code>(action_state, state_age) &rarr; hitbox_properties</code> lookup table, apply in <code>encode_player_frames()</code>.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-med">Effort: Medium</span>
+          <span class="badge badge-impact-high">Impact: High</span>
+        </div>
+      </div>
+    </li>
+    <!-- 4 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-4"></div>
+      <div class="pri-content">
+        <div class="pri-title">True Scheduled Sampling</div>
+        <div class="pri-desc">Feed model's own predictions during training instead of Gaussian noise corruption. Directly attacks the autoregressive drift problem. More expensive per batch but highest-leverage fix for rollout quality.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-med">Effort: Medium</span>
+          <span class="badge badge-impact-high">Impact: High</span>
+        </div>
+      </div>
+    </li>
+    <!-- 5 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-5"></div>
+      <div class="pri-content">
+        <div class="pri-title">Hybrid Attention Layer</div>
+        <div class="pri-desc">One attention layer after the Mamba stack. Cheap experiment to capture long-range dependencies the SSM might miss (tech chases, edge guard sequences). Low cost, unknown payoff.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-low">Effort: Low</span>
+          <span class="badge badge-impact-spec">Impact: Speculative</span>
+        </div>
+      </div>
+    </li>
+    <!-- 6 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-6"></div>
+      <div class="pri-content">
+        <div class="pri-title">Preframe / Postframe Cleanup</div>
+        <div class="pri-desc">Investigate parsed parquet data for preframe states. If available, switching to <code>preframe(t) + controller(t) &rarr; postframe(t)</code> would be cleaner with minimal code changes. Potentially free improvement.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-med">Effort: Low-Medium</span>
+          <span class="badge badge-impact-med">Impact: Medium</span>
+        </div>
+      </div>
+    </li>
+    <!-- 7 -->
+    <li class="priority-item">
+      <div class="pri-rank tier-7"></div>
+      <div class="pri-content">
+        <div class="pri-title">Curriculum Learning</div>
+        <div class="pri-desc">Interesting but complex. Start training on easy game states (standing/walking), progressively add harder ones (aerial combos, edge guards, projectiles). Requires a Melee-specific difficulty scorer and data pipeline overhaul. Try after the above.</div>
+        <div class="pri-badges">
+          <span class="badge badge-effort-high">Effort: High</span>
+          <span class="badge badge-impact-spec">Impact: Speculative</span>
+        </div>
+      </div>
+    </li>
+  </ol>
+</div>
+
+<hr>
+
+<!-- ══════════════════════════════════════════════════════════
+     CURATED RESOURCES
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="resources">
+  <span class="section-anchor" id="resources-anchor"></span>
+  <div class="section-header">
+    <span class="section-num">&mdash;</span>
+    <h2>Curated Resources</h2>
+  </div>
+
+  <div class="resources-category">
+    <h4>SSM / Mamba World Models</h4>
+    <ul class="resources-list">
+      <li><span class="res-tag">ICLR 25</span> <a href="https://arxiv.org/abs/2502.20168">S5WM &mdash; State-Space World Models for 10x Faster Training</a></li>
+      <li><span class="res-tag">ICLR 24</span> <a href="https://arxiv.org/abs/2403.04253">R2I: Recall to Imagine &mdash; S4 SSMs in DreamerV3</a></li>
+    </ul>
+  </div>
+
+  <div class="resources-category">
+    <h4>Video-Prediction World Models</h4>
+    <ul class="resources-list">
+      <li><span class="res-tag">NeurIPS 24</span> <a href="https://diamond-wm.github.io/">DIAMOND &mdash; Diffusion World Model (Atari, CS:GO)</a></li>
+      <li><span class="res-tag">Google 24</span> <a href="https://arxiv.org/abs/2408.14837">GameNGen &mdash; Diffusion Simulates DOOM at 20+ FPS</a></li>
+      <li><span class="res-tag">DeepMind 24</span> <a href="https://arxiv.org/abs/2402.15391">Genie &mdash; 11B Foundation World Model</a></li>
+      <li><span class="res-tag">ICLR 25</span> <a href="https://gamegen-x.github.io/">GameGen-X &mdash; Diffusion Transformer for Game Video</a></li>
+      <li><span class="res-tag">NeurIPS 23</span> <a href="https://arxiv.org/abs/2310.09615">STORM &mdash; Stochastic Transformer World Model</a></li>
+      <li><span class="res-tag">Nature 25</span> <a href="https://danijar.com/project/dreamerv3/">DreamerV3 &mdash; Latent World Model + Imagination Planning</a></li>
+    </ul>
+  </div>
+
+  <div class="resources-category">
+    <h4>Physics-Informed &amp; Constrained Neural Networks</h4>
+    <ul class="resources-list">
+      <li><span class="res-tag">Survey</span> <a href="https://www.sciencedirect.com/science/article/pii/S0957417425017865">PINNs Survey &mdash; Expert Systems with Applications (2025)</a></li>
+      <li><span class="res-tag">NeurIPS 20</span> <a href="https://proceedings.neurips.cc/paper/2020/file/37bc5e7fb6931a50b3464ec66179085f-Paper.pdf">Neural Projection Layers &mdash; Differentiable Constrained Optimization</a></li>
+      <li><span class="res-tag">2024</span> <a href="https://arxiv.org/pdf/2410.10807">HardNet &mdash; L2-Norm Projection for Hard Constraints</a></li>
+      <li><span class="res-tag">2024</span> <a href="https://arxiv.org/abs/2402.07251">KKT-hPINN &mdash; Hard Linear Equality via KKT Projection</a></li>
+      <li><span class="res-tag">2024</span> <a href="https://openreview.net/forum?id=u3dX2CEIZb">MoE Constraint Scaling &mdash; Mixture-of-Experts for Physics</a></li>
+    </ul>
+  </div>
+
+  <div class="resources-category">
+    <h4>Scheduled Sampling &amp; Curriculum</h4>
+    <ul class="resources-list">
+      <li><span class="res-tag">2015</span> <a href="https://www.researchgate.net/publication/278048447_Scheduled_Sampling_for_Sequence_Prediction_with_Recurrent_Neural_Networks">Bengio et al. &mdash; Original Scheduled Sampling</a></li>
+      <li><span class="res-tag">ICLR 24W</span> <a href="https://openreview.net/pdf?id=UmHG2bD7X3w">Dynamic Scheduled Sampling &mdash; Action-Tree Scheduling</a></li>
+      <li><span class="res-tag">2025</span> <a href="https://arxiv.org/html/2509.13790v2">CAMPUS &mdash; Competence-Aware Curriculum for RL</a></li>
+    </ul>
+  </div>
+
+  <div class="resources-category">
+    <h4>Melee AI Projects</h4>
+    <ul class="resources-list">
+      <li><span class="res-tag">GitHub</span> <a href="https://github.com/vladfi1/slippi-ai">slippi-ai (vladfi1) &mdash; Neural Net Melee AI</a></li>
+      <li><span class="res-tag">GitHub</span> <a href="https://github.com/blasphemetheus/exphil">ExPhil &mdash; Mamba-Based Melee Agent (8.9ms inference)</a></li>
+      <li><span class="res-tag">arXiv</span> <a href="https://arxiv.org/abs/1702.06230">MIT SmashBot &mdash; Deep RL for Melee</a></li>
+      <li><span class="res-tag">Stanford</span> <a href="https://cs231n.stanford.edu/2025/papers/text_file_840589945-Parsing_Super_Smash_Bros__Melee_Frames.pdf">Slippify &mdash; Visual Frame Parsing with ResNet</a></li>
+      <li><span class="res-tag">Blog</span> <a href="https://ericyuegu.com/melee-pt1">Eric Gu &mdash; Behavioral Cloning from 100K Replays</a></li>
+    </ul>
+  </div>
+
+  <div class="resources-category">
+    <h4>Game Data &amp; Melee Resources</h4>
+    <ul class="resources-list">
+      <li><span class="res-tag">Data</span> <a href="https://ikneedata.com">iKneeData &mdash; Melee Frame Data (hitboxes, knockback, active frames)</a></li>
+      <li><span class="res-tag">API</span> <a href="https://github.com/altf4/libmelee">libmelee &mdash; Python API for Melee via Dolphin</a></li>
+      <li><span class="res-tag">Tool</span> <a href="https://slippi.gg">Slippi &mdash; Modern Netplay/Replay System for Melee</a></li>
+    </ul>
+  </div>
+</div>
+
+<!-- Footer -->
+<div style="margin-top:64px; padding-top:24px; border-top:1px solid var(--border); text-align:center; font-size:0.75rem; color:var(--text-dim);">
+  No Johns &mdash; World Model Research &middot; February 27, 2026 &middot; Generated for internal use
+</div>
+
+</main>
+
+<!-- ════════════════════════════════════════════════════════
+     SIDEBAR ACTIVE LINK HIGHLIGHTING
+     ════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  const links = document.querySelectorAll('.sidebar a');
+  const sections = [];
+
+  links.forEach(link => {
+    const id = link.getAttribute('href');
+    if (id && id.startsWith('#')) {
+      const el = document.getElementById(id.slice(1));
+      if (el) sections.push({ link, el });
+    }
+  });
+
+  function update() {
+    let current = sections[0];
+    const scrollY = window.scrollY + 100;
+
+    for (const s of sections) {
+      if (s.el.getBoundingClientRect().top + window.scrollY <= scrollY) {
+        current = s;
+      }
+    }
+
+    links.forEach(l => l.classList.remove('active'));
+    if (current) current.link.classList.add('active');
+  }
+
+  window.addEventListener('scroll', update, { passive: true });
+  update();
+})();
+</script>
+
+</body>
+</html>

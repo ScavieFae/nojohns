@@ -349,7 +349,7 @@ v2 adds velocity, state_age, hitlag, stocks, character/stage embeddings. The 10-
 | Position MAE | 0.91 | **0.79** | same |
 | Val loss | 0.378 | **0.299** | -67% |
 
-The v2.2 jump is entirely from input conditioning — same data, same machine, same hyperparams. The model no longer guesses player decisions; it just simulates physics. See `worldmodel/docs/INPUT-CONDITIONING.md` for the full writeup.
+The v2.2 jump is entirely from input conditioning — same data, same machine, same hyperparams. The model no longer guesses player decisions; it just simulates physics. See `worldmodel/research/architecture/INPUT-CONDITIONING.md` for the full writeup.
 
 **Phase 1 encoding experiments (2K games, 2 epochs each):**
 
@@ -565,7 +565,7 @@ System: `brew install p7zip` (for extracting .7z archives)
 
 v2 adds: velocity (5), state_age, hitlag, stocks, character embed, stage embed.
 v2.1 adds: l_cancel embed (2d), hurtbox_state embed (2d), ground embed (4d), last_attack_landed embed (8d), combo_count continuous. Same parquet, no re-parsing needed.
-**v2.2: input-conditioned prediction.** Frame t's controller input (26 floats) is fed to the model alongside the context window. Target shifts from frame t+1 to frame t. Same parquet, same encoding — only the model architecture and data loading change. See `worldmodel/docs/INPUT-CONDITIONING.md` for the full writeup.
+**v2.2: input-conditioned prediction.** Frame t's controller input (26 floats) is fed to the model alongside the context window. Target shifts from frame t+1 to frame t. Same parquet, same encoding — only the model architecture and data loading change. See `worldmodel/research/architecture/INPUT-CONDITIONING.md` for the full writeup.
 
 Each version requires fresh training (input layer shape change).
 
@@ -662,7 +662,7 @@ Key differences from MLP:
 - Reduce batch_size first (256 or 128). K=60 SSD uses more memory per batch than K=10 due to the (chunk_size × chunk_size) attention matrices.
 - If that doesn't help, reduce chunk_size (more chunks = smaller attention matrices, but slower).
 
-See `worldmodel/docs/MAMBA2-EXPLAINER.md` for the full architecture explanation.
+See `worldmodel/research/architecture/MAMBA2-EXPLAINER.md` for the full architecture explanation.
 
 ## Prediction Heads — Full Layout (as of Feb 24, 2026)
 

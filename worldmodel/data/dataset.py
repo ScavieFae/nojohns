@@ -20,6 +20,10 @@ v2.2+ layout — input-conditioned world model:
   Baseline: F=58, I=15, C=26. See EncodingConfig for experiment variants.
   Context = frames [t-K, ..., t-1]. Target = frame t+d's state given ctrl(t)..ctrl(t+d).
   When lookahead=0 (default), d=0 and this reduces to: predict frame t given ctrl(t).
+
+  focal_offset=D (E008): context window extends D frames past the prediction target.
+  All K frames have full state+ctrl — model sees the future trajectory and learns
+  to predict the focal frame from both past and future context.
 """
 
 import logging
@@ -221,14 +225,22 @@ class MeleeFrameDataset(Dataset):
 
         self._press_events = cfg.press_events
         self._lookahead = cfg.lookahead
+        self._focal_offset = cfg.focal_offset
+
+        if cfg.focal_offset > 0:
+            assert cfg.focal_offset < context_len, (
+                f"focal_offset ({cfg.focal_offset}) must be < context_len ({context_len})"
+            )
 
         indices = []
         # press_events needs t-1 for prev buttons, so start at context_len (which already guarantees t-1 exists)
         # lookahead=d needs frames up to t+d, so end range shrinks by d
+        # focal_offset=D needs D extra frames after t for context tail, so end shrinks by D too
+        tail = max(cfg.lookahead, cfg.focal_offset)
         for gi in game_range:
             start = data.game_offsets[gi]
             end = data.game_offsets[gi + 1]
-            for t in range(start + context_len, end - cfg.lookahead):
+            for t in range(start + context_len, end - tail):
                 indices.append(t)
 
         self.valid_indices = np.array(indices, dtype=np.int64)
@@ -244,9 +256,17 @@ class MeleeFrameDataset(Dataset):
         t = int(self.valid_indices[idx])
         K = self.context_len
         d = self._lookahead  # 0 = predict frame t, 1 = predict frame t+1, etc.
+        D = self._focal_offset  # 0 = predict end of window (default), >0 = predict inside window
 
-        float_ctx = self.data.floats[t - K:t]  # (K, F)
-        int_ctx = self.data.ints[t - K:t]  # (K, I)
+        # E008: focal offset — context window extends D frames past the prediction target.
+        # Context includes full state+ctrl for ALL K frames, including D future frames.
+        # The model sees where the game actually goes and learns to predict the focal
+        # frame (t) from both past context and future trajectory.
+        #   D=0: context [t-K, ..., t-1], predict t  (baseline)
+        #   D=3: context [t-K, ..., t-1, t, t+1, t+2], predict t  (3 future frames)
+        ctx_end = t + D  # context extends D frames past t
+        float_ctx = self.data.floats[ctx_end - K:ctx_end]  # (K, F)
+        int_ctx = self.data.ints[ctx_end - K:ctx_end]  # (K, I)
 
         # Controller input: ctrl(t) through ctrl(t+d), concatenated
         ctrl_parts = []
@@ -267,12 +287,12 @@ class MeleeFrameDataset(Dataset):
 
         next_ctrl = torch.cat(ctrl_parts)  # (26*(1+d),) or (42*(1+d),)
 
-        # Target frame: t+d (when d=0, same as before — frame t)
+        # Target frame: t+d (same as baseline — focal_offset only changes context, not target)
         tgt_idx = t + d
         tgt_float = self.data.floats[tgt_idx]
         prev_float = self.data.floats[tgt_idx - 1]
 
-        # Continuous delta: frame (t+d) minus frame (t+d-1)
+        # Continuous delta: target minus previous
         p0_cont_delta = tgt_float[self._p0_cont] - prev_float[self._p0_cont]
         p1_cont_delta = tgt_float[self._p1_cont] - prev_float[self._p1_cont]
 
@@ -294,7 +314,7 @@ class MeleeFrameDataset(Dataset):
             p0_dyn, p1_dyn,                    # (6)
         ])  # (30,)
 
-        # Int targets: frame (t+d)'s categoricals (6 per player)
+        # Int targets: focal frame's categoricals (6 per player)
         tgt_ints = self.data.ints[tgt_idx]
         p1_off = self._p1_int_offset
         int_tgt = torch.stack([

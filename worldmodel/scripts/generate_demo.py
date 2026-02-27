@@ -573,17 +573,18 @@ def generate_autoregressive(
             next_float[vel_start:vel_end_idx] += vel_d[0:5]
             next_float[fp + vel_start:fp + vel_end_idx] += vel_d[5:10]
 
-        # Dynamics (absolute values: hitlag, stocks, combo)
+        # Dynamics (absolute values: hitlag, stocks, combo [, hitstun])
         dyn = preds["dynamics_pred"][0].cpu() if "dynamics_pred" in preds else None
         if dyn is not None:
             dyn_start = cfg.core_continuous_dim + cfg.velocity_dim + (0 if cfg.state_age_as_embed else 1)
-            for i in range(3):
+            dyn_per_player = cfg.predicted_dynamics_dim // 2
+            for i in range(dyn_per_player):
                 next_float[dyn_start + i] = dyn[i]
-                next_float[fp + dyn_start + i] = dyn[3 + i]
+                next_float[fp + dyn_start + i] = dyn[dyn_per_player + i]
 
         binary = (preds["binary_logits"][0].cpu() > 0).float()
-        next_float[cd:cd + bd] = binary[0:3]  # p0 binary
-        next_float[fp + cd:fp + cd + bd] = binary[3:6]  # p1 binary
+        next_float[cd:cd + bd] = binary[0:bd]  # p0 binary
+        next_float[fp + cd:fp + cd + bd] = binary[bd:2 * bd]  # p1 binary
 
         # Controller input from replay
         if t < float_data.shape[0]:
@@ -630,25 +631,26 @@ def generate_autoregressive(
         sim_ints = torch.cat([sim_ints, next_int.unsqueeze(0)], dim=0)
 
         # Decode predicted state for JSON
+        dpp = cfg.predicted_dynamics_dim // 2
         pred_p0 = _build_predicted_player(
             prev_float=prev_float[:fp],
             cont_delta=delta[:4],
-            binary=binary[:3],
+            binary=binary[:bd],
             action_logits=preds["p0_action_logits"][0].cpu(),
             jumps_logits=preds["p0_jumps_logits"][0].cpu(),
             cfg=cfg,
             vel_delta=vel_d[:5] if vel_d is not None else None,
-            dynamics=dyn[:3] if dyn is not None else None,
+            dynamics=dyn[:dpp] if dyn is not None else None,
         )
         pred_p1 = _build_predicted_player(
             prev_float=prev_float[fp:2 * fp],
             cont_delta=delta[4:8],
-            binary=binary[3:6],
+            binary=binary[bd:2 * bd],
             action_logits=preds["p1_action_logits"][0].cpu(),
             jumps_logits=preds["p1_jumps_logits"][0].cpu(),
             cfg=cfg,
             vel_delta=vel_d[5:10] if vel_d is not None else None,
-            dynamics=dyn[3:6] if dyn is not None else None,
+            dynamics=dyn[dpp:2 * dpp] if dyn is not None else None,
         )
 
         frames.append({
