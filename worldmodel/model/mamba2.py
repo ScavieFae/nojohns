@@ -387,6 +387,21 @@ class FrameStackMamba2(nn.Module):
         ])
         self.final_norm = RMSNorm(d_model)
 
+        # E008d: optional backward (right-to-left) Mamba layers
+        self.bidirectional = cfg.bidirectional
+        if self.bidirectional:
+            self.backward_frame_proj = nn.Linear(self.frame_dim, d_model)
+            self.backward_layers = nn.ModuleList([
+                nn.ModuleDict({
+                    "mamba": Mamba2Block(d_model, d_state, headdim=headdim, chunk_size=chunk_size),
+                    "norm": RMSNorm(d_model),
+                })
+                for _ in range(n_layers)
+            ])
+            self.backward_norm = RMSNorm(d_model)
+            # Project combined forward+backward hidden states to d_model
+            self.combine_proj = nn.Linear(d_model * 2, d_model)
+
         # Controller conditioning (additive, not concatenative)
         self.ctrl_proj = nn.Linear(cfg.ctrl_conditioning_dim, d_model)
 
@@ -463,13 +478,30 @@ class FrameStackMamba2(nn.Module):
         B, K, _ = float_ctx.shape
 
         frame_enc = self._encode_frames(float_ctx, int_ctx)
-        x = self.input_dropout(self.frame_proj(frame_enc))
 
+        # Forward pass (causal, left-to-right)
+        x_fwd = self.input_dropout(self.frame_proj(frame_enc))
         for layer in self.layers:
-            x = x + layer["mamba"](layer["norm"](x))
+            x_fwd = x_fwd + layer["mamba"](layer["norm"](x_fwd))
 
-        h = self.final_norm(x[:, -1, :])
-        h = h + self.ctrl_proj(next_ctrl)
+        if self.bidirectional:
+            # E008d: backward pass — reverse temporal order, process, reverse back
+            x_bwd = self.input_dropout(self.backward_frame_proj(frame_enc.flip(1)))
+            for layer in self.backward_layers:
+                x_bwd = x_bwd + layer["mamba"](layer["norm"](x_bwd))
+            x_bwd = x_bwd.flip(1)  # flip back to original temporal order
+
+            # Read hidden states at focal position
+            focal_idx = -(self.cfg.focal_offset + 1) if self.cfg.focal_offset > 0 else -1
+            h_fwd = self.final_norm(x_fwd[:, focal_idx, :])
+            h_bwd = self.backward_norm(x_bwd[:, focal_idx, :])
+
+            # Combine forward and backward
+            h = self.combine_proj(torch.cat([h_fwd, h_bwd], dim=-1))
+            h = h + self.ctrl_proj(next_ctrl)
+        else:
+            h = self.final_norm(x_fwd[:, -1, :])
+            h = h + self.ctrl_proj(next_ctrl)
 
         return {
             "continuous_delta": self.continuous_head(h),
