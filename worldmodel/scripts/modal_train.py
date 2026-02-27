@@ -52,7 +52,7 @@ def check_volume():
 
 
 @app.function(
-    gpu="A100",
+    gpu="H100:2",
     volumes={DATA_VOLUME_PATH: volume},
     image=image,
     timeout=86400,
@@ -65,7 +65,49 @@ def train(
     encoded_file: str = "/encoded-2k.pt",
     resume: str = "",
 ):
-    """Train from pre-encoded .pt file — instant data loading."""
+    """Train from pre-encoded .pt file — instant data loading.
+
+    Supports multi-GPU via PyTorch DDP when multiple GPUs are available.
+    Modal gives us N GPUs in one container; we use torchrun to spawn N processes.
+    """
+    import subprocess, sys
+
+    n_gpus = int(os.environ.get("NVIDIA_VISIBLE_DEVICES", "0").count(",")) + 1
+    try:
+        import torch
+        n_gpus = torch.cuda.device_count()
+    except Exception:
+        pass
+
+    if n_gpus > 1:
+        # Launch via torchrun for DDP — spawns one process per GPU
+        cmd = [
+            sys.executable, "-m", "torch.distributed.run",
+            "--nproc_per_node", str(n_gpus),
+            "--master_port", "29500",
+            "-m", "worldmodel.scripts.modal_train_worker",
+            "--config", config,
+            "--epochs", str(epochs),
+            "--run-name", run_name,
+            "--encoded-file", encoded_file,
+        ]
+        if resume:
+            cmd.extend(["--resume", resume])
+        print(f"Launching DDP with {n_gpus} GPUs via torchrun...")
+        sys.path.insert(0, "/root/nojohns")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = "/root/nojohns:" + env.get("PYTHONPATH", "")
+        result = subprocess.run(cmd, env=env)
+        if result.returncode != 0:
+            raise RuntimeError(f"DDP training failed with exit code {result.returncode}")
+        return
+
+    # Single-GPU fallback
+    _train_single_gpu(config, epochs, run_name, encoded_file, resume)
+
+
+def _train_single_gpu(config, epochs, run_name, encoded_file, resume):
+    """Single-GPU training path (also called by DDP worker for rank 0 setup)."""
     import sys
     import time
     import logging

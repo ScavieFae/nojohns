@@ -1,0 +1,72 @@
+# Mamba-2 v3 encoding, 100K ranked games (GAME-only)
+# Projectiles OFF — regressed 7% in v2 experiment, sparse feature for most matchups.
+# state_flags, hitstun, state_age_as_embed all ON.
+#
+# Key encoding changes vs v2 baseline:
+#   float_per_player: 29 → 69 (state_flags=40 binary, hitstun=1, NO projectiles)
+#   int_per_player: 7 → 8 (state_age as embed)
+#   predicted_binary_dim: 6 → 86 (state_flags × 2 players)
+#
+# Data: ~65K GAME-only from 116K ranked replays.
+# GPU: A100, 3 epochs. Super-chunked encoding (5 × ~13K parts).
+
+data:
+  dataset_dir: null
+  max_games: 0
+  stage_filter: null
+  character_filter: null
+
+encoding:
+  xy_scale: 0.05
+  percent_scale: 0.01
+  shield_scale: 0.01
+  action_vocab: 400
+  action_embed_dim: 32
+  jumps_vocab: 8
+  jumps_embed_dim: 4
+  state_age_as_embed: true
+  state_age_embed_vocab: 150
+  state_age_embed_dim: 8
+  press_events: false
+  lookahead: 0
+  # v3 features
+  state_flags: true
+  hitstun: true
+  projectiles: false
+
+model:
+  arch: mamba2
+  context_len: 10
+  d_model: 384
+  d_state: 64
+  n_layers: 4
+  headdim: 64
+  dropout: 0.1
+  chunk_size: 10
+
+training:
+  lr: 0.0005
+  weight_decay: 0.00001
+  batch_size: 4096
+  num_epochs: 10
+  train_split: 0.9
+  device: null
+  log_interval: 1000
+  scheduled_sampling: 0.3
+  ss_noise_scale: 0.1
+  ss_anneal_epochs: 3
+  ss_corrupt_frames: 3
+
+loss_weights:
+  continuous: 1.0
+  velocity: 0.5
+  dynamics: 0.5
+  binary: 0.5
+  action: 2.0
+  jumps: 0.5
+  l_cancel: 0.3
+  hurtbox: 0.3
+  ground: 0.3
+  last_attack: 0.3
+
+save_dir: checkpoints/mamba2-v3-100k-ranked

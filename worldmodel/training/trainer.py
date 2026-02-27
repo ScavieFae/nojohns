@@ -10,9 +10,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader
-
-from torch.utils.data import IterableDataset
+from torch.utils.data import DataLoader, IterableDataset
 
 from worldmodel.data.dataset import MeleeFrameDataset
 from worldmodel.model.encoding import EncodingConfig
@@ -58,7 +56,13 @@ class Trainer:
         ss_corrupt_frames: int = 3,
         log_interval: Optional[int] = None,
         epoch_callback: Optional[Callable[[], None]] = None,
+        ddp: bool = False,
+        ddp_rank: int = 0,
     ):
+        self.ddp = ddp
+        self.ddp_rank = ddp_rank
+        self.is_main = (not ddp) or (ddp_rank == 0)
+
         if device is None:
             if torch.backends.mps.is_available():
                 device = "mps"
@@ -70,6 +74,9 @@ class Trainer:
         logger.info("Using device: %s", self.device)
 
         self.model = model.to(self.device)
+        if self.ddp:
+            from torch.nn.parallel import DistributedDataParallel as DDP
+            self.model = DDP(self.model, device_ids=[self.device])
         self.cfg = cfg
         self.batch_size = batch_size
         self.num_epochs = num_epochs
@@ -89,10 +96,15 @@ class Trainer:
         # DataLoader — no custom collate, default stacking works with tuple returns
         # IterableDataset handles its own shuffling; map-style Dataset uses shuffle=True
         is_iterable = isinstance(train_dataset, IterableDataset)
+        self._train_sampler = None
+        if self.ddp and not is_iterable:
+            from torch.utils.data.distributed import DistributedSampler
+            self._train_sampler = DistributedSampler(train_dataset, shuffle=True)
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=batch_size,
-            shuffle=not is_iterable,
+            shuffle=(not is_iterable and self._train_sampler is None),
+            sampler=self._train_sampler,
             num_workers=num_workers,
             drop_last=True,
             pin_memory=(device != "cpu"),
@@ -134,6 +146,9 @@ class Trainer:
         # Called after each epoch's checkpoint save (e.g., volume.commit() on Modal)
         self._epoch_callback = epoch_callback
 
+        # The underlying model (unwrapped from DDP if needed)
+        self._raw_model = self.model.module if self.ddp else self.model
+
         # Shape preflight: pull one batch and verify dims match config
         self._verify_shapes(train_dataset)
 
@@ -172,7 +187,7 @@ class Trainer:
 
         float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt = sample
         cfg = self.cfg
-        K = self.model.context_len
+        K = self._raw_model.context_len
         expected_float = cfg.float_per_player * 2
         expected_int = cfg.int_per_frame
         expected_ctrl = cfg.ctrl_conditioning_dim
@@ -347,11 +362,11 @@ class Trainer:
         stocks_matches: dict[int, list[float]] = {h: [] for h in horizons}
         alive: dict[int, list[float]] = {h: [] for h in horizons}
 
-        K = self.model.context_len
+        K = self._raw_model.context_len
 
         for float_data, int_data in self._val_games:
             pred_frames = rollout(
-                self.model, float_data, int_data, self.cfg,
+                self._raw_model, float_data, int_data, self.cfg,
                 max_frames=max(horizons),
                 device=str(self.device),
             )
@@ -408,6 +423,8 @@ class Trainer:
         best_val_loss = float("inf")
 
         for epoch in range(self.start_epoch, self.num_epochs):
+            if self._train_sampler is not None:
+                self._train_sampler.set_epoch(epoch)
             t0 = time.time()
             train_metrics = self._train_epoch(epoch=epoch)
             val_metrics = self._val_epoch()
@@ -470,7 +487,7 @@ class Trainer:
     def _load_checkpoint(self, path: str | Path) -> None:
         path = Path(path)
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
-        missing, unexpected = self.model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        missing, unexpected = self._raw_model.load_state_dict(checkpoint["model_state_dict"], strict=False)
         if missing:
             logger.warning("Checkpoint missing %d keys (new heads will train from scratch): %s", len(missing), ", ".join(missing))
         if unexpected:
@@ -494,11 +511,11 @@ class Trainer:
         torch.save(
             {
                 "epoch": epoch,
-                "model_state_dict": self.model.state_dict(),
+                "model_state_dict": self._raw_model.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "val_loss": val_loss,
                 "encoding_config": dataclasses.asdict(self.cfg),
-                "context_len": self.model.context_len,
+                "context_len": self._raw_model.context_len,
             },
             path,
         )
