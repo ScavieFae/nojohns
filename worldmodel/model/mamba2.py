@@ -468,7 +468,8 @@ class FrameStackMamba2(nn.Module):
         for layer in self.layers:
             x = x + layer["mamba"](layer["norm"](x))
 
-        h = self.final_norm(x[:, -1, :])
+        focal_idx = -(self.cfg.focal_offset + 1) if self.cfg.focal_offset > 0 else -1
+        h = self.final_norm(x[:, focal_idx, :])
         h = h + self.ctrl_proj(next_ctrl)
 
         return {
