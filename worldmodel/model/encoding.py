@@ -160,7 +160,10 @@ class EncodingConfig:
     @property
     def ctrl_conditioning_dim(self) -> int:
         base = self.controller_dim * 2 + self.ctrl_extra_dim  # 26 or 42
-        return base * (1 + self.lookahead)  # ×2 for lookahead=1, ×3 for lookahead=2, etc.
+        base = base * (1 + self.lookahead)  # ×2 for lookahead=1, ×3 for lookahead=2, etc.
+        if self.focal_offset > 0:
+            base += 1  # E008b: focal position scalar
+        return base
 
     @property
     def player_dim(self) -> int:

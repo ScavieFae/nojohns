@@ -287,6 +287,17 @@ class MeleeFrameDataset(Dataset):
 
         next_ctrl = torch.cat(ctrl_parts)  # (26*(1+d),) or (42*(1+d),)
 
+        # E008b: append focal position signal to ctrl conditioning
+        # NOTE on cheating risk: with focal_offset=D, the target frame (t) IS in the
+        # context at position K-D. The causal SSM has processed it by the time it reaches
+        # the last position, so the model could learn to decode the target from the hidden
+        # state rather than learning physics. Results will tell us if this is an issue.
+        if self._focal_offset > 0:
+            # Normalized position of the prediction target within the context window
+            # 0.0 = predicting just past the end (baseline), higher = further inside
+            focal_pos = torch.tensor([self._focal_offset / K], dtype=next_ctrl.dtype)
+            next_ctrl = torch.cat([next_ctrl, focal_pos])
+
         # Target frame: t+d (same as baseline — focal_offset only changes context, not target)
         tgt_idx = t + d
         tgt_float = self.data.floats[tgt_idx]
