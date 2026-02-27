@@ -159,8 +159,58 @@ MLP ceiling for reference: 77.5% change_acc at 22K/4ep (v2 encoding).
   --run-name mamba2-v3-65k-ranked
 ```
 
+## ScavieFae Review (Feb 27)
+
+**APPROVE with one critical concern.**
+
+### CRITICAL: DDP data loading will likely OOM
+
+Both DDP ranks independently load and merge all 6 super-chunks in `modal_train_worker.py`:
+
+| Stage | Per rank | 2 ranks |
+|-------|---------|---------|
+| 6 payloads loaded | ~520 GB | ~1,040 GB |
+| + merged floats (torch.cat) | +417 GB | +834 GB |
+| + merged ints (torch.cat) | +103 GB | +206 GB |
+| **Peak during merge** | **~1,040 GB** | **~2,080 GB** |
+
+Modal H100:2 containers likely have 1-2 TB system RAM. This is a very tight fit or outright OOM.
+
+**Recommended mitigations (pick one):**
+
+1. **Single H100 fallback** (safest, no code change): Wall time doubles (~21h), cost similar. Single-GPU path loads data once. Already in escape hatches.
+2. **`torch.load(ep, mmap=True)`** in the worker: Both ranks share physical memory pages. Cuts memory ~in half. Quick change but needs testing.
+3. **Smoke-test DDP on 2K data first**: Validate the codepath where OOM isn't a concern, then run 65K.
+
+**Recommendation:** Don't bet $94 on an untested DDP path with borderline memory. Either smoke-test DDP on 2K first, or go single H100 for this run.
+
+### Notes
+
+**DDP code quality is good:**
+- `DistributedSampler` with `set_epoch(epoch)` — correct shuffling per epoch
+- `_raw_model` unwrapping for checkpoint save/load/access — correct
+- Rank-0-only logging, wandb, checkpoint saves, volume commits — clean
+- Single-GPU fallback path maintained
+
+**Projectiles OFF** — good call given the 7% regression on v3-2k-test.
+
+**v3-2k-test baseline is 65.6%** (vs 67.3% v2 baseline) — v3 features regressed slightly at 2K scale. The bet here is that 30x more data makes the richer features pay off. Reasonable hypothesis but worth noting.
+
+**NaN guard in `_encode_chunk`** — good addition after the v3-2k NaN incident.
+
+**Val duplication:** Both DDP ranks compute the full val set independently. Wasteful but correct.
+
+**Minor inconsistencies:** Config file named `mamba2-v3-100k-ranked.yaml` but run uses 65K games. YAML says `num_epochs: 10`, launch says `--epochs 2`. Both fine (launch command wins).
+
+### Verified
+
+- Config validation fix (resolved dataclass comparison) — solid
+- SS dynamics mask in trainer.py — only corrupts core_continuous + velocity
+- Super-chunk encode pipeline with NaN sanitization
+- Encoding config: `state_flags=true, hitstun=true, projectiles=false, press_events=false`
+
 ## Sign-off
 
 - [ ] Scav reviewed
 - [ ] Mattie reviewed
-- [ ] ScavieFae reviewed
+- [x] ScavieFae reviewed
