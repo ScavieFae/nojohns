@@ -138,8 +138,27 @@ Note: Baseline is the closest apples-to-apples comparison (same architecture, sa
   --run-name mamba2-v3-2k-test
 ```
 
+## ScavieFae Review (Feb 26)
+
+**APPROVE** — cheap test ($0.60, ~13 min), low risk, answers the right question.
+
+### Notes
+
+1. **Binary loss dominance — watch closely.** `predicted_binary_dim` goes 6→86 at weight 0.5. Binary loss contribution up ~14x. If the model over-invests in predicting state_flags bits at the expense of position/velocity, you'll see `pos_mae` regress while `change_acc` looks fine (state_flags are easy — most don't change frame-to-frame). **Watch in wandb:** `loss/binary` vs `loss/continuous`. If binary dominates total loss by >3x, drop binary weight to 0.1 for a follow-up.
+
+2. **Projectiles included despite previous regression.** `projectile-2k-test` showed 63.6% change_acc (baseline 67.3%). That was on old data with empty items — this run has real items, so it's a different test. But if this run regresses, projectiles are the first flag to turn off to isolate.
+
+3. **Config validation fix is solid.** Resolving both sides to full `EncodingConfig` dataclass before comparing eliminates false mismatch errors from YAML subsets.
+
+### Verified
+
+- `press_events: false` — correct (SSM learns temporal button transitions natively)
+- SS dynamics mask confirmed (`trainer.py:224`) — only corrupts core_continuous + velocity, not stocks
+- `pre_encode.py` saves full resolved config for reproducibility
+- Timing/cost estimates reasonable
+
 ## Sign-off
 
 - [ ] Scav reviewed
 - [ ] Mattie reviewed
-- [ ] ScavieFae reviewed (via HANDOFF-MODAL.md)
+- [x] ScavieFae reviewed
