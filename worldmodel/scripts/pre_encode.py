@@ -51,13 +51,17 @@ def main():
     print(f"  Ints: {dataset.ints.shape}")
     print(f"  Total frames: {dataset.total_frames:,}")
 
+    # Save full resolved config (not just YAML subset) for reproducibility
+    import dataclasses
+    resolved_cfg = {k: v for k, v in dataclasses.asdict(enc_cfg).items()}
+
     payload = {
         "floats": dataset.floats,
         "ints": dataset.ints,
         "game_offsets": torch.tensor(dataset.game_offsets),
         "game_lengths": dataset.game_lengths,
         "num_games": dataset.num_games,
-        "encoding_config": enc_cfg_dict,
+        "encoding_config": resolved_cfg,
     }
 
     torch.save(payload, args.output)
