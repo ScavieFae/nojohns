@@ -119,6 +119,57 @@ def extract_items(slp_path: str, num_frames: int) -> pa.StructArray | None:
     )
 
 
+def extract_combat_context(slp_path: str, num_frames: int) -> dict | None:
+    """Extract state_flags and hitstun from raw peppi_py arrow struct.
+
+    Returns dict with per-port keys:
+        p{0,1}_state_flags_{0..4}: (num_frames,) uint8 arrays
+        p{0,1}_hitstun_remaining: (num_frames,) float32 array
+    Returns None on failure.
+    """
+    try:
+        import peppi_py._peppi as raw_peppi
+        raw_game = raw_peppi.read_slippi(slp_path)
+    except Exception:
+        return None
+
+    result = {}
+    port_names = ['P1', 'P2']
+    for port_idx in range(2):
+        try:
+            post = raw_game.frames.field('ports').field(port_names[port_idx]) \
+                       .field('leader').field('post')
+        except Exception:
+            return None
+        prefix = f"p{port_idx}_"
+
+        # state_flags: 5 uint8 fields
+        try:
+            sf = post.field('state_flags')
+            for byte_idx in range(5):
+                arr = sf.field(str(byte_idx)).to_numpy().astype(np.uint8)
+                result[f"{prefix}state_flags_{byte_idx}"] = arr[:num_frames]
+        except Exception:
+            # state_flags not available in this replay version
+            for byte_idx in range(5):
+                result[f"{prefix}state_flags_{byte_idx}"] = np.zeros(num_frames, dtype=np.uint8)
+
+        # misc_as: float32 field, needs bit-recovery for subnormals
+        try:
+            raw_misc = post.field('misc_as').to_numpy().astype(np.float32)
+            subnormal = (np.abs(raw_misc) < 1e-10) & (raw_misc != 0)
+            recovered = np.where(
+                subnormal,
+                np.frombuffer(raw_misc.tobytes(), dtype=np.uint32).astype(np.float32),
+                raw_misc,
+            )
+            result[f"{prefix}hitstun_remaining"] = np.clip(recovered[:num_frames], 0, 200)
+        except Exception:
+            result[f"{prefix}hitstun_remaining"] = np.zeros(num_frames, dtype=np.float32)
+
+    return result
+
+
 def empty_items_pa(num_frames: int) -> pa.StructArray:
     """Build 15 empty item slots as a PyArrow StructArray."""
     empty_item = pa.StructArray.from_arrays(

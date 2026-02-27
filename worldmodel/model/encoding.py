@@ -71,6 +71,9 @@ class EncodingConfig:
     press_events: bool = False  # Exp 2a: 16 binary features for newly-pressed buttons
     lookahead: int = 0  # Exp 3a: predict frame t+d given ctrl(t) through ctrl(t+d)
     projectiles: bool = False  # Exp 4: item/projectile encoding (per-player nearest)
+    state_flags: bool = False  # Exp 5: all 40 bits from 5 state_flags bytes as binary features
+    hitstun: bool = False  # Exp 6: hitstun_remaining as continuous feature
+    hitstun_scale: float = 0.02  # normalization: range 0-50 → 0-1
 
     # Derived dimensions (per player, default / state_age_as_embed / projectiles)
     # core_continuous: percent, x, y, shield = 4
@@ -97,7 +100,10 @@ class EncodingConfig:
     @property
     def dynamics_dim(self) -> int:
         # state_age moves to embedding when state_age_as_embed is True
-        return 2 if self.state_age_as_embed else 3  # hitlag, stocks [, state_age]
+        base = 2 if self.state_age_as_embed else 3  # hitlag, stocks [, state_age]
+        if self.hitstun:
+            base += 1  # hitstun_remaining
+        return base
 
     @property
     def combat_continuous_dim(self) -> int:
@@ -115,7 +121,10 @@ class EncodingConfig:
 
     @property
     def binary_dim(self) -> int:
-        return 3  # facing, invulnerable, on_ground
+        base = 3  # facing, invulnerable, on_ground
+        if self.state_flags:
+            base += 40  # all 40 bits from 5 state_flags bytes
+        return base
 
     @property
     def controller_dim(self) -> int:
@@ -161,8 +170,15 @@ class EncodingConfig:
         return self.velocity_dim * 2  # 10 — both players
 
     @property
+    def predicted_binary_dim(self) -> int:
+        return self.binary_dim * 2  # both players
+
+    @property
     def predicted_dynamics_dim(self) -> int:
-        return 6  # hitlag + stocks + combo, both players
+        base = 6  # hitlag + stocks + combo, both players
+        if self.hitstun:
+            base += 2  # hitstun × 2 players
+        return base
 
     @property
     def target_int_dim(self) -> int:
@@ -225,6 +241,9 @@ def encode_player_frames(
         # Combat continuous
         pf.combo_count * cfg.combo_count_scale,
     ])
+    # Hitstun (Exp 6)
+    if cfg.hitstun:
+        cont_cols.append(pf.hitstun_remaining * cfg.hitstun_scale)
 
     # Projectile features: nearest active item relative to this player
     if cfg.projectiles:
@@ -257,10 +276,14 @@ def encode_player_frames(
             cont_cols.append(np.zeros(T, dtype=np.float32))
     continuous = np.stack(cont_cols, axis=1)  # (T, 13) or (T, 12)
 
-    binary = np.stack(
-        [pf.facing, pf.invulnerable, pf.on_ground],
-        axis=1,
-    )  # (T, 3)
+    binary_cols = [pf.facing, pf.invulnerable, pf.on_ground]
+    # State flags (Exp 5): explode all 40 bits as binary features
+    if cfg.state_flags:
+        for byte_idx in range(5):
+            sf_byte = getattr(pf, f'state_flags_{byte_idx}')
+            for bit_idx in range(8):
+                binary_cols.append(((sf_byte >> bit_idx) & 1).astype(np.float32))
+    binary = np.stack(binary_cols, axis=1)  # (T, 3) or (T, 43)
 
     controller = np.concatenate(
         [

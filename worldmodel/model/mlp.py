@@ -92,7 +92,7 @@ class FrameStackMLP(nn.Module):
 
         # Prediction heads
         self.continuous_head = nn.Linear(trunk_dim, 8)
-        self.binary_head = nn.Linear(trunk_dim, 6)
+        self.binary_head = nn.Linear(trunk_dim, cfg.predicted_binary_dim)
         self.velocity_head = nn.Linear(trunk_dim, cfg.predicted_velocity_dim)   # 10
         self.dynamics_head = nn.Linear(trunk_dim, cfg.predicted_dynamics_dim)   # 6
         self.p0_action_head = nn.Linear(trunk_dim, cfg.action_vocab)

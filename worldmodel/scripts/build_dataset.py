@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 logger = logging.getLogger(__name__)
 
 
-from worldmodel.scripts.item_utils import extract_items
+from worldmodel.scripts.item_utils import extract_combat_context, extract_items
 
 
 def _pa_to_np(arr, dtype=np.float32) -> np.ndarray:
@@ -89,7 +89,9 @@ def _build_player_arrays(port_data, num_frames: int) -> dict:
     action = _pa_to_np(post.state, dtype=np.uint16)
     # direction is float: 1.0 = right, -1.0 = left → bool: True = right
     facing = (_pa_to_np(post.direction) > 0).astype(bool)
-    invulnerable = np.zeros(num_frames, dtype=bool)  # Not in peppi_py post
+    # Invulnerable: derive from hurtbox_state (1=invulnerable, 2=intangible)
+    hurtbox_state = _pa_to_np(post.hurtbox_state, dtype=np.uint8) if post.hurtbox_state is not None else np.zeros(num_frames, dtype=np.uint8)
+    invulnerable = (hurtbox_state != 0)
     character = _pa_to_np(post.character, dtype=np.uint8) if post.character is not None else np.zeros(num_frames, dtype=np.uint8)
     jumps_left = _pa_to_np(post.jumps, dtype=np.uint8) if post.jumps is not None else np.zeros(num_frames, dtype=np.uint8)
     shield = _pa_to_np(post.shield) if post.shield is not None else np.full(num_frames, 60.0, dtype=np.float32)
@@ -121,9 +123,8 @@ def _build_player_arrays(port_data, num_frames: int) -> dict:
     hitlag = _pa_to_np(post.hitlag) if post.hitlag is not None else np.zeros(num_frames, dtype=np.float32)
     stocks = _pa_to_np(post.stocks, dtype=np.uint8) if post.stocks is not None else np.full(num_frames, 4, dtype=np.uint8)
 
-    # Combat context (v2.1)
+    # Combat context (v2.1) — hurtbox_state already extracted above for invulnerable
     l_cancel = _pa_to_np(post.l_cancel, dtype=np.uint8) if post.l_cancel is not None else np.zeros(num_frames, dtype=np.uint8)
-    hurtbox_state = _pa_to_np(post.hurtbox_state, dtype=np.uint8) if post.hurtbox_state is not None else np.zeros(num_frames, dtype=np.uint8)
     ground = _pa_to_np(post.ground, dtype=np.uint16) if post.ground is not None else np.full(num_frames, 65535, dtype=np.uint16)
     last_attack_landed = _pa_to_np(post.last_attack_landed, dtype=np.uint8) if post.last_attack_landed is not None else np.zeros(num_frames, dtype=np.uint8)
     combo_count = _pa_to_np(post.combo_count, dtype=np.uint8) if post.combo_count is not None else np.zeros(num_frames, dtype=np.uint8)
@@ -148,7 +149,7 @@ def _build_player_arrays(port_data, num_frames: int) -> dict:
     }
 
 
-def _build_parquet_table(game, p0_arrays: dict, p1_arrays: dict, num_frames: int, items_pa=None):
+def _build_parquet_table(game, p0_arrays: dict, p1_arrays: dict, num_frames: int, items_pa=None, stage_id: int = 0):
     """Build a PyArrow table matching the slippi_db GAME_TYPE schema."""
     import pyarrow as pa
 
@@ -202,6 +203,11 @@ def _build_parquet_table(game, p0_arrays: dict, p1_arrays: dict, num_frames: int
                 pa.array(p["l_cancel"]), pa.array(p["hurtbox_state"]),
                 pa.array(p["ground"]), pa.array(p["last_attack_landed"]),
                 pa.array(p["combo_count"]),
+                # v3: state_flags (5 raw bytes) + hitstun
+                pa.array(p["state_flags_0"]), pa.array(p["state_flags_1"]),
+                pa.array(p["state_flags_2"]), pa.array(p["state_flags_3"]),
+                pa.array(p["state_flags_4"]),
+                pa.array(p["hitstun_remaining"]),
             ],
             names=["percent", "facing", "x", "y", "action", "invulnerable",
                    "character", "jumps_left", "shield_strength", "on_ground",
@@ -210,14 +216,16 @@ def _build_parquet_table(game, p0_arrays: dict, p1_arrays: dict, num_frames: int
                    "speed_attack_x", "speed_attack_y",
                    "state_age", "hitlag", "stocks",
                    "l_cancel", "hurtbox_state", "ground",
-                   "last_attack_landed", "combo_count"],
+                   "last_attack_landed", "combo_count",
+                   "state_flags_0", "state_flags_1", "state_flags_2",
+                   "state_flags_3", "state_flags_4", "hitstun_remaining"],
         )
 
     p0_struct = make_player_struct(p0_arrays)
     p1_struct = make_player_struct(p1_arrays)
 
-    # Stage (constant), Randall (zeros), FoD (zeros), Items (zeros)
-    stage = pa.array(np.zeros(num_frames, dtype=np.uint8))  # Filled from metadata
+    # Stage (constant per game), Randall (zeros), FoD (zeros), Items (zeros)
+    stage = pa.array(np.full(num_frames, stage_id, dtype=np.int64))
     randall = pa.StructArray.from_arrays(
         [pa.array(np.zeros(num_frames, dtype=np.float32))] * 2, names=["x", "y"]
     )
@@ -277,8 +285,27 @@ def parse_single_slp(slp_path: str) -> dict | None:
         # Extract items from raw arrow data (bypasses peppi_py wrapper)
         items_pa = extract_items(slp_path, num_frames)
 
+        # Extract combat context (state_flags + hitstun) from raw arrow
+        combat = extract_combat_context(slp_path, num_frames)
+        if combat:
+            for key, val in combat.items():
+                if key.startswith("p0_"):
+                    p0_arrays[key[3:]] = val
+                elif key.startswith("p1_"):
+                    p1_arrays[key[3:]] = val
+        else:
+            for byte_idx in range(5):
+                p0_arrays[f"state_flags_{byte_idx}"] = np.zeros(num_frames, dtype=np.uint8)
+                p1_arrays[f"state_flags_{byte_idx}"] = np.zeros(num_frames, dtype=np.uint8)
+            p0_arrays["hitstun_remaining"] = np.zeros(num_frames, dtype=np.float32)
+            p1_arrays["hitstun_remaining"] = np.zeros(num_frames, dtype=np.float32)
+
         # Build parquet table
-        table = _build_parquet_table(peppi_game, p0_arrays, p1_arrays, num_frames, items_pa=items_pa)
+        stage_val = int(start.stage) if start.stage is not None else -1
+        table = _build_parquet_table(
+            peppi_game, p0_arrays, p1_arrays, num_frames,
+            items_pa=items_pa, stage_id=stage_val,
+        )
 
         # Write as zlib-compressed parquet
         buf = io.BytesIO()
@@ -293,7 +320,18 @@ def parse_single_slp(slp_path: str) -> dict | None:
             char_val = int(char_arr.to_pylist()[0]) if char_arr is not None else -1
             players.append({"port": i, "character": char_val})
 
-        stage_val = int(start.stage) if start.stage is not None else -1
+        # Game-level metadata (v3)
+        game_end_method = 0
+        try:
+            if peppi_game.end is not None:
+                game_end_method = int(peppi_game.end.method)
+        except Exception:
+            pass
+        is_pal = False
+        try:
+            is_pal = bool(start.is_pal)
+        except Exception:
+            pass
 
         with open(slp_path, "rb") as f:
             slp_bytes = f.read()
@@ -308,6 +346,8 @@ def parse_single_slp(slp_path: str) -> dict | None:
                 "num_players": num_ports,
                 "players": players,
                 "stage": stage_val,
+                "game_end_method": game_end_method,
+                "is_pal": is_pal,
                 "valid": True,
                 "is_training": True,
                 "not_training_reason": "",

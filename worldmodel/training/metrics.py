@@ -230,6 +230,11 @@ class MetricsTracker:
     def __init__(self, cfg: EncodingConfig, weights: LossWeights | None = None):
         self.cfg = cfg
         self.weights = weights or LossWeights()
+        # Config-driven target layout offsets
+        self._cont_end = 8
+        self._vel_end = 18
+        self._bin_end = 18 + cfg.predicted_binary_dim
+        self._dyn_end = self._bin_end + cfg.predicted_dynamics_dim
 
     def compute_loss(
         self,
@@ -240,11 +245,11 @@ class MetricsTracker:
     ) -> tuple[torch.Tensor, BatchMetrics]:
         metrics = BatchMetrics()
 
-        # Unpack targets (30 floats total)
-        cont_delta_true = float_tgt[:, :8]       # (B, 8) position/shield deltas
-        vel_delta_true = float_tgt[:, 8:18]      # (B, 10) velocity deltas
-        binary_true = float_tgt[:, 18:24]        # (B, 6) binary flags
-        dynamics_true = float_tgt[:, 24:30]      # (B, 6) hitlag/stocks/combo
+        # Unpack targets (config-driven slicing)
+        cont_delta_true = float_tgt[:, :self._cont_end]       # (B, 8) position/shield deltas
+        vel_delta_true = float_tgt[:, self._cont_end:self._vel_end]  # (B, 10) velocity deltas
+        binary_true = float_tgt[:, self._vel_end:self._bin_end]      # (B, 6..86) binary flags
+        dynamics_true = float_tgt[:, self._bin_end:self._dyn_end]    # (B, 6..8) hitlag/stocks/combo[/hitstun]
 
         # int_tgt layout: [p0: action, jumps, l_cancel, hurtbox, ground, last_attack,
         #                  p1: action, jumps, l_cancel, hurtbox, ground, last_attack]

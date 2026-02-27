@@ -11,8 +11,9 @@ v2.2+ layout — input-conditioned world model:
   float_ctx:  (K, F) — [p0: cont+bin(3)+ctrl(13), p1: same] per frame
   int_ctx:    (K, I) — per-player categoricals [+ state_age when embedded] + stage
   next_ctrl:  (C,)   — controller input for frame t [+ press events when enabled]
-  float_tgt:  (30,)  — [p0_cont_delta(4), p1_cont_delta(4), p0_vel_delta(5), p1_vel_delta(5),
-                         p0_binary(3), p1_binary(3), p0_dynamics(3), p1_dynamics(3)]
+  float_tgt:  (D,)   — [p0_cont_delta(4), p1_cont_delta(4), p0_vel_delta(5), p1_vel_delta(5),
+                         p0_binary(B), p1_binary(B), p0_dynamics(Y), p1_dynamics(Y)]
+                        D=30 baseline, D=112 with state_flags+hitstun. B=binary_dim, Y=dynamics per player.
   int_tgt:    (12,)  — [p0_action, p0_jumps, p0_l_cancel, p0_hurtbox, p0_ground, p0_last_attack,
                          p1_action, p1_jumps, p1_l_cancel, p1_hurtbox, p1_ground, p1_last_attack]
 
@@ -200,10 +201,12 @@ class MeleeFrameDataset(Dataset):
         self._p0_vel = slice(vel_start, vel_end)
         self._p1_vel = slice(fp + vel_start, fp + vel_end)
 
-        # Dynamics indices: hitlag, stocks, combo_count
-        # Layout after velocity: [state_age (if not embed)], hitlag, stocks, combo_count
+        # Dynamics indices: hitlag, stocks, combo_count [, hitstun]
+        # Layout after velocity: [state_age (if not embed)], hitlag, stocks, combo_count [, hitstun]
         dyn_start = vel_end + (0 if cfg.state_age_as_embed else 1)  # skip state_age float
         self._p0_dyn = [dyn_start, dyn_start + 1, dyn_start + 2]  # hitlag, stocks, combo
+        if cfg.hitstun:
+            self._p0_dyn.append(dyn_start + 3)  # hitstun_remaining
         self._p1_dyn = [fp + i for i in self._p0_dyn]
 
         # Button slices for press events (buttons are last 8 of controller)

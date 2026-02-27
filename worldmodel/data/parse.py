@@ -51,6 +51,14 @@ class PlayerFrame:
     ground: np.ndarray  # (T,) int64 — ground surface ID (remapped: 65535→0 airborne sentinel)
     last_attack_landed: np.ndarray  # (T,) int64 — attack ID of last connected move
     combo_count: np.ndarray  # (T,) int64 — current combo counter
+    # State flags (v3 — 5 raw bytes from game engine, encoding extracts bits)
+    state_flags_0: np.ndarray  # (T,) uint8
+    state_flags_1: np.ndarray  # (T,) uint8
+    state_flags_2: np.ndarray  # (T,) uint8
+    state_flags_3: np.ndarray  # (T,) uint8
+    state_flags_4: np.ndarray  # (T,) uint8
+    # Hitstun (v3 — recovered from misc_as subnormal floats)
+    hitstun_remaining: np.ndarray  # (T,) float32 — frames of hitstun left
     # Controller
     main_stick_x: np.ndarray  # (T,) float32
     main_stick_y: np.ndarray  # (T,) float32
@@ -87,6 +95,9 @@ class ParsedGame:
     # Metadata (optional, for filtering)
     meta: Optional[dict] = None
     items: Optional[FrameItems] = None
+    # Game-level metadata (v3)
+    game_end_method: int = 0  # 0=unknown, 1=TIME, 2=GAME, 3=NO_CONTEST
+    is_pal: bool = False
 
 
 def _safe_field(struct_array, name: str, num_frames: int, dtype=np.float32) -> np.ndarray:
@@ -136,6 +147,14 @@ def _extract_player(struct_array, num_frames: int) -> PlayerFrame:
     last_attack_landed = _safe_field(struct_array, "last_attack_landed", num_frames, dtype=np.int64)
     combo_count = _safe_field(struct_array, "combo_count", num_frames, dtype=np.int64)
 
+    # State flags (v3 — zeros for old parquet without these columns)
+    state_flags_0 = _safe_field(struct_array, "state_flags_0", num_frames, dtype=np.uint8)
+    state_flags_1 = _safe_field(struct_array, "state_flags_1", num_frames, dtype=np.uint8)
+    state_flags_2 = _safe_field(struct_array, "state_flags_2", num_frames, dtype=np.uint8)
+    state_flags_3 = _safe_field(struct_array, "state_flags_3", num_frames, dtype=np.uint8)
+    state_flags_4 = _safe_field(struct_array, "state_flags_4", num_frames, dtype=np.uint8)
+    hitstun_remaining = _safe_field(struct_array, "hitstun_remaining", num_frames)
+
     # Controller
     ctrl = struct_array.field("controller")
     main = ctrl.field("main_stick")
@@ -177,6 +196,12 @@ def _extract_player(struct_array, num_frames: int) -> PlayerFrame:
         ground=ground,
         last_attack_landed=last_attack_landed,
         combo_count=combo_count,
+        state_flags_0=state_flags_0,
+        state_flags_1=state_flags_1,
+        state_flags_2=state_flags_2,
+        state_flags_3=state_flags_3,
+        state_flags_4=state_flags_4,
+        hitstun_remaining=hitstun_remaining,
         main_stick_x=main_x,
         main_stick_y=main_y,
         c_stick_x=c_x,
@@ -296,6 +321,8 @@ def load_games_from_dir(
         try:
             game = load_game(game_path, compression=compression)
             game.meta = entry
+            game.game_end_method = entry.get("game_end_method", 0)
+            game.is_pal = entry.get("is_pal", False)
             games.append(game)
         except Exception as e:
             logger.warning("Failed to load %s: %s", game_path, e)

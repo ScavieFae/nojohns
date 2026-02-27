@@ -41,7 +41,7 @@ import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
-from worldmodel.scripts.item_utils import extract_items, empty_items_pa
+from worldmodel.scripts.item_utils import extract_combat_context, extract_items, empty_items_pa
 
 # Button bitmasks (matching slippi_db/libmelee convention)
 BUTTON_MASKS = {
@@ -120,6 +120,14 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
         else:
             last_attack = np.zeros(num_frames, dtype=np.int64)
 
+        # State flags + hitstun from combat context extraction
+        if combat:
+            sf_arrays = [pa.array(combat[f"p{i}_state_flags_{b}"]) for b in range(5)]
+            hitstun_arr = pa.array(combat[f"p{i}_hitstun_remaining"])
+        else:
+            sf_arrays = [pa.array(np.zeros(num_frames, dtype=np.uint8)) for _ in range(5)]
+            hitstun_arr = pa.array(np.zeros(num_frames, dtype=np.float32))
+
         player = pa.StructArray.from_arrays(
             [
                 pa.array(post.percent.to_numpy().astype(np.float32)),
@@ -148,6 +156,9 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
                 pa.array(post.ground.to_numpy().astype(np.int64)),
                 pa.array(last_attack),
                 pa.array(post.combo_count.to_numpy().astype(np.int64)),
+                # v3: state_flags (5 raw bytes) + hitstun
+                *sf_arrays,
+                hitstun_arr,
                 # Controller
                 controller,
             ],
@@ -160,6 +171,8 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
                 "state_age", "hitlag", "stocks",
                 "l_cancel", "hurtbox_state", "ground",
                 "last_attack_landed", "combo_count",
+                "state_flags_0", "state_flags_1", "state_flags_2",
+                "state_flags_3", "state_flags_4", "hitstun_remaining",
                 "controller",
             ],
         )
@@ -172,6 +185,11 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
     fod = pa.StructArray.from_arrays(
         [pa.array(np.zeros(num_frames, dtype=np.float32))] * 2, names=["left", "right"]
     )
+
+    # Extract combat context (state_flags + hitstun) from raw arrow
+    combat = None
+    if slp_path is not None:
+        combat = extract_combat_context(slp_path, num_frames)
 
     # Extract items from raw arrow data if path available
     items_pa = None
@@ -187,8 +205,11 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
     return pa.table({"root": root})
 
 
-def parse_slp_bytes(slp_bytes: bytes) -> pa.Table | None:
-    """Parse raw .slp bytes into a parquet table. Returns None on failure."""
+def parse_slp_bytes(slp_bytes: bytes) -> dict | None:
+    """Parse raw .slp bytes into a parquet table + game metadata.
+
+    Returns dict with 'table', 'game_end_method', 'is_pal', or None on failure.
+    """
     import peppi_py
 
     with tempfile.NamedTemporaryFile(suffix=".slp", delete=False) as tf:
@@ -205,7 +226,26 @@ def parse_slp_bytes(slp_bytes: bytes) -> pa.Table | None:
         if num_frames < 60:  # skip very short games
             return None
 
-        return peppi_to_parquet(game, stage_id, slp_path=tf_path)
+        table = peppi_to_parquet(game, stage_id, slp_path=tf_path)
+
+        # Extract game-level metadata (v3)
+        game_end_method = 0
+        try:
+            if game.end is not None:
+                game_end_method = int(game.end.method)
+        except Exception:
+            pass
+        is_pal = False
+        try:
+            is_pal = bool(game.start.is_pal)
+        except Exception:
+            pass
+
+        return {
+            "table": table,
+            "game_end_method": game_end_method,
+            "is_pal": is_pal,
+        }
     except Exception as e:
         logger.debug("Parse failed: %s", e)
         return None
@@ -339,11 +379,12 @@ def main():
             skipped += 1
             continue
 
-        table = parse_slp_bytes(slp_bytes)
-        if table is None:
+        result = parse_slp_bytes(slp_bytes)
+        if result is None:
             failed += 1
             continue
 
+        table = result["table"]
         nbytes = save_parsed_game(table, output_dir, slp_md5)
         total_bytes += nbytes
 
@@ -353,6 +394,8 @@ def main():
             "source_file": name,
             "num_frames": num_frames,
             "stage": table.column("root").combine_chunks().field("stage")[0].as_py(),
+            "game_end_method": result["game_end_method"],
+            "is_pal": result["is_pal"],
             "is_training": True,
             "compression": "zlib",
         })
