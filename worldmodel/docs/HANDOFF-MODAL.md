@@ -38,12 +38,67 @@ Parser v3 fixes two critical bugs and adds three new feature groups:
 3. Filter training data by `game_end_method` (drop NO_CONTEST disconnects)
 4. Demo harness enforces game rules (blast zone KO, respawn) — makes demos look clean
 
-### What ScavieFae should review
+### ScavieFae review (Feb 26, late)
 
-1. **state_flags bit explosion** (`encoding.py:112-117`): We encode all 40 bits. 12 are dead (always 0). Is this fine, or should we prune to the 28 active bits? Cost is ~0.02% more parameters.
-2. **hitstun subnormal recovery** (`item_utils.py:extract_combat_context()`): misc_as stores small integers as subnormal floats (5.6e-45 = 4). We detect with `abs(x) < 1e-10 and x != 0`, reinterpret bytes as uint32. Is the threshold robust?
-3. **metrics.py config-driven offsets**: `_cont_end`, `_vel_end`, `_bin_end`, `_dyn_end` computed from config. Verify this matches the target tensor layout in `dataset.py`.
-4. **Demo harness** (`game_harness.py`): Blast zone detection, respawn logic, velocity clamping. Not load-bearing for training, but used in live demo.
+**Two critical bugs block both parsers. Must fix before any re-parse.**
+
+#### BUG 1 (BLOCKING): `build_dataset.py:304` — `start` used before defined
+
+```python
+304:    stage_val = int(start.stage) if start.stage is not None else -1
+         ...
+316:    start = peppi_game.start  # ← defined AFTER use
+```
+
+Scav moved `stage_val` up to line 304 for the new `_build_parquet_table(stage_id=...)` call, but `start = peppi_game.start` stayed at line 316. Will `NameError` on every replay.
+
+**Fix:** Move `start = peppi_game.start` before line 304, or use `peppi_game.start.stage` directly.
+
+#### BUG 2 (BLOCKING): `parse_archive.py:124` — `combat` used before defined
+
+```python
+70:  for i, port in enumerate(frames.ports):    # loop starts
+124:     if combat:                               # ← NameError
+         ...
+190: combat = None                               # ← defined AFTER loop
+191: if slp_path is not None:
+192:     combat = extract_combat_context(slp_path, num_frames)
+```
+
+`extract_combat_context()` is called at line 190-192 (after the player loop ends), but the result is used inside the loop at line 124. Will `NameError` on every replay.
+
+**Fix:** Move lines 189-192 before line 70 (before the `for i, port` loop).
+
+#### Design note: 40 bits vs 6 bits (not blocking)
+
+The plan specified 6 targeted binary features from state_flags (is_dead, is_dying, is_respawning, in_hitlag, in_knockback, is_shielding). Implementation explodes **all 40 bits** (5 bytes × 8 bits). This significantly changes dimensions:
+
+| | Plan | Actual |
+|---|---|---|
+| `binary_dim` per player | 9 (3 + 6) | 43 (3 + 40) |
+| `float_per_player` | 36 | 70 |
+| `frame_dim` | 196 | 264 |
+| `predicted_binary_dim` | 18 | 86 |
+| `float_tgt` | 44 | 112 |
+
+12 of the 40 bits are reportedly dead (always 0) per the handoff notes. The "let the model sort it out" approach is valid but ~3.7x more binary features than planned. Parameter impact is still small (~2-3% on 4.3M), but training time per batch increases with wider tensors.
+
+**Recommendation:** Fine to ship as-is. The dead bits cost almost nothing and the model can learn which matter. But if training speed is a concern, pruning to 28 active bits (or the original 6 targeted bits) is easy later.
+
+#### Everything else: APPROVE
+
+- **Stage fix** — correctly wired (modulo the NameError above)
+- **Invulnerable fix** — correctly derives from `hurtbox_state != 0` (line 94)
+- **`extract_combat_context()`** — hitstun bit-recovery is correct, graceful fallbacks with try/except at every level
+- **`parse.py`** — 6 new PlayerFrame fields, `_safe_field()` fallback for old data
+- **Encoding pipeline** — `binary_dim`, `dynamics_dim`, `predicted_binary_dim`, `predicted_dynamics_dim` all config-driven, dimensions flow correctly through dataset.py → metrics.py → model heads
+- **`metrics.py`** — config-driven target slicing replaces hardcoded indices, matches dataset layout
+- **`mlp.py`/`mamba2.py`** — `binary_head` uses `cfg.predicted_binary_dim`, dynamics_head uses `cfg.predicted_dynamics_dim`
+- **Game metadata** (`game_end_method`, `is_pal`) — clean additions, correct defaults
+
+### After fixes, re-parse is unblocked
+
+Once the two NameErrors are fixed, both parsers should produce valid v3 parquet files with stage, invulnerable, state_flags, and hitstun all populated. The encoding pipeline is ready — just needs `state_flags=True, hitstun=True` in the YAML config.
 
 ---
 
