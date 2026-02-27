@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Batch Eval Viewer</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #14141f;
+    --surface2: #1e1e2e;
+    --border: #2a2a3e;
+    --text: #e0e0e8;
+    --text-dim: #8888a0;
+    --accent: #8866ff;
+    --blue: #4488ff;
+    --green: #44cc88;
+    --red: #ff6644;
+    --orange: #ffaa44;
+    --cyan: #44ccdd;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  #drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 100vh;
+    gap: 20px;
+    transition: background 0.2s;
+  }
+  #drop-zone.dragover { background: rgba(136, 102, 255, 0.08); }
+  #drop-zone h1 { font-size: 28px; font-weight: 600; color: var(--accent); }
+  #drop-zone p { color: var(--text-dim); font-size: 14px; }
+  #drop-zone label {
+    background: var(--surface2);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 40px 60px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    text-align: center;
+  }
+  #drop-zone label:hover { border-color: var(--accent); background: var(--surface); }
+  #file-input { display: none; }
+
+  #viewer {
+    display: none;
+    width: 100%;
+    max-width: 1200px;
+    padding: 16px;
+    gap: 16px;
+    flex-direction: column;
+  }
+
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .section h2 {
+    font-size: 16px;
+    color: var(--accent);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  /* Header */
+  #header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  #header .tag {
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .tag-arch { background: rgba(136, 102, 255, 0.2); color: var(--accent); }
+  .tag-games { background: rgba(68, 136, 255, 0.2); color: var(--blue); }
+  .tag-frames { background: rgba(68, 204, 136, 0.2); color: var(--green); }
+  .tag-time { background: rgba(136, 136, 160, 0.2); color: var(--text-dim); }
+
+  /* Summary cards */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+  }
+  .card .value {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .card .label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  th, td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    user-select: none;
+  }
+  th:hover { color: var(--accent); }
+  th.sorted-asc::after { content: ' ^'; color: var(--accent); }
+  th.sorted-desc::after { content: ' v'; color: var(--accent); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:hover { background: rgba(136, 102, 255, 0.05); }
+
+  .acc-good { color: var(--green); }
+  .acc-mid { color: var(--orange); }
+  .acc-bad { color: var(--red); }
+
+  /* Chart */
+  .chart-container {
+    position: relative;
+    width: 100%;
+    height: 300px;
+    margin-top: 8px;
+  }
+  canvas { width: 100%; height: 100%; }
+
+  /* Confusion matrix */
+  .confusion-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .confusion-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .confusion-box h3 {
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .cm-grid {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    gap: 2px;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .cm-cell {
+    padding: 8px;
+    text-align: center;
+    border-radius: 4px;
+  }
+  .cm-header { color: var(--text-dim); font-weight: 600; font-size: 10px; }
+  .cm-tp { background: rgba(68, 204, 136, 0.15); color: var(--green); }
+  .cm-fp { background: rgba(255, 102, 68, 0.15); color: var(--red); }
+  .cm-fn { background: rgba(255, 170, 68, 0.15); color: var(--orange); }
+  .cm-tn { background: rgba(68, 136, 255, 0.1); color: var(--blue); }
+  .cm-metrics { font-size: 11px; color: var(--text-dim); }
+  .cm-metrics span { margin-right: 12px; }
+  .cm-metrics .val { color: var(--text); font-weight: 600; }
+
+  /* Collapsible */
+  .collapsible-header {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .collapsible-header::before {
+    content: '>';
+    display: inline-block;
+    transition: transform 0.2s;
+    color: var(--text-dim);
+  }
+  .collapsible-header.open::before { transform: rotate(90deg); }
+  .collapsible-content { display: none; margin-top: 12px; }
+  .collapsible-content.open { display: block; }
+</style>
+</head>
+<body>
+
+<div id="drop-zone">
+  <h1>Batch Eval Viewer</h1>
+  <p>Teacher-forced evaluation error analysis</p>
+  <label for="file-input">
+    Drop batch_eval_results.json here<br>
+    <span style="font-size:12px;color:var(--text-dim)">or click to browse</span>
+  </label>
+  <input type="file" id="file-input" accept=".json">
+</div>
+
+<div id="viewer">
+  <div id="header"></div>
+  <div id="summary-cards" class="cards"></div>
+  <div id="time-chart-section" class="section">
+    <h2>Error Rate Over Time</h2>
+    <div class="chart-container"><canvas id="time-chart"></canvas></div>
+  </div>
+  <div id="action-table-section" class="section">
+    <h2>Action Error Table</h2>
+    <div id="action-table-wrap"></div>
+  </div>
+  <div id="category-section" class="section">
+    <h2>Category Summary</h2>
+    <div id="category-table-wrap"></div>
+  </div>
+  <div id="binary-section" class="section">
+    <h2>Binary Flag Confusion Matrices</h2>
+    <div id="binary-grid" class="confusion-grid"></div>
+  </div>
+  <div id="pos-hist-section" class="section">
+    <h2>Position Error Distribution</h2>
+    <div class="chart-container"><canvas id="pos-hist-chart"></canvas></div>
+  </div>
+  <div id="per-game-section" class="section">
+    <div class="collapsible-header" id="per-game-toggle">
+      <h2 style="margin:0">Per-Game Results</h2>
+    </div>
+    <div class="collapsible-content" id="per-game-content"></div>
+  </div>
+</div>
+
+<script>
+// --- Utilities ---
+function accClass(v) {
+  if (v >= 0.8) return 'acc-good';
+  if (v >= 0.5) return 'acc-mid';
+  return 'acc-bad';
+}
+function pct(v) { return v != null ? (v * 100).toFixed(1) + '%' : 'N/A'; }
+function fmt(v, d=2) { return v != null ? v.toFixed(d) : 'N/A'; }
+
+// --- File loading ---
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const viewer = document.getElementById('viewer');
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      render(data);
+    } catch(err) {
+      alert('Failed to parse JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+// --- Main render ---
+function render(data) {
+  dropZone.style.display = 'none';
+  viewer.style.display = 'flex';
+
+  renderHeader(data.meta);
+  renderSummary(data.summary);
+  renderTimeChart(data.by_time_bucket);
+  renderActionTable(data.by_action);
+  renderCategoryTable(data.by_category);
+  renderBinaryFlags(data.binary_flags);
+  renderPosHistogram(data.position_error_distribution);
+  renderPerGame(data.per_game);
+}
+
+// --- Header ---
+function renderHeader(meta) {
+  const h = document.getElementById('header');
+  h.innerHTML = `
+    <span style="font-size:18px;font-weight:700;color:var(--accent)">${meta.model_name || 'Unknown'}</span>
+    <span class="tag tag-arch">${meta.arch || '?'}</span>
+    <span class="tag tag-arch">K=${meta.context_len || '?'}</span>
+    <span class="tag tag-games">${meta.num_games} games</span>
+    <span class="tag tag-time">${meta.timestamp || ''}</span>
+  `;
+}
+
+// --- Summary cards ---
+function renderSummary(s) {
+  const container = document.getElementById('summary-cards');
+  const cards = [
+    { value: pct(s.action_accuracy), label: 'Action Accuracy', color: accClass(s.action_accuracy) },
+    { value: s.change_accuracy != null ? pct(s.change_accuracy) : 'N/A', label: 'Change Accuracy', color: s.change_accuracy != null ? accClass(s.change_accuracy) : '' },
+    { value: pct(s.on_ground_accuracy), label: 'On Ground Acc', color: accClass(s.on_ground_accuracy) },
+    { value: fmt(s.avg_pos_error), label: 'Avg Pos Error', color: s.avg_pos_error < 2 ? 'acc-good' : s.avg_pos_error < 5 ? 'acc-mid' : 'acc-bad' },
+    { value: s.total_frames.toLocaleString(), label: 'Total Frames', color: '' },
+    { value: s.total_changes.toLocaleString(), label: 'Action Changes', color: '' },
+  ];
+  container.innerHTML = cards.map(c =>
+    `<div class="card"><div class="value ${c.color}">${c.value}</div><div class="label">${c.label}</div></div>`
+  ).join('');
+}
+
+// --- Time chart (canvas) ---
+function renderTimeChart(buckets) {
+  const canvas = document.getElementById('time-chart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  const pad = { left: 60, right: 20, top: 20, bottom: 40 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#14141f';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = '#2a2a3e';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 10; i++) {
+    const y = pad.top + plotH * (1 - i / 10);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+  }
+
+  // Y axis labels
+  ctx.fillStyle = '#8888a0';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 10; i += 2) {
+    const y = pad.top + plotH * (1 - i / 10);
+    ctx.fillText((i * 10) + '%', pad.left - 8, y + 4);
+  }
+
+  // X axis labels
+  ctx.textAlign = 'center';
+  buckets.forEach((b, i) => {
+    const x = pad.left + (i + 0.5) * (plotW / buckets.length);
+    ctx.fillText(b.bucket, x, H - 8);
+  });
+
+  // Lines
+  const series = [
+    { key: 'action_accuracy', color: '#4488ff', label: 'Action Acc' },
+    { key: 'on_ground_accuracy', color: '#44cc88', label: 'On Ground Acc' },
+  ];
+
+  // Also draw pos error as a separate y-axis (right side)
+  const posErrors = buckets.map(b => b.avg_pos_error);
+  const maxPosErr = Math.max(...posErrors, 1);
+
+  series.forEach(s => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    buckets.forEach((b, i) => {
+      const x = pad.left + (i + 0.5) * (plotW / buckets.length);
+      const y = pad.top + plotH * (1 - b[s.key]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Dots
+    ctx.fillStyle = s.color;
+    buckets.forEach((b, i) => {
+      const x = pad.left + (i + 0.5) * (plotW / buckets.length);
+      const y = pad.top + plotH * (1 - b[s.key]);
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    });
+  });
+
+  // Pos error line (scaled to right axis)
+  ctx.strokeStyle = '#ff6644';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  buckets.forEach((b, i) => {
+    const x = pad.left + (i + 0.5) * (plotW / buckets.length);
+    const y = pad.top + plotH * (1 - b.avg_pos_error / maxPosErr);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Right axis labels for pos error
+  ctx.fillStyle = '#ff6644';
+  ctx.textAlign = 'left';
+  for (let i = 0; i <= 4; i++) {
+    const val = (maxPosErr * i / 4).toFixed(1);
+    const y = pad.top + plotH * (1 - i / 4);
+    ctx.fillText(val, W - pad.right + 4, y + 4);
+  }
+
+  // Legend
+  const legend = [
+    { color: '#4488ff', label: 'Action Acc' },
+    { color: '#44cc88', label: 'On Ground Acc' },
+    { color: '#ff6644', label: 'Pos Error (right axis)', dash: true },
+  ];
+  let lx = pad.left + 10;
+  legend.forEach(l => {
+    ctx.strokeStyle = l.color;
+    ctx.fillStyle = l.color;
+    ctx.lineWidth = 2;
+    if (l.dash) ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(lx, pad.top + 12); ctx.lineTo(lx + 20, pad.top + 12); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(l.label, lx + 24, pad.top + 15);
+    lx += ctx.measureText(l.label).width + 50;
+  });
+}
+
+// --- Sortable table helper ---
+function makeSortableTable(containerId, columns, rows, defaultSort, defaultDir) {
+  const container = document.getElementById(containerId);
+  let sortCol = defaultSort;
+  let sortDir = defaultDir || 'desc';
+
+  function renderTable() {
+    const sorted = [...rows].sort((a, b) => {
+      const av = a[sortCol], bv = b[sortCol];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+    });
+
+    let html = '<table><thead><tr>';
+    columns.forEach(c => {
+      const cls = sortCol === c.key ? (sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc') : '';
+      html += `<th class="${cls}" data-key="${c.key}">${c.label}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    sorted.forEach(row => {
+      html += '<tr>';
+      columns.forEach(c => {
+        const v = row[c.key];
+        const cls = c.numeric ? 'num' : '';
+        let display = v;
+        if (c.format === 'pct') display = pct(v);
+        else if (c.format === 'fixed2') display = fmt(v);
+        else if (v == null) display = '-';
+        else if (typeof v === 'number' && c.numeric) display = v.toLocaleString();
+
+        let colorCls = '';
+        if (c.format === 'pct' && v != null) colorCls = accClass(v);
+        html += `<td class="${cls} ${colorCls}">${display}</td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // Bind sort clicks
+    container.querySelectorAll('th').forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.key;
+        if (sortCol === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        else { sortCol = key; sortDir = 'desc'; }
+        renderTable();
+      });
+    });
+  }
+  renderTable();
+}
+
+// --- Action table ---
+function renderActionTable(byAction) {
+  const columns = [
+    { key: 'action_name', label: 'Action', numeric: false },
+    { key: 'category', label: 'Category', numeric: false },
+    { key: 'errors', label: 'Errors', numeric: true },
+    { key: 'count', label: 'Count', numeric: true },
+    { key: 'accuracy', label: 'Accuracy', numeric: true, format: 'pct' },
+    { key: 'avg_pos_error', label: 'Pos Error', numeric: true, format: 'fixed2' },
+    { key: 'change_count', label: 'Changes', numeric: true },
+    { key: 'change_accuracy', label: 'Change Acc', numeric: true, format: 'pct' },
+  ];
+  makeSortableTable('action-table-wrap', columns, byAction, 'errors', 'desc');
+}
+
+// --- Category table ---
+function renderCategoryTable(byCat) {
+  const rows = Object.entries(byCat).map(([cat, d]) => ({ category: cat, ...d }));
+  const columns = [
+    { key: 'category', label: 'Category', numeric: false },
+    { key: 'count', label: 'Count', numeric: true },
+    { key: 'accuracy', label: 'Accuracy', numeric: true, format: 'pct' },
+    { key: 'change_count', label: 'Changes', numeric: true },
+    { key: 'change_accuracy', label: 'Change Acc', numeric: true, format: 'pct' },
+    { key: 'avg_pos_error', label: 'Pos Error', numeric: true, format: 'fixed2' },
+  ];
+  makeSortableTable('category-table-wrap', columns, rows, 'count', 'desc');
+}
+
+// --- Binary flag confusion matrices ---
+function renderBinaryFlags(flags) {
+  const grid = document.getElementById('binary-grid');
+  grid.innerHTML = '';
+  for (const [name, d] of Object.entries(flags)) {
+    const box = document.createElement('div');
+    box.className = 'confusion-box';
+    box.innerHTML = `
+      <h3>${name}</h3>
+      <div class="cm-grid">
+        <div class="cm-cell cm-header"></div>
+        <div class="cm-cell cm-header">Pred True</div>
+        <div class="cm-cell cm-header">Pred False</div>
+        <div class="cm-cell cm-header">Actual True</div>
+        <div class="cm-cell cm-tp">${d.tp.toLocaleString()}</div>
+        <div class="cm-cell cm-fn">${d.fn.toLocaleString()}</div>
+        <div class="cm-cell cm-header">Actual False</div>
+        <div class="cm-cell cm-fp">${d.fp.toLocaleString()}</div>
+        <div class="cm-cell cm-tn">${d.tn.toLocaleString()}</div>
+      </div>
+      <div class="cm-metrics">
+        <span>Precision: <span class="val">${pct(d.precision)}</span></span>
+        <span>Recall: <span class="val">${pct(d.recall)}</span></span>
+        <span>F1: <span class="val">${pct(d.f1)}</span></span>
+        <span>Accuracy: <span class="val">${pct(d.accuracy)}</span></span>
+      </div>
+    `;
+    grid.appendChild(box);
+  }
+}
+
+// --- Position error histogram ---
+function renderPosHistogram(dist) {
+  const canvas = document.getElementById('pos-hist-chart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  const pad = { left: 60, right: 20, top: 20, bottom: 40 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#14141f';
+  ctx.fillRect(0, 0, W, H);
+
+  const maxCount = Math.max(...dist.map(d => d.count), 1);
+  const barW = plotW / dist.length * 0.7;
+  const gap = plotW / dist.length * 0.3;
+
+  // Grid
+  ctx.strokeStyle = '#2a2a3e';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 5; i++) {
+    const y = pad.top + plotH * (1 - i / 5);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#8888a0';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxCount * i / 5).toLocaleString(), pad.left - 8, y + 4);
+  }
+
+  // Bars
+  dist.forEach((d, i) => {
+    const x = pad.left + i * (plotW / dist.length) + gap / 2;
+    const h = (d.count / maxCount) * plotH;
+    const y = pad.top + plotH - h;
+
+    const gradient = ctx.createLinearGradient(x, y, x, pad.top + plotH);
+    gradient.addColorStop(0, '#8866ff');
+    gradient.addColorStop(1, 'rgba(136, 102, 255, 0.3)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, barW, h);
+
+    // Label
+    ctx.fillStyle = '#8888a0';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(d.bin, x + barW / 2, H - 8);
+
+    // Count on top
+    if (d.count > 0) {
+      ctx.fillStyle = '#e0e0e8';
+      ctx.fillText(d.count.toLocaleString(), x + barW / 2, y - 6);
+    }
+  });
+}
+
+// --- Per-game table (collapsible) ---
+function renderPerGame(games) {
+  const toggle = document.getElementById('per-game-toggle');
+  const content = document.getElementById('per-game-content');
+
+  toggle.addEventListener('click', () => {
+    toggle.classList.toggle('open');
+    content.classList.toggle('open');
+  });
+
+  const columns = [
+    { key: 'game_path', label: 'Game', numeric: false },
+    { key: 'num_predicted', label: 'Frames', numeric: true },
+    { key: 'stage', label: 'Stage', numeric: true },
+    { key: 'action_acc', label: 'Action Acc', numeric: true, format: 'pct' },
+    { key: 'change_acc', label: 'Change Acc', numeric: true, format: 'pct' },
+    { key: 'num_changes', label: 'Changes', numeric: true },
+    { key: 'avg_pos_error', label: 'Pos Error', numeric: true, format: 'fixed2' },
+  ];
+
+  // Truncate game_path for display
+  const displayGames = games.map(g => ({
+    ...g,
+    game_path: g.game_path.length > 16 ? g.game_path.substring(0, 16) + '...' : g.game_path,
+  }));
+
+  makeSortableTable('per-game-content', columns, displayGames, 'action_acc', 'asc');
+}
+</script>
+</body>
+</html>

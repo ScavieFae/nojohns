@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Batch Eval Report</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --surface: #14141f; --surface2: #1e1e2e; --border: #2a2a3e;
+    --text: #e0e0e8; --text-dim: #8888a0; --accent: #8866ff;
+    --blue: #4488ff; --green: #44cc88; --red: #ff6644; --orange: #ffaa44;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 16px;
+  }
+  #viewer { width: 100%; max-width: 1200px; display: flex; flex-direction: column; gap: 16px; }
+  .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .section h2 { font-size: 16px; color: var(--accent); margin-bottom: 12px; font-weight: 600; }
+  #header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; background: var(--surface); border-radius: 8px; border: 1px solid var(--border);
+  }
+  .tag { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .tag-arch { background: rgba(136, 102, 255, 0.2); color: var(--accent); }
+  .tag-games { background: rgba(68, 136, 255, 0.2); color: var(--blue); }
+  .tag-time { background: rgba(136, 136, 160, 0.2); color: var(--text-dim); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+  .card .value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .card .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; cursor: pointer; user-select: none; }
+  th:hover { color: var(--accent); }
+  th.sorted-asc::after { content: ' ^'; color: var(--accent); }
+  th.sorted-desc::after { content: ' v'; color: var(--accent); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:hover { background: rgba(136, 102, 255, 0.05); }
+  .acc-good { color: var(--green); } .acc-mid { color: var(--orange); } .acc-bad { color: var(--red); }
+  .chart-container { position: relative; width: 100%; height: 300px; margin-top: 8px; }
+  canvas { width: 100%; height: 100%; }
+  .confusion-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .confusion-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .confusion-box h3 { font-size: 13px; margin-bottom: 8px; font-weight: 600; }
+  .cm-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 2px; font-size: 12px; margin-bottom: 8px; }
+  .cm-cell { padding: 8px; text-align: center; border-radius: 4px; }
+  .cm-header { color: var(--text-dim); font-weight: 600; font-size: 10px; }
+  .cm-tp { background: rgba(68, 204, 136, 0.15); color: var(--green); }
+  .cm-fp { background: rgba(255, 102, 68, 0.15); color: var(--red); }
+  .cm-fn { background: rgba(255, 170, 68, 0.15); color: var(--orange); }
+  .cm-tn { background: rgba(68, 136, 255, 0.1); color: var(--blue); }
+  .cm-metrics { font-size: 11px; color: var(--text-dim); }
+  .cm-metrics span { margin-right: 12px; }
+  .cm-metrics .val { color: var(--text); font-weight: 600; }
+  .collapsible-header { cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .collapsible-header::before { content: '>'; display: inline-block; transition: transform 0.2s; color: var(--text-dim); }
+  .collapsible-header.open::before { transform: rotate(90deg); }
+  .collapsible-content { display: none; margin-top: 12px; }
+  .collapsible-content.open { display: block; }
+  .insight { background: var(--surface2); border-left: 3px solid var(--accent); padding: 12px 16px; margin-top: 12px; border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.6; }
+  .insight strong { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="viewer">
+  <div id="header"></div>
+  <div id="summary-cards" class="cards"></div>
+  <div id="insight-box" class="section"></div>
+  <div class="section"><h2>Error Rate Over Time</h2><div class="chart-container"><canvas id="time-chart"></canvas></div></div>
+  <div class="section"><h2>Action Error Table</h2><div id="action-table-wrap"></div></div>
+  <div class="section"><h2>Category Summary</h2><div id="category-table-wrap"></div></div>
+  <div class="section"><h2>Binary Flag Confusion Matrices</h2><div id="binary-grid" class="confusion-grid"></div></div>
+  <div class="section"><h2>Position Error Distribution</h2><div class="chart-container"><canvas id="pos-hist-chart"></canvas></div></div>
+  <div class="section"><div class="collapsible-header" id="per-game-toggle"><h2 style="margin:0">Per-Game Results</h2></div><div class="collapsible-content" id="per-game-content"></div></div>
+</div>
+<script>
+const DATA = {"meta":{"model_name":"mamba2-v3-2k-test-v2","arch":"mamba2","context_len":10,"checkpoint":"worldmodel/checkpoints/mamba2-v3-2k-test-v2/best.pt","data_dir":"/Users/mattiefairchild/claude-projects/nojohns-training/data/game-only-v3-2k","device":"mps","seed":42,"timestamp":"2026-02-27T13:27:19","num_games":5},"summary":{"total_games":5,"total_frames":116662,"action_accuracy":0.967,"change_accuracy":0.683,"total_changes":10361,"avg_pos_error":1.02,"on_ground_accuracy":0.7779},"by_action":[{"action_id":18,"action_name":"TURNING","category":"movement","count":1208,"correct":782,"accuracy":0.6474,"errors":426,"avg_pos_error":0.62,"change_count":558,"change_correct":155,"change_accuracy":0.2778},{"action_id":20,"action_name":"DASHING","category":"movement","count":5377,"correct":5132,"accuracy":0.9544,"errors":245,"avg_pos_error":0.94,"change_count":817,"change_correct":608,"change_accuracy":0.7442},{"action_id":29,"action_name":"FALLING","category":"aerial","count":3135,"correct":2921,"accuracy":0.9317,"errors":214,"avg_pos_error":0.83,"change_count":279,"change_correct":108,"change_accuracy":0.3871},{"action_id":15,"action_name":"WALK_SLOW","category":"movement","count":593,"correct":393,"accuracy":0.6627,"errors":200,"avg_pos_error":0.53,"change_count":257,"change_correct":85,"change_accuracy":0.3307},{"action_id":42,"action_name":"LANDING","category":"aerial","count":3258,"correct":3070,"accuracy":0.9423,"errors":188,"avg_pos_error":1.02,"change_count":498,"change_correct":320,"change_accuracy":0.6426},{"action_id":67,"action_name":"BAIR","category":"aerial_attack","count":4149,"correct":3972,"accuracy":0.9573,"errors":177,"avg_pos_error":1.07,"change_count":196,"change_correct":41,"change_accuracy":0.2092},{"action_id":14,"action_name":"STANDING","category":"idle","count":4209,"correct":4089,"accuracy":0.9715,"errors":120,"avg_pos_error":0.49,"change_count":623,"change_correct":510,"change_accuracy":0.8186},{"action_id":16,"action_name":"WALK_MIDDLE","category":"movement","count":613,"correct":514,"accuracy":0.8385,"errors":99,"avg_pos_error":0.54,"change_count":144,"change_correct":49,"change_accuracy":0.3403},{"action_id":43,"action_name":"LANDING_SPECIAL","category":"aerial","count":2771,"correct":2683,"accuracy":0.9682,"errors":88,"avg_pos_error":1.08,"change_count":277,"change_correct":192,"change_accuracy":0.6931},{"action_id":88,"action_name":"DAMAGE_FLY_NEUTRAL","category":"damage","count":4440,"correct":4362,"accuracy":0.9824,"errors":78,"avg_pos_error":1.62,"change_count":105,"change_correct":42,"change_accuracy":0.4},{"action_id":38,"action_name":"TUMBLING","category":"damage","count":1424,"correct":1352,"accuracy":0.9494,"errors":72,"avg_pos_error":0.81,"change_count":76,"change_correct":4,"change_accuracy":0.0526},{"action_id":178,"action_name":"SHIELD_START","category":"shield_dodge","count":1640,"correct":1569,"accuracy":0.9567,"errors":71,"avg_pos_error":0.58,"change_count":311,"change_correct":252,"change_accuracy":0.8103},{"action_id":69,"action_name":"DAIR","category":"aerial_attack","count":2742,"correct":2673,"accuracy":0.9748,"errors":69,"avg_pos_error":1.13,"change_count":138,"change_correct":93,"change_accuracy":0.6739},{"action_id":66,"action_name":"FAIR","category":"aerial_attack","count":1520,"correct":1453,"accuracy":0.9559,"errors":67,"avg_pos_error":0.95,"change_count":63,"change_correct":8,"change_accuracy":0.127},{"action_id":27,"action_name":"JUMPING_ARIAL_FORWARD","category":"aerial","count":5930,"correct":5868,"accuracy":0.9895,"errors":62,"avg_pos_error":1.2,"change_count":302,"change_correct":250,"change_accuracy":0.8278},{"action_id":24,"action_name":"KNEE_BEND","category":"aerial","count":3861,"correct":3813,"accuracy":0.9876,"errors":48,"avg_pos_error":0.7,"change_count":915,"change_correct":873,"change_accuracy":0.9541},{"action_id":181,"action_name":"SHIELD_STUN","category":"shield_dodge","count":1138,"correct":1090,"accuracy":0.9578,"errors":48,"avg_pos_error":0.71,"change_count":101,"change_correct":55,"change_accuracy":0.5446},{"action_id":74,"action_name":"DAIR_LANDING","category":"aerial_attack","count":1147,"correct":1103,"accuracy":0.9616,"errors":44,"avg_pos_error":1.0,"change_count":113,"change_correct":72,"change_accuracy":0.6372},{"action_id":343,"action_name":"NEUTRAL_B_ATTACKING","category":"special","count":914,"correct":870,"accuracy":0.9519,"errors":44,"avg_pos_error":0.63,"change_count":49,"change_correct":12,"change_accuracy":0.2449},{"action_id":17,"action_name":"WALK_FAST","category":"movement","count":319,"correct":276,"accuracy":0.8652,"errors":43,"avg_pos_error":0.61,"change_count":45,"change_correct":2,"change_accuracy":0.0444},{"action_id":236,"action_name":"AIRDODGE","category":"shield_dodge","count":1240,"correct":1198,"accuracy":0.9661,"errors":42,"avg_pos_error":1.28,"change_count":168,"change_correct":158,"change_accuracy":0.9405},{"action_id":86,"action_name":"DAMAGE_AIR_3","category":"damage","count":990,"correct":949,"accuracy":0.9586,"errors":41,"avg_pos_error":1.14,"change_count":40,"change_correct":6,"change_accuracy":0.15},{"action_id":68,"action_name":"UAIR","category":"aerial_attack","count":1468,"correct":1428,"accuracy":0.9728,"errors":40,"avg_pos_error":0.94,"change_count":63,"change_correct":36,"change_accuracy":0.5714},{"action_id":244,"action_name":"PLATFORM_DROP","category":"movement","count":1019,"correct":981,"accuracy":0.9627,"errors":38,"avg_pos_error":0.68,"change_count":122,"change_correct":87,"change_accuracy":0.7131},{"action_id":341,"action_name":"LASER_GUN_PULL","category":"other","count":1425,"correct":1387,"accuracy":0.9733,"errors":38,"avg_pos_error":0.69,"change_count":137,"change_correct":99,"change_accuracy":0.7226},{"action_id":70,"action_name":"NAIR_LANDING","category":"aerial_attack","count":770,"correct":733,"accuracy":0.9519,"errors":37,"avg_pos_error":0.85,"change_count":88,"change_correct":51,"change_accuracy":0.5795},{"action_id":90,"action_name":"DAMAGE_FLY_TOP","category":"damage","count":3510,"correct":3475,"accuracy":0.99,"errors":35,"avg_pos_error":0.94,"change_count":72,"change_correct":45,"change_accuracy":0.625},{"action_id":65,"action_name":"NAIR","category":"aerial_attack","count":2182,"correct":2150,"accuracy":0.9853,"errors":32,"avg_pos_error":1.09,"change_count":112,"change_correct":102,"change_accuracy":0.9107},{"action_id":72,"action_name":"BAIR_LANDING","category":"aerial_attack","count":1029,"correct":997,"accuracy":0.9689,"errors":32,"avg_pos_error":0.83,"change_count":90,"change_correct":59,"change_accuracy":0.6556},{"action_id":183,"action_name":"TECH_MISS_UP","category":"other","count":680,"correct":648,"accuracy":0.9529,"errors":32,"avg_pos_error":1.14,"change_count":37,"change_correct":7,"change_accuracy":0.1892},{"action_id":21,"action_name":"RUNNING","category":"movement","count":680,"correct":650,"accuracy":0.9559,"errors":30,"avg_pos_error":0.91,"change_count":93,"change_correct":67,"change_accuracy":0.7204},{"action_id":60,"action_name":"FSMASH_MID","category":"ground_attack","count":1170,"correct":1140,"accuracy":0.9744,"errors":30,"avg_pos_error":0.64,"change_count":29,"change_correct":4,"change_accuracy":0.1379},{"action_id":252,"action_name":"EDGE_CATCHING","category":"edge","count":358,"correct":330,"accuracy":0.9218,"errors":28,"avg_pos_error":2.01,"change_count":52,"change_correct":24,"change_accuracy":0.4615},{"action_id":344,"action_name":"NEUTRAL_B_FULL_CHARGE","category":"special","count":2042,"correct":2015,"accuracy":0.9868,"errors":27,"avg_pos_error":0.81,"change_count":182,"change_correct":161,"change_accuracy":0.8846},{"action_id":345,"action_name":"WAIT_ITEM","category":"special","count":2552,"correct":2525,"accuracy":0.9894,"errors":27,"avg_pos_error":1.03,"change_count":174,"change_correct":167,"change_accuracy":0.9598},{"action_id":234,"action_name":"ROLL_BACKWARD","category":"shield_dodge","count":850,"correct":823,"accuracy":0.9682,"errors":27,"avg_pos_error":1.11,"change_count":27,"change_correct":1,"change_accuracy":0.037},{"action_id":233,"action_name":"ROLL_FORWARD","category":"shield_dodge","count":681,"correct":654,"accuracy":0.9604,"errors":27,"avg_pos_error":1.15,"change_count":26,"change_correct":0,"change_accuracy":0.0},{"action_id":12,"action_name":"ON_HALO_DESCENT","category":"other","count":1620,"correct":1593,"accuracy":0.9833,"errors":27,"avg_pos_error":4.36,"change_count":27,"change_correct":0,"change_accuracy":0.0},{"action_id":85,"action_name":"DAMAGE_AIR_2","category":"damage","count":576,"correct":550,"accuracy":0.9549,"errors":26,"avg_pos_error":0.9,"change_count":32,"change_correct":6,"change_accuracy":0.1875},{"action_id":84,"action_name":"DAMAGE_AIR_1","category":"damage","count":301,"correct":275,"accuracy":0.9136,"errors":26,"avg_pos_error":1.1,"change_count":25,"change_correct":2,"change_accuracy":0.08},{"action_id":28,"action_name":"JUMPING_ARIAL_BACKWARD","category":"aerial","count":1084,"correct":1058,"accuracy":0.976,"errors":26,"avg_pos_error":1.2,"change_count":55,"change_correct":32,"change_accuracy":0.5818},{"action_id":179,"action_name":"SHIELD","category":"shield_dodge","count":2049,"correct":2024,"accuracy":0.9878,"errors":25,"avg_pos_error":0.54,"change_count":225,"change_correct":216,"change_accuracy":0.96},{"action_id":89,"action_name":"DAMAGE_FLY_LOW","category":"damage","count":1179,"correct":1154,"accuracy":0.9788,"errors":25,"avg_pos_error":1.69,"change_count":27,"change_correct":2,"change_accuracy":0.0741},{"action_id":71,"action_name":"FAIR_LANDING","category":"aerial_attack","count":613,"correct":588,"accuracy":0.9592,"errors":25,"avg_pos_error":0.8,"change_count":49,"change_correct":26,"change_accuracy":0.5306},{"action_id":235,"action_name":"SPOTDODGE","category":"shield_dodge","count":723,"correct":699,"accuracy":0.9668,"errors":24,"avg_pos_error":0.5,"change_count":34,"change_correct":10,"change_accuracy":0.2941},{"action_id":87,"action_name":"DAMAGE_FLY_HIGH","category":"damage","count":804,"correct":782,"accuracy":0.9726,"errors":22,"avg_pos_error":1.7,"change_count":23,"change_correct":2,"change_accuracy":0.087},{"action_id":39,"action_name":"CROUCH_START","category":"movement","count":527,"correct":506,"accuracy":0.9602,"errors":21,"avg_pos_error":0.63,"change_count":143,"change_correct":124,"change_accuracy":0.8671},{"action_id":25,"action_name":"JUMPING_FORWARD","category":"aerial","count":4969,"correct":4949,"accuracy":0.996,"errors":20,"avg_pos_error":1.0,"change_count":582,"change_correct":579,"change_accuracy":0.9948},{"action_id":26,"action_name":"JUMPING_BACKWARD","category":"aerial","count":1596,"correct":1576,"accuracy":0.9875,"errors":20,"avg_pos_error":1.02,"change_count":197,"change_correct":187,"change_accuracy":0.9492},{"action_id":199,"action_name":"NEUTRAL_TECH","category":"other","count":414,"correct":395,"accuracy":0.9541,"errors":19,"avg_pos_error":0.71,"change_count":19,"change_correct":0,"change_accuracy":0.0},{"action_id":212,"action_name":"GRAB","category":"grab","count":1059,"correct":1043,"accuracy":0.9849,"errors":16,"avg_pos_error":0.56,"change_count":50,"change_correct":49,"change_accuracy":0.98},{"action_id":91,"action_name":"DAMAGE_FLY_ROLL","category":"damage","count":884,"correct":868,"accuracy":0.9819,"errors":16,"avg_pos_error":2.07,"change_count":16,"change_correct":0,"change_accuracy":0.0},{"action_id":251,"action_name":"SLIDING_OFF_EDGE","category":"edge","count":136,"correct":120,"accuracy":0.8824,"errors":16,"avg_pos_error":1.23,"change_count":9,"change_correct":0,"change_accuracy":0.0},{"action_id":346,"action_name":"NEUTRAL_B_CHARGING_AIR","category":"special","count":605,"correct":590,"accuracy":0.9752,"errors":15,"avg_pos_error":0.92,"change_count":29,"change_correct":16,"change_accuracy":0.5517},{"action_id":180,"action_name":"SHIELD_RELEASE","category":"shield_dodge","count":366,"correct":351,"accuracy":0.959,"errors":15,"avg_pos_error":0.55,"change_count":47,"change_correct":34,"change_accuracy":0.7234},{"action_id":64,"action_name":"DOWNSMASH","category":"ground_attack","count":1687,"correct":1672,"accuracy":0.9911,"errors":15,"avg_pos_error":0.49,"change_count":39,"change_correct":26,"change_accuracy":0.6667},{"action_id":75,"action_name":"DAMAGE_HIGH_1","category":"damage","count":146,"correct":132,"accuracy":0.9041,"errors":14,"avg_pos_error":0.95,"change_count":15,"change_correct":1,"change_accuracy":0.0667},{"action_id":191,"action_name":"TECH_MISS_DOWN","category":"other","count":286,"correct":272,"accuracy":0.951,"errors":14,"avg_pos_error":0.91,"change_count":16,"change_correct":2,"change_accuracy":0.125},{"action_id":79,"action_name":"DAMAGE_NEUTRAL_2","category":"damage","count":272,"correct":258,"accuracy":0.9485,"errors":14,"avg_pos_error":0.79,"change_count":18,"change_correct":6,"change_accuracy":0.3333},{"action_id":0,"action_name":"DEAD_DOWN","category":"other","count":646,"correct":633,"accuracy":0.9799,"errors":13,"avg_pos_error":4.47,"change_count":15,"change_correct":2,"change_accuracy":0.1333},{"action_id":80,"action_name":"DAMAGE_NEUTRAL_3","category":"damage","count":297,"correct":284,"accuracy":0.9562,"errors":13,"avg_pos_error":0.91,"change_count":15,"change_correct":3,"change_accuracy":0.2},{"action_id":348,"action_name":"NEUTRAL_B_FULL_CHARGE_AIR","category":"special","count":488,"correct":475,"accuracy":0.9734,"errors":13,"avg_pos_error":1.33,"change_count":17,"change_correct":6,"change_accuracy":0.3529},{"action_id":76,"action_name":"DAMAGE_HIGH_2","category":"damage","count":142,"correct":130,"accuracy":0.9155,"errors":12,"avg_pos_error":0.8,"change_count":13,"change_correct":1,"change_accuracy":0.0769},{"action_id":342,"action_name":"NEUTRAL_B_CHARGING","category":"special","count":729,"correct":717,"accuracy":0.9835,"errors":12,"avg_pos_error":0.73,"change_count":55,"change_correct":43,"change_accuracy":0.7818},{"action_id":73,"action_name":"UAIR_LANDING","category":"aerial_attack","count":289,"correct":278,"accuracy":0.9619,"errors":11,"avg_pos_error":0.93,"change_count":27,"change_correct":16,"change_accuracy":0.5926},{"action_id":226,"action_name":"GRAB_PULL","category":"grab","count":56,"correct":46,"accuracy":0.8214,"errors":10,"avg_pos_error":2.6,"change_count":29,"change_correct":23,"change_accuracy":0.7931},{"action_id":35,"action_name":"DEAD_FALL","category":"aerial","count":312,"correct":302,"accuracy":0.9679,"errors":10,"avg_pos_error":1.22,"change_count":13,"change_correct":7,"change_accuracy":0.5385},{"action_id":323,"action_name":"ENTRY_START","category":"other","count":280,"correct":271,"accuracy":0.9679,"errors":9,"avg_pos_error":0.57,"change_count":8,"change_correct":1,"change_accuracy":0.125},{"action_id":357,"action_name":"SWORD_DANCE_4_LOW","category":"special","count":265,"correct":256,"accuracy":0.966,"errors":9,"avg_pos_error":0.76,"change_count":10,"change_correct":1,"change_accuracy":0.1},{"action_id":41,"action_name":"CROUCH_END","category":"movement","count":210,"correct":201,"accuracy":0.9571,"errors":9,"avg_pos_error":0.48,"change_count":37,"change_correct":30,"change_accuracy":0.8108},{"action_id":2,"action_name":"DEAD_RIGHT","category":"other","count":541,"correct":532,"accuracy":0.9834,"errors":9,"avg_pos_error":2.9,"change_count":10,"change_correct":1,"change_accuracy":0.1},{"action_id":213,"action_name":"GRAB_PULLING","category":"grab","count":60,"correct":52,"accuracy":0.8667,"errors":8,"avg_pos_error":0.71,"change_count":26,"change_correct":22,"change_accuracy":0.8462},{"action_id":200,"action_name":"FORWARD_TECH","category":"other","count":280,"correct":272,"accuracy":0.9714,"errors":8,"avg_pos_error":1.16,"change_count":7,"change_correct":0,"change_accuracy":0.0},{"action_id":369,"action_name":"MARTH_COUNTER","category":"special","count":54,"correct":46,"accuracy":0.8519,"errors":8,"avg_pos_error":0.89,"change_count":13,"change_correct":6,"change_accuracy":0.4615},{"action_id":32,"action_name":"FALLING_AERIAL","category":"aerial","count":278,"correct":270,"accuracy":0.9712,"errors":8,"avg_pos_error":1.05,"change_count":21,"change_correct":15,"change_accuracy":0.7143},{"action_id":78,"action_name":"DAMAGE_NEUTRAL_1","category":"damage","count":81,"correct":73,"accuracy":0.9012,"errors":8,"avg_pos_error":0.8,"change_count":8,"change_correct":0,"change_accuracy":0.0},{"action_id":245,"action_name":"EDGE_TEETERING_START","category":"edge","count":36,"correct":28,"accuracy":0.7778,"errors":8,"avg_pos_error":0.49,"change_count":8,"change_correct":0,"change_accuracy":0.0},{"action_id":56,"action_name":"UPTILT","category":"ground_attack","count":946,"correct":939,"accuracy":0.9926,"errors":7,"avg_pos_error":0.57,"change_count":41,"change_correct":40,"change_accuracy":0.9756},{"action_id":354,"action_name":"SWORD_DANCE_3_LOW","category":"special","count":1084,"correct":1077,"accuracy":0.9935,"errors":7,"avg_pos_error":0.83,"change_count":28,"change_correct":22,"change_accuracy":0.7857},{"action_id":350,"action_name":"SWORD_DANCE_2_HIGH","category":"special","count":410,"correct":403,"accuracy":0.9829,"errors":7,"avg_pos_error":0.74,"change_count":23,"change_correct":18,"change_accuracy":0.7826},{"action_id":237,"action_name":"REBOUND_STOP","category":"other","count":31,"correct":24,"accuracy":0.7742,"errors":7,"avg_pos_error":0.66,"change_count":6,"change_correct":0,"change_accuracy":0.0},{"action_id":77,"action_name":"DAMAGE_HIGH_3","category":"damage","count":146,"correct":139,"accuracy":0.9521,"errors":7,"avg_pos_error":0.95,"change_count":6,"change_correct":0,"change_accuracy":0.0},{"action_id":255,"action_name":"EDGE_GETUP_QUICK","category":"edge","count":196,"correct":189,"accuracy":0.9643,"errors":7,"avg_pos_error":1.0,"change_count":6,"change_correct":0,"change_accuracy":0.0},{"action_id":324,"action_name":"ENTRY_END","category":"other","count":300,"correct":294,"accuracy":0.98,"errors":6,"avg_pos_error":0.41,"change_count":10,"change_correct":4,"change_accuracy":0.4},{"action_id":53,"action_name":"FTILT_MID","category":"ground_attack","count":375,"correct":369,"accuracy":0.984,"errors":6,"avg_pos_error":0.74,"change_count":13,"change_correct":13,"change_accuracy":1.0},{"action_id":352,"action_name":"SWORD_DANCE_3_HIGH","category":"special","count":700,"correct":694,"accuracy":0.9914,"errors":6,"avg_pos_error":0.82,"change_count":30,"change_correct":28,"change_accuracy":0.9333},{"action_id":228,"action_name":"GRAB_PUMMELED","category":"grab","count":107,"correct":101,"accuracy":0.9439,"errors":6,"avg_pos_error":0.57,"change_count":6,"change_correct":5,"change_accuracy":0.8333},{"action_id":23,"action_name":"RUN_BRAKE","category":"movement","count":18,"correct":12,"accuracy":0.6667,"errors":6,"avg_pos_error":1.24,"change_count":12,"change_correct":6,"change_accuracy":0.5},{"action_id":63,"action_name":"UPSMASH","category":"ground_attack","count":688,"correct":682,"accuracy":0.9913,"errors":6,"avg_pos_error":0.58,"change_count":14,"change_correct":10,"change_accuracy":0.7143},{"action_id":368,"action_name":"SHINE_RELEASE_AIR","category":"special","count":125,"correct":119,"accuracy":0.952,"errors":6,"avg_pos_error":1.38,"change_count":7,"change_correct":1,"change_accuracy":0.1429},{"action_id":82,"action_name":"DAMAGE_LOW_2","category":"damage","count":62,"correct":56,"accuracy":0.9032,"errors":6,"avg_pos_error":0.81,"change_count":5,"change_correct":0,"change_accuracy":0.0},{"action_id":51,"action_name":"FTILT_HIGH","category":"ground_attack","count":196,"correct":190,"accuracy":0.9694,"errors":6,"avg_pos_error":0.52,"change_count":6,"change_correct":0,"change_accuracy":0.0},{"action_id":364,"action_name":"SHINE_TURN","category":"special","count":400,"correct":394,"accuracy":0.985,"errors":6,"avg_pos_error":0.51,"change_count":11,"change_correct":7,"change_accuracy":0.6364},{"action_id":366,"action_name":"DOWN_B_AIR","category":"special","count":218,"correct":213,"accuracy":0.9771,"errors":5,"avg_pos_error":0.78,"change_count":40,"change_correct":36,"change_accuracy":0.9},{"action_id":221,"action_name":"THROW_UP","category":"grab","count":395,"correct":390,"accuracy":0.9873,"errors":5,"avg_pos_error":0.57,"change_count":10,"change_correct":6,"change_accuracy":0.6},{"action_id":201,"action_name":"BACKWARD_TECH","category":"other","count":280,"correct":275,"accuracy":0.9821,"errors":5,"avg_pos_error":1.24,"change_count":7,"change_correct":2,"change_accuracy":0.2857},{"action_id":222,"action_name":"THROW_DOWN","category":"grab","count":378,"correct":373,"accuracy":0.9868,"errors":5,"avg_pos_error":0.44,"change_count":11,"change_correct":6,"change_accuracy":0.5455},{"action_id":242,"action_name":"THROWN_DOWN","category":"grab","count":182,"correct":177,"accuracy":0.9725,"errors":5,"avg_pos_error":3.69,"change_count":11,"change_correct":6,"change_accuracy":0.5455},{"action_id":347,"action_name":"NEUTRAL_B_ATTACKING_AIR","category":"special","count":225,"correct":220,"accuracy":0.9778,"errors":5,"avg_pos_error":0.61,"change_count":5,"change_correct":1,"change_accuracy":0.2},{"action_id":361,"action_name":"DOWN_B_GROUND","category":"special","count":168,"correct":164,"accuracy":0.9762,"errors":4,"avg_pos_error":0.53,"change_count":48,"change_correct":46,"change_accuracy":0.9583},{"action_id":239,"action_name":"THROWN_FORWARD","category":"grab","count":54,"correct":50,"accuracy":0.9259,"errors":4,"avg_pos_error":2.04,"change_count":4,"change_correct":0,"change_accuracy":0.0},{"action_id":240,"action_name":"THROWN_BACK","category":"grab","count":34,"correct":30,"accuracy":0.8824,"errors":4,"avg_pos_error":2.95,"change_count":4,"change_correct":0,"change_accuracy":0.0},{"action_id":220,"action_name":"THROW_BACK","category":"grab","count":151,"correct":147,"accuracy":0.9735,"errors":4,"avg_pos_error":0.73,"change_count":4,"change_correct":0,"change_accuracy":0.0},{"action_id":241,"action_name":"THROWN_UP","category":"grab","count":108,"correct":104,"accuracy":0.963,"errors":4,"avg_pos_error":2.04,"change_count":10,"change_correct":6,"change_accuracy":0.6},{"action_id":260,"action_name":"EDGE_JUMP_1_SLOW","category":"edge","count":76,"correct":72,"accuracy":0.9474,"errors":4,"avg_pos_error":1.29,"change_count":4,"change_correct":0,"change_accuracy":0.0},{"action_id":238,"action_name":"REBOUND","category":"other","count":73,"correct":69,"accuracy":0.9452,"errors":4,"avg_pos_error":0.81,"change_count":6,"change_correct":3,"change_accuracy":0.5},{"action_id":1,"action_name":"DEAD_LEFT","category":"other","count":240,"correct":236,"accuracy":0.9833,"errors":4,"avg_pos_error":2.7,"change_count":4,"change_correct":0,"change_accuracy":0.0},{"action_id":4,"action_name":"DEAD_FLY_STAR","category":"other","count":528,"correct":524,"accuracy":0.9924,"errors":4,"avg_pos_error":0.67,"change_count":3,"change_correct":0,"change_accuracy":0.0},{"action_id":223,"action_name":"GRAB_PULLING_HIGH","category":"grab","count":7,"correct":3,"accuracy":0.4286,"errors":4,"avg_pos_error":9.1,"change_count":2,"change_correct":0,"change_accuracy":0.0},{"action_id":193,"action_name":"DAMAGE_GROUND","category":"other","count":46,"correct":42,"accuracy":0.913,"errors":4,"avg_pos_error":0.99,"change_count":3,"change_correct":0,"change_accuracy":0.0},{"action_id":257,"action_name":"EDGE_ATTACK_QUICK","category":"edge","count":54,"correct":50,"accuracy":0.9259,"errors":4,"avg_pos_error":1.39,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":216,"action_name":"GRAB_WAIT","category":"grab","count":143,"correct":140,"accuracy":0.979,"errors":3,"avg_pos_error":0.39,"change_count":30,"change_correct":28,"change_accuracy":0.9333},{"action_id":219,"action_name":"THROW_FORWARD","category":"grab","count":140,"correct":137,"accuracy":0.9786,"errors":3,"avg_pos_error":0.6,"change_count":4,"change_correct":1,"change_accuracy":0.25},{"action_id":40,"action_name":"CROUCHING","category":"movement","count":371,"correct":368,"accuracy":0.9919,"errors":3,"avg_pos_error":0.57,"change_count":61,"change_correct":58,"change_accuracy":0.9508},{"action_id":50,"action_name":"DASH_ATTACK","category":"ground_attack","count":844,"correct":841,"accuracy":0.9964,"errors":3,"avg_pos_error":0.76,"change_count":23,"change_correct":23,"change_accuracy":1.0},{"action_id":44,"action_name":"NEUTRAL_ATTACK_1","category":"ground_attack","count":320,"correct":317,"accuracy":0.9906,"errors":3,"avg_pos_error":0.58,"change_count":20,"change_correct":20,"change_accuracy":1.0},{"action_id":45,"action_name":"NEUTRAL_ATTACK_2","category":"ground_attack","count":110,"correct":107,"accuracy":0.9727,"errors":3,"avg_pos_error":0.7,"change_count":7,"change_correct":4,"change_accuracy":0.5714},{"action_id":57,"action_name":"DOWNTILT","category":"ground_attack","count":347,"correct":344,"accuracy":0.9914,"errors":3,"avg_pos_error":0.48,"change_count":18,"change_correct":18,"change_accuracy":1.0},{"action_id":58,"action_name":"FSMASH_HIGH","category":"ground_attack","count":142,"correct":139,"accuracy":0.9789,"errors":3,"avg_pos_error":0.46,"change_count":3,"change_correct":0,"change_accuracy":0.0},{"action_id":112,"action_name":"ITEM_THROW_LIGHT_AIR_SMASH_FORWARD","category":"other","count":45,"correct":42,"accuracy":0.9333,"errors":3,"avg_pos_error":0.88,"change_count":3,"change_correct":0,"change_accuracy":0.0},{"action_id":363,"action_name":"SWORD_DANCE_3_LOW_AIR","category":"special","count":76,"correct":73,"accuracy":0.9605,"errors":3,"avg_pos_error":1.22,"change_count":3,"change_correct":0,"change_accuracy":0.0},{"action_id":182,"action_name":"SHIELD_REFLECT","category":"shield_dodge","count":265,"correct":263,"accuracy":0.9925,"errors":2,"avg_pos_error":0.6,"change_count":49,"change_correct":48,"change_accuracy":0.9796},{"action_id":365,"action_name":"DOWN_B_STUN","category":"special","count":381,"correct":379,"accuracy":0.9948,"errors":2,"avg_pos_error":1.01,"change_count":54,"change_correct":52,"change_accuracy":0.963},{"action_id":197,"action_name":"GROUND_ROLL_BACKWARD_DOWN","category":"other","count":280,"correct":278,"accuracy":0.9929,"errors":2,"avg_pos_error":0.85,"change_count":8,"change_correct":7,"change_accuracy":0.875},{"action_id":259,"action_name":"EDGE_ROLL_QUICK","category":"edge","count":147,"correct":145,"accuracy":0.9864,"errors":2,"avg_pos_error":1.21,"change_count":3,"change_correct":1,"change_accuracy":0.3333},{"action_id":81,"action_name":"DAMAGE_LOW_1","category":"damage","count":23,"correct":21,"accuracy":0.913,"errors":2,"avg_pos_error":1.07,"change_count":2,"change_correct":0,"change_accuracy":0.0},{"action_id":186,"action_name":"GROUND_GETUP","category":"other","count":328,"correct":326,"accuracy":0.9939,"errors":2,"avg_pos_error":0.56,"change_count":11,"change_correct":9,"change_accuracy":0.8182},{"action_id":109,"action_name":"ITEM_THROW_LIGHT_SMASH_BACK","category":"other","count":46,"correct":44,"accuracy":0.9565,"errors":2,"avg_pos_error":0.49,"change_count":2,"change_correct":0,"change_accuracy":0.0},{"action_id":115,"action_name":"ITEM_THROW_LIGHT_AIR_SMASH_LOW","category":"other","count":46,"correct":44,"accuracy":0.9565,"errors":2,"avg_pos_error":1.95,"change_count":2,"change_correct":0,"change_accuracy":0.0},{"action_id":108,"action_name":"ITEM_THROW_LIGHT_SMASH_FORWARD","category":"other","count":47,"correct":45,"accuracy":0.9574,"errors":2,"avg_pos_error":0.96,"change_count":3,"change_correct":1,"change_accuracy":0.3333},{"action_id":254,"action_name":"EDGE_GETUP_SLOW","category":"edge","count":117,"correct":115,"accuracy":0.9829,"errors":2,"avg_pos_error":0.52,"change_count":2,"change_correct":0,"change_accuracy":0.0},{"action_id":263,"action_name":"EDGE_JUMP_2_QUICK","category":"edge","count":83,"correct":81,"accuracy":0.9759,"errors":2,"avg_pos_error":1.13,"change_count":3,"change_correct":1,"change_accuracy":0.3333},{"action_id":246,"action_name":"EDGE_TEETERING","category":"edge","count":29,"correct":27,"accuracy":0.931,"errors":2,"avg_pos_error":0.57,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":356,"action_name":"SWORD_DANCE_4_MID","category":"special","count":495,"correct":494,"accuracy":0.998,"errors":1,"avg_pos_error":1.92,"change_count":21,"change_correct":20,"change_accuracy":0.9524},{"action_id":358,"action_name":"SWORD_DANCE_1_AIR","category":"special","count":106,"correct":105,"accuracy":0.9906,"errors":1,"avg_pos_error":1.26,"change_count":9,"change_correct":9,"change_accuracy":1.0},{"action_id":351,"action_name":"SWORD_DANCE_2_MID","category":"special","count":56,"correct":55,"accuracy":0.9821,"errors":1,"avg_pos_error":10.46,"change_count":16,"change_correct":16,"change_accuracy":1.0},{"action_id":253,"action_name":"EDGE_HANGING","category":"edge","count":652,"correct":651,"accuracy":0.9985,"errors":1,"avg_pos_error":0.55,"change_count":50,"change_correct":50,"change_accuracy":1.0},{"action_id":6,"action_name":"DEAD_FLY","category":"other","count":51,"correct":50,"accuracy":0.9804,"errors":1,"avg_pos_error":2.21,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":7,"action_name":"DEAD_FLY_SPLATTER","category":"other","count":78,"correct":77,"accuracy":0.9872,"errors":1,"avg_pos_error":3.48,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":194,"action_name":"NEUTRAL_GETUP","category":"other","count":119,"correct":118,"accuracy":0.9916,"errors":1,"avg_pos_error":0.7,"change_count":4,"change_correct":3,"change_accuracy":0.75},{"action_id":55,"action_name":"FTILT_LOW","category":"ground_attack","count":26,"correct":25,"accuracy":0.9615,"errors":1,"avg_pos_error":0.66,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":189,"action_name":"GROUND_ROLL_BACKWARD_UP","category":"other","count":35,"correct":34,"accuracy":0.9714,"errors":1,"avg_pos_error":0.77,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":214,"action_name":"GRAB_RUNNING","category":"grab","count":77,"correct":76,"accuracy":0.987,"errors":1,"avg_pos_error":0.94,"change_count":9,"change_correct":8,"change_accuracy":0.8889},{"action_id":113,"action_name":"ITEM_THROW_LIGHT_AIR_SMASH_BACK","category":"other","count":23,"correct":22,"accuracy":0.9565,"errors":1,"avg_pos_error":1.5,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":215,"action_name":"GRAB_RUNNING_PULLING","category":"grab","count":3,"correct":2,"accuracy":0.6667,"errors":1,"avg_pos_error":0.52,"change_count":3,"change_correct":2,"change_accuracy":0.6667},{"action_id":94,"action_name":"ITEM_THROW_LIGHT_FORWARD","category":"other","count":23,"correct":22,"accuracy":0.9565,"errors":1,"avg_pos_error":1.25,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":98,"action_name":"ITEM_THROW_LIGHT_DASH","category":"other","count":39,"correct":38,"accuracy":0.9744,"errors":1,"avg_pos_error":1.11,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":83,"action_name":"DAMAGE_LOW_3","category":"damage","count":29,"correct":28,"accuracy":0.9655,"errors":1,"avg_pos_error":0.63,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":203,"action_name":"WALL_TECH_JUMP","category":"other","count":15,"correct":14,"accuracy":0.9333,"errors":1,"avg_pos_error":1.95,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":218,"action_name":"GRAB_BREAK","category":"grab","count":29,"correct":28,"accuracy":0.9655,"errors":1,"avg_pos_error":0.43,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":229,"action_name":"GRAB_ESCAPE","category":"grab","count":29,"correct":28,"accuracy":0.9655,"errors":1,"avg_pos_error":0.71,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":262,"action_name":"EDGE_JUMP_1_QUICK","category":"edge","count":40,"correct":39,"accuracy":0.975,"errors":1,"avg_pos_error":0.95,"change_count":3,"change_correct":3,"change_accuracy":1.0},{"action_id":359,"action_name":"SWORD_DANCE_2_HIGH_AIR","category":"special","count":14,"correct":13,"accuracy":0.9286,"errors":1,"avg_pos_error":2.84,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":195,"action_name":"GETUP_ATTACK","category":"other","count":41,"correct":40,"accuracy":0.9756,"errors":1,"avg_pos_error":0.71,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":62,"action_name":"FSMASH_LOW","category":"ground_attack","count":63,"correct":62,"accuracy":0.9841,"errors":1,"avg_pos_error":0.87,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":188,"action_name":"GROUND_ROLL_FORWARD_UP","category":"other","count":30,"correct":29,"accuracy":0.9667,"errors":1,"avg_pos_error":1.01,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":187,"action_name":"GROUND_ATTACK_UP","category":"other","count":30,"correct":29,"accuracy":0.9667,"errors":1,"avg_pos_error":0.48,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":355,"action_name":"SWORD_DANCE_4_HIGH","category":"special","count":18,"correct":17,"accuracy":0.9444,"errors":1,"avg_pos_error":0.5,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":275,"action_name":"CAPTURE_CAPTAIN","category":"other","count":18,"correct":17,"accuracy":0.9444,"errors":1,"avg_pos_error":0.77,"change_count":1,"change_correct":0,"change_accuracy":0.0},{"action_id":322,"action_name":"ENTRY","category":"other","count":60,"correct":60,"accuracy":1.0,"errors":0,"avg_pos_error":0.5,"change_count":0,"change_correct":0,"change_accuracy":null},{"action_id":360,"action_name":"DOWN_B_GROUND_START","category":"special","count":277,"correct":277,"accuracy":1.0,"errors":0,"avg_pos_error":0.6,"change_count":56,"change_correct":56,"change_accuracy":1.0},{"action_id":227,"action_name":"GRABBED","category":"grab","count":197,"correct":197,"accuracy":1.0,"errors":0,"avg_pos_error":0.72,"change_count":30,"change_correct":30,"change_accuracy":1.0},{"action_id":217,"action_name":"GRAB_PUMMEL","category":"grab","count":161,"correct":161,"accuracy":1.0,"errors":0,"avg_pos_error":0.48,"change_count":6,"change_correct":6,"change_accuracy":1.0},{"action_id":196,"action_name":"GROUND_ROLL_FORWARD_DOWN","category":"other","count":140,"correct":140,"accuracy":1.0,"errors":0,"avg_pos_error":0.81,"change_count":4,"change_correct":4,"change_accuracy":1.0},{"action_id":261,"action_name":"EDGE_JUMP_2_SLOW","category":"edge","count":99,"correct":99,"accuracy":1.0,"errors":0,"avg_pos_error":1.81,"change_count":4,"change_correct":4,"change_accuracy":1.0},{"action_id":13,"action_name":"ON_HALO_WAIT","category":"other","count":194,"correct":194,"accuracy":1.0,"errors":0,"avg_pos_error":0.63,"change_count":20,"change_correct":20,"change_accuracy":1.0},{"action_id":184,"action_name":"LYING_GROUND_UP","category":"other","count":14,"correct":14,"accuracy":1.0,"errors":0,"avg_pos_error":0.45,"change_count":3,"change_correct":3,"change_accuracy":1.0},{"action_id":192,"action_name":"LYING_GROUND_DOWN","category":"other","count":46,"correct":46,"accuracy":1.0,"errors":0,"avg_pos_error":0.33,"change_count":2,"change_correct":2,"change_accuracy":1.0},{"action_id":349,"action_name":"SWORD_DANCE_1","category":"special","count":26,"correct":26,"accuracy":1.0,"errors":0,"avg_pos_error":2.12,"change_count":1,"change_correct":1,"change_accuracy":1.0},{"action_id":19,"action_name":"TURNING_RUN","category":"movement","count":4,"correct":4,"accuracy":1.0,"errors":0,"avg_pos_error":0.93,"change_count":1,"change_correct":1,"change_accuracy":1.0}],"by_category":{"idle":{"count":4209,"correct":4089,"accuracy":0.9715,"change_count":623,"change_accuracy":0.8186,"avg_pos_error":0.49},"movement":{"count":10939,"correct":9819,"accuracy":0.8976,"change_count":2290,"change_accuracy":0.5555,"avg_pos_error":0.79},"aerial":{"count":27194,"correct":26510,"accuracy":0.9748,"change_count":3139,"change_accuracy":0.8165,"avg_pos_error":1.0},"ground_attack":{"count":6914,"correct":6827,"accuracy":0.9874,"change_count":215,"change_accuracy":0.7349,"avg_pos_error":0.59},"aerial_attack":{"count":15909,"correct":15375,"accuracy":0.9664,"change_count":939,"change_accuracy":0.5367,"avg_pos_error":1.02},"damage":{"count":15306,"correct":14888,"accuracy":0.9727,"change_count":499,"change_accuracy":0.2405,"avg_pos_error":1.3},"shield_dodge":{"count":8952,"correct":8671,"accuracy":0.9686,"change_count":988,"change_accuracy":0.7834,"avg_pos_error":0.77},"grab":{"count":3370,"correct":3285,"accuracy":0.9748,"change_count":251,"change_accuracy":0.7888,"avg_pos_error":0.88},"edge":{"count":2023,"correct":1946,"accuracy":0.9619,"change_count":146,"change_accuracy":0.5685,"avg_pos_error":1.09},"special":{"count":12428,"correct":12217,"accuracy":0.983,"change_count":883,"change_accuracy":0.8211,"avg_pos_error":0.95},"other":{"count":9418,"correct":9190,"accuracy":0.9758,"avg_pos_error":1.86}},"by_time_bucket":[{"bucket":"0-10%","action_accuracy":0.9634,"on_ground_accuracy":0.7677,"avg_pos_error":0.85,"num_frames":11670},{"bucket":"10-20%","action_accuracy":0.9665,"on_ground_accuracy":0.7481,"avg_pos_error":0.96,"num_frames":11662},{"bucket":"20-30%","action_accuracy":0.9645,"on_ground_accuracy":0.7558,"avg_pos_error":1.19,"num_frames":11668},{"bucket":"30-40%","action_accuracy":0.9686,"on_ground_accuracy":0.7847,"avg_pos_error":1.0,"num_frames":11664},{"bucket":"40-50%","action_accuracy":0.9679,"on_ground_accuracy":0.7717,"avg_pos_error":1.08,"num_frames":11666},{"bucket":"50-60%","action_accuracy":0.9666,"on_ground_accuracy":0.7896,"avg_pos_error":1.05,"num_frames":11664},{"bucket":"60-70%","action_accuracy":0.9687,"on_ground_accuracy":0.8216,"avg_pos_error":1.01,"num_frames":11668},{"bucket":"70-80%","action_accuracy":0.9672,"on_ground_accuracy":0.7573,"avg_pos_error":1.05,"num_frames":11664},{"bucket":"80-90%","action_accuracy":0.9686,"on_ground_accuracy":0.7938,"avg_pos_error":1.01,"num_frames":11666},{"bucket":"90-100%","action_accuracy":0.9685,"on_ground_accuracy":0.7883,"avg_pos_error":1.05,"num_frames":11670}],"binary_flags":{"on_ground":{"tp":28122,"fp":245,"fn":25670,"tn":62625,"precision":0.9914,"recall":0.5228,"f1":0.6846,"accuracy":0.7779},"facing":{"tp":28766,"fp":134,"fn":27788,"tn":59974,"precision":0.9954,"recall":0.5086,"f1":0.6733,"accuracy":0.7607},"invulnerable":{"tp":0,"fp":0,"fn":0,"tn":116662,"precision":0.0,"recall":0.0,"f1":0.0,"accuracy":1.0}},"position_error_distribution":[{"bin":"[0,1)","count":76854},{"bin":"[1,2)","count":30354},{"bin":"[2,3)","count":5800},{"bin":"[3,5)","count":2715},{"bin":"[5,10)","count":848},{"bin":"[10,20)","count":62},{"bin":"[20+)","count":29}],"per_game":[{"game_path":"1296cbf86e19db3ed20911485f839ea6","num_frames":14356,"num_predicted":14346,"stage":28,"p0_char":22,"p1_char":22,"action_acc":0.9686,"change_acc":0.7405,"num_changes":3040,"avg_pos_error":1.17},{"game_path":"cdf7e38301214596168b363aeb4ffb0c","num_frames":11666,"num_predicted":11656,"stage":2,"p0_char":21,"p1_char":9,"action_acc":0.9681,"change_acc":0.6748,"num_changes":1885,"avg_pos_error":0.92},{"game_path":"0a540c230267ef0b3638444f7d32120e","num_frames":14514,"num_predicted":14504,"stage":2,"p0_char":13,"p1_char":14,"action_acc":0.9635,"change_acc":0.5926,"num_changes":2182,"avg_pos_error":0.94},{"game_path":"bd1accad0b8db0aa0102f64052475fc0","num_frames":8185,"num_predicted":8175,"stage":2,"p0_char":22,"p1_char":1,"action_acc":0.9659,"change_acc":0.7154,"num_changes":1732,"avg_pos_error":1.1},{"game_path":"e53b5eed963835718315e9467d607d54","num_frames":9660,"num_predicted":9650,"stage":8,"p0_char":2,"p1_char":1,"action_acc":0.9698,"change_acc":0.6715,"num_changes":1522,"avg_pos_error":1.01}]};
+
+function accClass(v) { return v >= 0.8 ? 'acc-good' : v >= 0.5 ? 'acc-mid' : 'acc-bad'; }
+function pct(v) { return v != null ? (v * 100).toFixed(1) + '%' : 'N/A'; }
+function fmt(v, d=2) { return v != null ? v.toFixed(d) : 'N/A'; }
+
+// Header
+document.getElementById('header').innerHTML =
+  '<span style="font-size:18px;font-weight:700;color:var(--accent)">' + DATA.meta.model_name + '</span>' +
+  '<span class="tag tag-arch">' + DATA.meta.arch + '</span>' +
+  '<span class="tag tag-arch">K=' + DATA.meta.context_len + '</span>' +
+  '<span class="tag tag-games">' + DATA.meta.num_games + ' games</span>' +
+  '<span class="tag tag-games">' + DATA.summary.total_frames.toLocaleString() + ' frames</span>' +
+  '<span class="tag tag-time">' + DATA.meta.timestamp + '</span>';
+
+// Summary cards
+var s = DATA.summary;
+var cardData = [
+  { value: pct(s.action_accuracy), label: 'Action Accuracy', color: accClass(s.action_accuracy) },
+  { value: pct(s.change_accuracy), label: 'Change Accuracy', color: s.change_accuracy != null ? accClass(s.change_accuracy) : '' },
+  { value: pct(s.on_ground_accuracy), label: 'On Ground Acc', color: accClass(s.on_ground_accuracy) },
+  { value: fmt(s.avg_pos_error), label: 'Avg Pos Error', color: s.avg_pos_error < 2 ? 'acc-good' : 'acc-bad' },
+  { value: s.total_frames.toLocaleString(), label: 'Total Frames', color: '' },
+  { value: s.total_changes.toLocaleString(), label: 'Action Changes', color: '' },
+];
+document.getElementById('summary-cards').innerHTML = cardData.map(function(c) {
+  return '<div class="card"><div class="value ' + c.color + '">' + c.value + '</div><div class="label">' + c.label + '</div></div>';
+}).join('');
+
+// Insight box
+var og = DATA.binary_flags.on_ground;
+var topActions = DATA.by_action.slice(0, 5).map(function(a) {
+  return a.action_name + ' (' + a.errors + ' errors, ' + pct(a.accuracy) + ')';
+}).join(', ');
+document.getElementById('insight-box').innerHTML =
+  '<h2>Key Findings</h2>' +
+  '<div class="insight"><strong>on_ground recall crisis:</strong> Precision ' + pct(og.precision) +
+  ' vs recall ' + pct(og.recall) + '. The model almost never falsely predicts grounded (' +
+  og.fp.toLocaleString() + ' FP), but misses ' + og.fn.toLocaleString() +
+  ' frames where the character IS on the ground. In autoregressive mode, this one-directional bias compounds: ' +
+  'once the model predicts airborne, context reinforces it, locking characters into permanent falling states.</div>' +
+  '<div class="insight" style="margin-top:8px"><strong>Worst actions by error count:</strong> ' +
+  topActions + '. Movement transitions and aerial states dominate errors.</div>';
+
+// Time chart
+(function() {
+  var buckets = DATA.by_time_bucket;
+  var canvas = document.getElementById('time-chart');
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+  var pad = { left: 60, right: 40, top: 30, bottom: 40 };
+  var plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#14141f'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#2a2a3e'; ctx.lineWidth = 0.5;
+  for (var i = 0; i <= 10; i++) {
+    var y = pad.top + plotH * (1 - i / 10);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+  }
+  ctx.fillStyle = '#8888a0'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+  for (var i = 0; i <= 10; i += 2) {
+    ctx.fillText((i * 10) + '%', pad.left - 8, pad.top + plotH * (1 - i / 10) + 4);
+  }
+  ctx.textAlign = 'center';
+  buckets.forEach(function(b, i) {
+    ctx.fillStyle = '#8888a0';
+    ctx.fillText(b.bucket, pad.left + (i + 0.5) * (plotW / buckets.length), H - 8);
+  });
+
+  var series = [{key:'action_accuracy',color:'#4488ff'},{key:'on_ground_accuracy',color:'#44cc88'}];
+  series.forEach(function(s) {
+    ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.beginPath();
+    buckets.forEach(function(b, i) {
+      var x = pad.left + (i + 0.5) * (plotW / buckets.length);
+      var y = pad.top + plotH * (1 - b[s.key]);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.fillStyle = s.color;
+    buckets.forEach(function(b, i) {
+      var x = pad.left + (i + 0.5) * (plotW / buckets.length);
+      var y = pad.top + plotH * (1 - b[s.key]);
+      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    });
+  });
+
+  var posErrors = buckets.map(function(b) { return b.avg_pos_error; });
+  var maxPE = Math.max.apply(null, posErrors.concat([1]));
+  ctx.strokeStyle = '#ff6644'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]); ctx.beginPath();
+  buckets.forEach(function(b, i) {
+    var x = pad.left + (i + 0.5) * (plotW / buckets.length);
+    var y = pad.top + plotH * (1 - b.avg_pos_error / maxPE);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#ff6644'; ctx.textAlign = 'left';
+  for (var i = 0; i <= 4; i++) ctx.fillText((maxPE * i / 4).toFixed(1), W - pad.right + 4, pad.top + plotH * (1 - i / 4) + 4);
+
+  var lx = pad.left + 10;
+  [{color:'#4488ff',label:'Action Acc',dash:false},{color:'#44cc88',label:'On Ground Acc',dash:false},{color:'#ff6644',label:'Pos Error (right)',dash:true}].forEach(function(l) {
+    ctx.strokeStyle = l.color; ctx.fillStyle = l.color; ctx.lineWidth = 2;
+    if (l.dash) ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(lx, pad.top + 12); ctx.lineTo(lx + 20, pad.top + 12); ctx.stroke();
+    ctx.setLineDash([]); ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(l.label, lx + 24, pad.top + 15);
+    lx += ctx.measureText(l.label).width + 50;
+  });
+})();
+
+// Sortable table
+function makeSortableTable(id, cols, rows, defSort, defDir) {
+  var el = document.getElementById(id);
+  var sortCol = defSort, sortDir = defDir || 'desc';
+  function render() {
+    var sorted = rows.slice().sort(function(a, b) {
+      var av = a[sortCol], bv = b[sortCol];
+      if (av == null && bv == null) return 0; if (av == null) return 1; if (bv == null) return -1;
+      return sortDir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+    });
+    var h = '<table><thead><tr>';
+    cols.forEach(function(c) {
+      var cls = sortCol === c.key ? (sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc') : '';
+      h += '<th class="' + cls + '" data-key="' + c.key + '">' + c.label + '</th>';
+    });
+    h += '</tr></thead><tbody>';
+    sorted.forEach(function(row) {
+      h += '<tr>';
+      cols.forEach(function(c) {
+        var v = row[c.key], d = v, cls = c.numeric ? 'num' : '', cc = '';
+        if (c.format === 'pct') { d = pct(v); if (v != null) cc = accClass(v); }
+        else if (c.format === 'fixed2') d = fmt(v);
+        else if (v == null) d = '-';
+        else if (typeof v === 'number' && c.numeric) d = v.toLocaleString();
+        h += '<td class="' + cls + ' ' + cc + '">' + d + '</td>';
+      });
+      h += '</tr>';
+    });
+    h += '</tbody></table>';
+    el.innerHTML = h;
+    el.querySelectorAll('th').forEach(function(th) {
+      th.addEventListener('click', function() {
+        var k = th.dataset.key;
+        if (sortCol === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+        else { sortCol = k; sortDir = 'desc'; }
+        render();
+      });
+    });
+  }
+  render();
+}
+
+// Action table
+makeSortableTable('action-table-wrap', [
+  {key:'action_name',label:'Action',numeric:false},{key:'category',label:'Category',numeric:false},
+  {key:'errors',label:'Errors',numeric:true},{key:'count',label:'Count',numeric:true},
+  {key:'accuracy',label:'Accuracy',numeric:true,format:'pct'},{key:'avg_pos_error',label:'Pos Error',numeric:true,format:'fixed2'},
+  {key:'change_count',label:'Changes',numeric:true},{key:'change_accuracy',label:'Change Acc',numeric:true,format:'pct'},
+], DATA.by_action, 'errors', 'desc');
+
+// Category table
+var catRows = Object.keys(DATA.by_category).map(function(k) {
+  var v = DATA.by_category[k]; v.category = k; return v;
+});
+makeSortableTable('category-table-wrap', [
+  {key:'category',label:'Category',numeric:false},{key:'count',label:'Count',numeric:true},
+  {key:'accuracy',label:'Accuracy',numeric:true,format:'pct'},{key:'change_count',label:'Changes',numeric:true},
+  {key:'change_accuracy',label:'Change Acc',numeric:true,format:'pct'},{key:'avg_pos_error',label:'Pos Error',numeric:true,format:'fixed2'},
+], catRows, 'count', 'desc');
+
+// Binary flags
+var bg = document.getElementById('binary-grid');
+Object.keys(DATA.binary_flags).forEach(function(name) {
+  var d = DATA.binary_flags[name];
+  var box = document.createElement('div'); box.className = 'confusion-box';
+  box.innerHTML = '<h3>' + name + '</h3>' +
+    '<div class="cm-grid">' +
+    '<div class="cm-cell cm-header"></div><div class="cm-cell cm-header">Pred True</div><div class="cm-cell cm-header">Pred False</div>' +
+    '<div class="cm-cell cm-header">Act True</div><div class="cm-cell cm-tp">' + d.tp.toLocaleString() + '</div><div class="cm-cell cm-fn">' + d.fn.toLocaleString() + '</div>' +
+    '<div class="cm-cell cm-header">Act False</div><div class="cm-cell cm-fp">' + d.fp.toLocaleString() + '</div><div class="cm-cell cm-tn">' + d.tn.toLocaleString() + '</div>' +
+    '</div>' +
+    '<div class="cm-metrics">' +
+    '<span>Prec: <span class="val">' + pct(d.precision) + '</span></span>' +
+    '<span>Rec: <span class="val">' + pct(d.recall) + '</span></span>' +
+    '<span>F1: <span class="val">' + pct(d.f1) + '</span></span>' +
+    '<span>Acc: <span class="val">' + pct(d.accuracy) + '</span></span>' +
+    '</div>';
+  bg.appendChild(box);
+});
+
+// Pos histogram
+(function() {
+  var dist = DATA.position_error_distribution;
+  var canvas = document.getElementById('pos-hist-chart');
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+  var pad = { left: 60, right: 20, top: 20, bottom: 40 };
+  var plotW = W - pad.left - pad.right, plotH = H - pad.top - pad.bottom;
+  ctx.fillStyle = '#14141f'; ctx.fillRect(0, 0, W, H);
+  var maxC = Math.max.apply(null, dist.map(function(d) { return d.count; }).concat([1]));
+  var barW = plotW / dist.length * 0.7, gap = plotW / dist.length * 0.3;
+  ctx.strokeStyle = '#2a2a3e'; ctx.lineWidth = 0.5;
+  for (var i = 0; i <= 5; i++) {
+    var y = pad.top + plotH * (1 - i / 5);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#8888a0'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxC * i / 5).toLocaleString(), pad.left - 8, y + 4);
+  }
+  dist.forEach(function(d, i) {
+    var x = pad.left + i * (plotW / dist.length) + gap / 2;
+    var h = (d.count / maxC) * plotH, y = pad.top + plotH - h;
+    var g = ctx.createLinearGradient(x, y, x, pad.top + plotH);
+    g.addColorStop(0, '#8866ff'); g.addColorStop(1, 'rgba(136,102,255,0.3)');
+    ctx.fillStyle = g; ctx.fillRect(x, y, barW, h);
+    ctx.fillStyle = '#8888a0'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(d.bin, x + barW / 2, H - 8);
+    if (d.count > 0) { ctx.fillStyle = '#e0e0e8'; ctx.fillText(d.count.toLocaleString(), x + barW / 2, y - 6); }
+  });
+})();
+
+// Per-game (collapsible)
+var toggle = document.getElementById('per-game-toggle');
+var content = document.getElementById('per-game-content');
+toggle.addEventListener('click', function() { toggle.classList.toggle('open'); content.classList.toggle('open'); });
+makeSortableTable('per-game-content', [
+  {key:'game_path',label:'Game',numeric:false},{key:'num_predicted',label:'Frames',numeric:true},
+  {key:'stage',label:'Stage',numeric:true},{key:'action_acc',label:'Action Acc',numeric:true,format:'pct'},
+  {key:'change_acc',label:'Change Acc',numeric:true,format:'pct'},{key:'num_changes',label:'Changes',numeric:true},
+  {key:'avg_pos_error',label:'Pos Error',numeric:true,format:'fixed2'},
+], DATA.per_game.map(function(g) { return Object.assign({}, g, {game_path: g.game_path.substring(0, 16) + '...'}); }), 'action_acc', 'asc');
+</script>
+</body>
+</html>
