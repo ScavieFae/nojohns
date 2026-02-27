@@ -6,7 +6,48 @@
 
 ---
 
-## Current: Projectile Extraction Unblocked (Feb 26, late)
+## Current: Parser v3 Implemented (Feb 26, late night)
+
+### What changed
+
+Commits `9aafe5f` (demo harness) and `2476e10` (parser v3) — **10 files, ~1100 insertions.**
+
+Parser v3 fixes two critical bugs and adds three new feature groups:
+
+**Bug fixes:**
+1. **Stage always 0** (#40): `build_dataset.py` now reads `stage_id` from `game.start.stage` and passes it through to parquet. The model can finally learn stage-specific physics.
+2. **Invulnerable always False** (#41): Was `np.zeros(...)`. Now derived from `hurtbox_state != 0`. Model can learn invulnerability frames on respawn, shields, etc.
+
+**New features (all behind flags, backward compatible):**
+- **state_flags** (`cfg.state_flags=True`): Explodes all 40 bits from 5 state_flags bytes as binary features. `binary_dim` goes 3→43, `predicted_binary_dim` 6→86. Contains reflect, fastfall, shield, hitlag, sleep, hitstun, and more.
+- **hitstun_remaining** (`cfg.hitstun=True`): Recovered from `misc_as` via subnormal float→uint32 reinterpretation. Continuous feature scaled ×0.02.
+- **game_end_method + is_pal**: Game-level metadata stored in `ParsedGame`. Enables filtering incomplete/PAL games.
+
+**Config-driven dimensions:** `EncodingConfig` flags propagate through the entire pipeline:
+- `encoding.py`: binary_dim, predicted_binary_dim, dynamics_dim, float_per_player
+- `dataset.py`: config-driven target slicing
+- `metrics.py`: config-driven loss computation offsets (no more hardcoded `[:8]`, `[8:18]`, etc.)
+- `mlp.py` + `mamba2.py`: `binary_head` uses `cfg.predicted_binary_dim`
+
+**Backward compatible:** Old parsed-v2 data works via `_safe_field()` zero-fill. All 166 tests pass. Default EncodingConfig dimensions unchanged.
+
+### What this unblocks
+
+1. Re-parse 22K games → stage, invulnerable, state_flags, hitstun all populated
+2. Train with `state_flags=True` + `hitstun=True` for richer combat features
+3. Filter training data by `game_end_method` (drop NO_CONTEST disconnects)
+4. Demo harness enforces game rules (blast zone KO, respawn) — makes demos look clean
+
+### What ScavieFae should review
+
+1. **state_flags bit explosion** (`encoding.py:112-117`): We encode all 40 bits. 12 are dead (always 0). Is this fine, or should we prune to the 28 active bits? Cost is ~0.02% more parameters.
+2. **hitstun subnormal recovery** (`item_utils.py:extract_combat_context()`): misc_as stores small integers as subnormal floats (5.6e-45 = 4). We detect with `abs(x) < 1e-10 and x != 0`, reinterpret bytes as uint32. Is the threshold robust?
+3. **metrics.py config-driven offsets**: `_cont_end`, `_vel_end`, `_bin_end`, `_dyn_end` computed from config. Verify this matches the target tensor layout in `dataset.py`.
+4. **Demo harness** (`game_harness.py`): Blast zone detection, respawn logic, velocity clamping. Not load-bearing for training, but used in live demo.
+
+---
+
+## Projectile Extraction Unblocked (Feb 26, late)
 
 ### What changed
 
