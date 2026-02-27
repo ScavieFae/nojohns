@@ -52,7 +52,7 @@ def check_volume():
 
 
 @app.function(
-    gpu="H100:2",
+    gpu="H100",
     volumes={DATA_VOLUME_PATH: volume},
     image=image,
     timeout=86400,
@@ -525,14 +525,15 @@ def _encode_chunk(
     t_start = time.time()
     print(f"[Chunk {chunk_idx}] Starting — {len(entry_md5s)} games")
 
-    # Extract tar to local NVMe
+    # Extract tar to local NVMe — extract INTO named dir so paths match
     tar_path = f"{DATA_VOLUME_PATH}/{tar_name}"
     tar_stem = tar_name.replace(".tar", "")
     local_dir = f"/tmp/{tar_stem}"
     if not os.path.isdir(local_dir):
+        os.makedirs(local_dir, exist_ok=True)
         t0 = time.time()
         with tarfile.open(tar_path) as tar:
-            tar.extractall("/tmp")
+            tar.extractall(local_dir)
         print(f"[Chunk {chunk_idx}] Tar extracted in {time.time() - t0:.1f}s")
 
     # Load config + encoding
