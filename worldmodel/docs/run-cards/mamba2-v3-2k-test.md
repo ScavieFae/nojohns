@@ -157,8 +157,28 @@ Note: Baseline is the closest apples-to-apples comparison (same architecture, sa
 - `pre_encode.py` saves full resolved config for reproducibility
 - Timing/cost estimates reasonable
 
+## Incident Log
+
+### Attempt 1 — NaN loss (Feb 26, ~6:20 PM PT)
+
+**Symptom**: `loss=nan` at batch 1000. Training diverged.
+
+**Root cause**: 70 NaN values in `hitstun_remaining` (columns 12 and 84 = P0/P1 hitstun). The hitstun feature uses subnormal float recovery from raw replay data; some replays produce NaN when the source field is missing or corrupted. NaN propagates through the loss and poisons all gradients.
+
+**Fix**: `torch.nan_to_num(floats, nan=0.0)` on the encoded .pt file. Re-uploaded to Modal. Also need to fix the encoder to sanitize at encode time (not just post-hoc patching).
+
+**Prevention**: Added NaN/Inf audit step to pre-encode pipeline (TODO). The 12K encode and ScavieFae ranked parse should also be checked.
+
+### Attempt 2 — hardcoded shape check (Feb 26, ~6:10 PM PT)
+
+**Symptom**: `ValueError: float_tgt: got (112,), expected (30,)` at startup.
+
+**Root cause**: `trainer.py:187` had `float_tgt.shape != (30,)` hardcoded for baseline encoding. v3 encoding produces 112-dim float targets.
+
+**Fix**: Compute expected dim from `EncodingConfig` (core×2 + velocity×2 + binary×2 + dynamics×2). Committed in `713a17f`.
+
 ## Sign-off
 
-- [ ] Scav reviewed
+- [x] Scav reviewed
 - [ ] Mattie reviewed
 - [x] ScavieFae reviewed

@@ -85,18 +85,43 @@ def train(
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"CUDA: {torch.version.cuda}")
 
-    # Load pre-encoded data — single file, instant
-    encoded_path = f"{DATA_VOLUME_PATH}{encoded_file}"
-    if not os.path.exists(encoded_path):
-        raise FileNotFoundError(
-            f"No encoded data at {encoded_path}. "
-            "Pre-encode first: modal run worldmodel/scripts/modal_train.py::pre_encode"
-        )
+    # Load pre-encoded data — single file or multiple comma-separated files
+    encoded_files = [f.strip() for f in encoded_file.split(",")]
+    payloads = []
+    for ef in encoded_files:
+        ep = f"{DATA_VOLUME_PATH}{ef}"
+        if not os.path.exists(ep):
+            raise FileNotFoundError(
+                f"No encoded data at {ep}. "
+                "Pre-encode first: modal run worldmodel/scripts/modal_train.py::pre_encode"
+            )
+        print(f"Loading {ep}...")
+        t0 = time.time()
+        payloads.append(torch.load(ep, weights_only=False))
+        print(f"  Loaded in {time.time() - t0:.1f}s — {payloads[-1]['floats'].shape}")
 
-    print(f"Loading {encoded_path}...")
-    t0 = time.time()
-    payload = torch.load(encoded_path, weights_only=False)
-    print(f"Loaded in {time.time() - t0:.1f}s")
+    if len(payloads) == 1:
+        payload = payloads[0]
+    else:
+        # Merge multiple .pt files
+        print(f"Merging {len(payloads)} encoded files...")
+        all_floats = torch.cat([p["floats"] for p in payloads])
+        all_ints = torch.cat([p["ints"] for p in payloads])
+        all_lengths = []
+        for p in payloads:
+            all_lengths.extend(p["game_lengths"])
+        total_games = sum(p["num_games"] for p in payloads)
+        payload = {
+            "floats": all_floats,
+            "ints": all_ints,
+            "game_offsets": torch.tensor(np.cumsum([0] + all_lengths)),
+            "game_lengths": all_lengths,
+            "num_games": total_games,
+            "encoding_config": payloads[0].get("encoding_config", {}),
+        }
+        del payloads, all_floats, all_ints
+        import gc; gc.collect()
+
     print(f"  Floats: {payload['floats'].shape}")
     print(f"  Ints: {payload['ints'].shape}")
     print(f"  Games: {payload['num_games']}")
@@ -438,6 +463,8 @@ def _encode_chunk(
     entry_md5s: list[str],
     entry_compressions: list[str],
     config: str,
+    tar_name: str = "parsed-v2.tar",
+    chunk_prefix: str = "encode_chunks",
 ):
     """Encode a single chunk of games. Called in parallel by pre_encode_parallel."""
     import gc
@@ -457,8 +484,9 @@ def _encode_chunk(
     print(f"[Chunk {chunk_idx}] Starting — {len(entry_md5s)} games")
 
     # Extract tar to local NVMe
-    tar_path = f"{DATA_VOLUME_PATH}/parsed-v2.tar"
-    local_dir = "/tmp/parsed-v2"
+    tar_path = f"{DATA_VOLUME_PATH}/{tar_name}"
+    tar_stem = tar_name.replace(".tar", "")
+    local_dir = f"/tmp/{tar_stem}"
     if not os.path.isdir(local_dir):
         t0 = time.time()
         with tarfile.open(tar_path) as tar:
@@ -505,12 +533,20 @@ def _encode_chunk(
     ds = MeleeDataset(games, enc_cfg)
     print(f"[Chunk {chunk_idx}] Encoded {ds.num_games} games, {ds.total_frames:,} frames in {time.time() - t0:.1f}s")
 
+    # Sanitize NaN/Inf (hitstun_remaining can produce NaN from corrupted replays)
+    nan_count = torch.isnan(ds.floats).sum().item()
+    inf_count = torch.isinf(ds.floats).sum().item()
+    if nan_count > 0 or inf_count > 0:
+        print(f"[Chunk {chunk_idx}] WARNING: {nan_count} NaN, {inf_count} Inf — replacing with 0")
+        ds.floats = torch.nan_to_num(ds.floats, nan=0.0, posinf=0.0, neginf=0.0)
+
     del games
     gc.collect()
 
     # Save chunk to volume
-    chunk_path = f"{DATA_VOLUME_PATH}/encode_chunks/chunk_{chunk_idx:04d}.pt"
-    os.makedirs(f"{DATA_VOLUME_PATH}/encode_chunks", exist_ok=True)
+    chunk_dir = f"{DATA_VOLUME_PATH}/{chunk_prefix}"
+    chunk_path = f"{chunk_dir}/chunk_{chunk_idx:04d}.pt"
+    os.makedirs(chunk_dir, exist_ok=True)
     torch.save({"floats": ds.floats, "ints": ds.ints, "lengths": ds.game_lengths}, chunk_path)
     volume.commit()
 
@@ -539,6 +575,7 @@ def _concat_chunks(
     chunk_results: list[dict],
     output: str,
     enc_cfg_dict: dict,
+    chunk_prefix: str = "encode_chunks",
 ):
     """Concatenate encoded chunks into a single .pt file."""
     import gc
@@ -574,7 +611,7 @@ def _concat_chunks(
     volume.reload()  # Ensure we see chunks from other workers
 
     for i, r in enumerate(results):
-        chunk_path = f"{DATA_VOLUME_PATH}/encode_chunks/chunk_{r['chunk_idx']:04d}.pt"
+        chunk_path = f"{DATA_VOLUME_PATH}/{chunk_prefix}/chunk_{r['chunk_idx']:04d}.pt"
         chunk = torch.load(chunk_path, weights_only=False)
         n = chunk["floats"].shape[0]
         final_floats[offset:offset + n] = chunk["floats"]
@@ -587,15 +624,19 @@ def _concat_chunks(
 
     print(f"Assembly done in {time.time() - t0:.0f}s")
 
-    # Save final .pt
+    # Save final .pt with full resolved encoding config
     print("Saving final .pt...")
+    import dataclasses
+    from worldmodel.model.encoding import EncodingConfig
+    resolved_cfg = dataclasses.asdict(EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None}))
+
     payload = {
         "floats": final_floats,
         "ints": final_ints,
         "game_offsets": torch.tensor(np.cumsum([0] + all_lengths)),
         "game_lengths": all_lengths,
         "num_games": total_games,
-        "encoding_config": enc_cfg_dict,
+        "encoding_config": resolved_cfg,
     }
 
     output_path = f"{DATA_VOLUME_PATH}{output}"
@@ -608,7 +649,7 @@ def _concat_chunks(
 
     # Cleanup chunks
     for r in results:
-        chunk_path = f"{DATA_VOLUME_PATH}/encode_chunks/chunk_{r['chunk_idx']:04d}.pt"
+        chunk_path = f"{DATA_VOLUME_PATH}/{chunk_prefix}/chunk_{r['chunk_idx']:04d}.pt"
         try:
             os.unlink(chunk_path)
         except FileNotFoundError:
@@ -627,13 +668,24 @@ def pre_encode_parallel(
     output: str = "/encoded.pt",
     chunk_size: int = 2000,
     dataset: str = "",
+    tar_name: str = "parsed-v2.tar",
+    super_chunk_size: int = 0,
 ):
     """Pre-encode in parallel — fans out to N workers, one per chunk.
 
+    For small datasets (<25K games), produces a single .pt file.
+    For large datasets, use --super-chunk-size to split into multiple .pt files
+    that fit in 128GB RAM for concatenation. E.g. --super-chunk-size 20000
+    produces encoded-part-0.pt, encoded-part-1.pt, etc.
+
     Usage:
-        .venv/bin/modal run worldmodel/scripts/modal_train.py::pre_encode_parallel --max-games 22000
-        .venv/bin/modal run worldmodel/scripts/modal_train.py::pre_encode_parallel --max-games 22000 \\
-            --dataset ~/claude-projects/nojohns-training/data/parsed-v2
+        # 12K games, single output:
+        .venv/bin/modal run worldmodel/scripts/modal_train.py::pre_encode_parallel \\
+            --tar-name parsed-v3-12k-gameonly.tar --max-games 12000 --output /encoded-game-v3-12k.pt
+
+        # 100K games, super-chunked:
+        .venv/bin/modal run worldmodel/scripts/modal_train.py::pre_encode_parallel \\
+            --tar-name parsed-v3-ranked-gameonly.tar --super-chunk-size 20000 --output /encoded-v3-ranked
     """
     import json
     import time
@@ -644,7 +696,6 @@ def pre_encode_parallel(
 
     # Read meta.json from local dataset dir
     if not dataset:
-        # Default paths to try
         for p in [
             Path.home() / "claude-projects/nojohns-training/data/parsed-v2",
             Path("data/parsed-v2"),
@@ -660,7 +711,8 @@ def pre_encode_parallel(
     with open(f"{dataset}/meta.json") as f:
         meta_list = json.load(f)
 
-    entries = [e for e in meta_list if e.get("is_training", False)]
+    # Use all entries (v3 meta.json is already filtered to GAME-only)
+    entries = meta_list
     if max_games > 0:
         entries = entries[:max_games]
 
@@ -669,22 +721,28 @@ def pre_encode_parallel(
         cfg = yaml.safe_load(f)
     enc_cfg_dict = cfg.get("encoding", {})
 
-    # Split into chunks
-    chunks = []
-    for start in range(0, len(entries), chunk_size):
-        chunk_entries = entries[start:start + chunk_size]
-        chunks.append({
-            "md5s": [e["slp_md5"] for e in chunk_entries],
-            "compressions": [e.get("compression", "zlib") for e in chunk_entries],
-        })
+    if super_chunk_size > 0:
+        # Super-chunk mode: split into groups, each produces a separate .pt
+        _run_super_chunked(entries, enc_cfg_dict, config, tar_name, output, chunk_size, super_chunk_size, t0)
+    else:
+        # Single output mode
+        _run_single_encode(entries, enc_cfg_dict, config, tar_name, output, chunk_size, t0)
+
+
+def _run_single_encode(entries, enc_cfg_dict, config, tar_name, output, chunk_size, t0):
+    """Encode all entries into a single .pt file."""
+    import time
+
+    chunks = _split_into_chunks(entries, chunk_size)
+    chunk_prefix = "encode_chunks"
 
     print(f"Launching {len(chunks)} parallel workers for {len(entries)} games...")
-    print(f"  Chunk size: {chunk_size}, Config: {config}")
+    print(f"  Chunk size: {chunk_size}, Config: {config}, Tar: {tar_name}")
 
-    # Fan out encoding to parallel workers
     t_encode = time.time()
     results = list(_encode_chunk.starmap([
-        (i, c["md5s"], c["compressions"], config) for i, c in enumerate(chunks)
+        (i, c["md5s"], c["compressions"], config, tar_name, chunk_prefix)
+        for i, c in enumerate(chunks)
     ]))
     encode_time = time.time() - t_encode
 
@@ -692,10 +750,9 @@ def pre_encode_parallel(
     total_frames = sum(r["num_frames"] for r in results)
     print(f"\nEncoding done: {total_games} games, {total_frames:,} frames in {encode_time:.0f}s")
 
-    # Concatenate chunks on a single high-memory instance
     print("Launching concat...")
     t_concat = time.time()
-    final = _concat_chunks.remote(results, output, enc_cfg_dict)
+    final = _concat_chunks.remote(results, output, enc_cfg_dict, chunk_prefix)
     concat_time = time.time() - t_concat
 
     total_time = time.time() - t0
@@ -706,6 +763,67 @@ def pre_encode_parallel(
     print(f"  Output: {final['size_mb']:.0f} MB ({final['total_games']} games, {final['total_frames']:,} frames)")
     print(f"\nTrain with:")
     print(f"  .venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train --encoded-file {output}")
+
+
+def _run_super_chunked(entries, enc_cfg_dict, config, tar_name, output_prefix, chunk_size, super_chunk_size, t0):
+    """Split entries into super-chunks, encode each into a separate .pt file."""
+    import time
+
+    # Split entries into super-chunks
+    super_chunks = []
+    for start in range(0, len(entries), super_chunk_size):
+        super_chunks.append(entries[start:start + super_chunk_size])
+
+    print(f"Super-chunk mode: {len(super_chunks)} parts × ~{super_chunk_size} games")
+    print(f"  Total games: {len(entries)}, Chunk size: {chunk_size}, Tar: {tar_name}")
+
+    part_files = []
+    for sc_idx, sc_entries in enumerate(super_chunks):
+        part_output = f"{output_prefix}-part-{sc_idx}.pt"
+        chunk_prefix = f"encode_chunks_sc{sc_idx}"
+
+        print(f"\n--- Super-chunk {sc_idx}/{len(super_chunks)} ({len(sc_entries)} games) → {part_output} ---")
+
+        chunks = _split_into_chunks(sc_entries, chunk_size)
+
+        t_encode = time.time()
+        results = list(_encode_chunk.starmap([
+            (i, c["md5s"], c["compressions"], config, tar_name, chunk_prefix)
+            for i, c in enumerate(chunks)
+        ]))
+        encode_time = time.time() - t_encode
+
+        total_games = sum(r["num_games"] for r in results)
+        total_frames = sum(r["num_frames"] for r in results)
+        print(f"  Encoded: {total_games} games, {total_frames:,} frames in {encode_time:.0f}s")
+
+        t_concat = time.time()
+        final = _concat_chunks.remote(results, part_output, enc_cfg_dict, chunk_prefix)
+        concat_time = time.time() - t_concat
+        print(f"  Concat: {concat_time:.0f}s → {final['size_mb']:.0f} MB")
+
+        part_files.append(part_output)
+
+    total_time = time.time() - t0
+    print(f"\n=== DONE ({len(part_files)} parts) ===")
+    print(f"  Total time: {total_time:.0f}s")
+    for pf in part_files:
+        print(f"  {pf}")
+    encoded_files = ",".join(part_files)
+    print(f"\nTrain with:")
+    print(f"  .venv/bin/modal run --detach worldmodel/scripts/modal_train.py::train --encoded-file \"{encoded_files}\"")
+
+
+def _split_into_chunks(entries, chunk_size):
+    """Split meta entries into chunks for parallel encoding."""
+    chunks = []
+    for start in range(0, len(entries), chunk_size):
+        chunk_entries = entries[start:start + chunk_size]
+        chunks.append({
+            "md5s": [e["slp_md5"] for e in chunk_entries],
+            "compressions": [e.get("compression", "zlib") for e in chunk_entries],
+        })
+    return chunks
 
 
 @app.function(
