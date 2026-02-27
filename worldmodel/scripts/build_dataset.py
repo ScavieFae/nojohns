@@ -300,6 +300,9 @@ def parse_single_slp(slp_path: str) -> dict | None:
             p0_arrays["hitstun_remaining"] = np.zeros(num_frames, dtype=np.float32)
             p1_arrays["hitstun_remaining"] = np.zeros(num_frames, dtype=np.float32)
 
+        # Metadata
+        start = peppi_game.start
+
         # Build parquet table
         stage_val = int(start.stage) if start.stage is not None else -1
         table = _build_parquet_table(
@@ -311,9 +314,6 @@ def parse_single_slp(slp_path: str) -> dict | None:
         buf = io.BytesIO()
         pq.write_table(table, buf)
         compressed = zlib.compress(buf.getvalue())
-
-        # Metadata
-        start = peppi_game.start
         players = []
         for i in range(num_ports):
             char_arr = peppi_game.frames.ports[i].leader.post.character

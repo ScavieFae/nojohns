@@ -66,6 +66,11 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
     frames = game.frames
     num_frames = len(frames.id)
 
+    # Extract combat context (state_flags + hitstun) from raw arrow — before player loop
+    combat = None
+    if slp_path is not None:
+        combat = extract_combat_context(slp_path, num_frames)
+
     players = {}
     for i, port in enumerate(frames.ports):
         post = port.leader.post
@@ -185,11 +190,6 @@ def peppi_to_parquet(game, stage_id: int, slp_path: str | None = None) -> pa.Tab
     fod = pa.StructArray.from_arrays(
         [pa.array(np.zeros(num_frames, dtype=np.float32))] * 2, names=["left", "right"]
     )
-
-    # Extract combat context (state_flags + hitstun) from raw arrow
-    combat = None
-    if slp_path is not None:
-        combat = extract_combat_context(slp_path, num_frames)
 
     # Extract items from raw arrow data if path available
     items_pa = None
