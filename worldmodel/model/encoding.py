@@ -65,14 +65,14 @@ class EncodingConfig:
     last_attack_embed_dim: int = 8
 
     # Experiment flags
-    state_age_as_embed: bool = False  # Exp 1a: learned embedding instead of scaled float
+    state_age_as_embed: bool = True  # learned embedding instead of scaled float
     state_age_embed_vocab: int = 150  # max animation frames
     state_age_embed_dim: int = 8
     press_events: bool = False  # Exp 2a: 16 binary features for newly-pressed buttons
     lookahead: int = 0  # Exp 3a: predict frame t+d given ctrl(t) through ctrl(t+d)
-    projectiles: bool = False  # Exp 4: item/projectile encoding (per-player nearest)
-    state_flags: bool = False  # Exp 5: all 40 bits from 5 state_flags bytes as binary features
-    hitstun: bool = False  # Exp 6: hitstun_remaining as continuous feature
+    projectiles: bool = True  # item/projectile encoding (per-player nearest)
+    state_flags: bool = True  # all 40 bits from 5 state_flags bytes as binary features
+    hitstun: bool = True  # hitstun_remaining as continuous feature
     hitstun_scale: float = 0.02  # normalization: range 0-50 → 0-1
 
     # Derived dimensions (per player, default / state_age_as_embed / projectiles)
