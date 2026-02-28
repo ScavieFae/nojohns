@@ -246,12 +246,13 @@ class MetricsTracker:
         metrics = BatchMetrics()
 
         # E008c: multi-position — reshape (B, K, ...) to (B*K, ...) for uniform loss
-        multi_pos = predictions.pop("_multi_position", False)
+        multi_pos = predictions.get("_multi_position", False)
         if multi_pos:
             B, K = float_tgt.shape[:2]
             float_tgt = float_tgt.reshape(B * K, -1)
             int_tgt = int_tgt.reshape(B * K, -1)
-            predictions = {k: v.reshape(B * K, *v.shape[2:]) for k, v in predictions.items()}
+            predictions = {k: v.reshape(B * K, *v.shape[2:])
+                           for k, v in predictions.items() if isinstance(v, torch.Tensor)}
             # For action-change: at position i, "previous action" is int_ctx[:, i, 0]
             if int_ctx is not None:
                 int_ctx = int_ctx.reshape(B * K, 1, -1)  # (B*K, 1, I)

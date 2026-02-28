@@ -337,8 +337,19 @@ class Trainer:
             epoch_metrics.update(batch_metrics)
 
             # Per-action tracking (both players — p1_action is at index 6)
-            action_tracker.update(predictions["p0_action_logits"], int_tgt[:, 0])
-            action_tracker.update(predictions["p1_action_logits"], int_tgt[:, 6])
+            # E008c: multi-position predictions are (B, K, ...), reshape to (B*K, ...)
+            p0_logits = predictions["p0_action_logits"]
+            p1_logits = predictions["p1_action_logits"]
+            if p0_logits.dim() == 3:
+                p0_logits = p0_logits.reshape(-1, p0_logits.shape[-1])
+                p1_logits = p1_logits.reshape(-1, p1_logits.shape[-1])
+                p0_true = int_tgt[:, :, 0].reshape(-1)
+                p1_true = int_tgt[:, :, 6].reshape(-1)
+            else:
+                p0_true = int_tgt[:, 0]
+                p1_true = int_tgt[:, 6]
+            action_tracker.update(p0_logits, p0_true)
+            action_tracker.update(p1_logits, p1_true)
 
             if (batch_idx + 1) % log_interval == 0:
                 pct = 100.0 * (batch_idx + 1) / num_batches
