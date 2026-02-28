@@ -139,7 +139,7 @@ Separates physics simulation from decision prediction — predicts what happens 
 
 ### Config-Driven Experiments
 
-Experiments live in `worldmodel/experiments/` as self-contained YAML files. `EncodingConfig` feature flags control tensor dimensions dynamically. Never hardcode tensor sizes.
+Experiments live in `worldmodel/experiments/` as self-contained YAML files. `EncodingConfig` feature flags control tensor dimensions dynamically. Never hardcode tensor sizes. Each experiment gets its own branch (`scav/research/e{NNN}{letter}-{slug}`) — see `worldmodel/docs/EXPERIMENT-WORKFLOW.md` for the full lifecycle.
 
 ### Key Files
 
