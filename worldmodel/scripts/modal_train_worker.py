@@ -102,19 +102,31 @@ def main():
     from worldmodel.training.metrics import LossWeights
     from worldmodel.training.trainer import Trainer
 
-    # Validate encoding config
+    # Validate encoding config — compare only explicitly-set fields
     enc_cfg_dict = cfg.get("encoding", {})
     saved_cfg = payload.get("encoding_config", {})
+    _TRAINING_ONLY_FIELDS = {"focal_offset", "multi_position", "bidirectional"}
     if saved_cfg:
-        resolved_yaml = dataclasses.asdict(EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None}))
-        resolved_saved = dataclasses.asdict(EncodingConfig(**{k: v for k, v in saved_cfg.items() if v is not None}))
-        if resolved_yaml != resolved_saved:
-            diffs = {k: (resolved_yaml.get(k), resolved_saved.get(k))
-                     for k in set(list(resolved_yaml) + list(resolved_saved))
-                     if resolved_yaml.get(k) != resolved_saved.get(k)}
+        diffs = {}
+        for k, saved_v in saved_cfg.items():
+            if k in _TRAINING_ONLY_FIELDS or saved_v is None:
+                continue
+            yaml_v = enc_cfg_dict.get(k)
+            if yaml_v is not None and yaml_v != saved_v:
+                diffs[k] = (yaml_v, saved_v)
+        if diffs:
             raise ValueError(f"Config mismatch! Differences: {diffs}")
 
     enc_cfg = EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None})
+
+    # Tensor dimension sanity check
+    expected_floats = enc_cfg.float_per_player * 2
+    actual_floats = payload["floats"].shape[1]
+    if actual_floats != expected_floats:
+        raise ValueError(
+            f"Float tensor width {actual_floats} != expected {expected_floats} from config. "
+            f"The .pt file was likely encoded with a different EncodingConfig."
+        )
 
     dataset = MeleeDataset.from_tensors(
         floats=payload["floats"],

@@ -179,23 +179,38 @@ def _train_single_gpu(config, epochs, run_name, encoded_file, resume):
     from worldmodel.model.encoding import EncodingConfig
 
     # Validate encoding config matches what was used to pre-encode
-    # Compare resolved configs (not raw dicts) so YAML subsets match full defaults
+    # Only compare fields explicitly present in the saved config (not resolved defaults)
     enc_cfg_dict = cfg.get("encoding", {})
     saved_cfg = payload.get("encoding_config", {})
+    _TRAINING_ONLY_FIELDS = {"focal_offset", "multi_position", "bidirectional"}
     if saved_cfg:
-        import dataclasses
-        resolved_yaml = dataclasses.asdict(EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None}))
-        resolved_saved = dataclasses.asdict(EncodingConfig(**{k: v for k, v in saved_cfg.items() if v is not None}))
-        if resolved_yaml != resolved_saved:
-            diffs = {k: (resolved_yaml.get(k), resolved_saved.get(k))
-                     for k in set(list(resolved_yaml) + list(resolved_saved))
-                     if resolved_yaml.get(k) != resolved_saved.get(k)}
+        # Log feature flags from saved config for visibility
+        for flag in ("projectiles", "state_flags", "hitstun"):
+            if flag in saved_cfg:
+                print(f"  Saved config: {flag}={saved_cfg[flag]}")
+        diffs = {}
+        for k, saved_v in saved_cfg.items():
+            if k in _TRAINING_ONLY_FIELDS or saved_v is None:
+                continue
+            yaml_v = enc_cfg_dict.get(k)
+            if yaml_v is not None and yaml_v != saved_v:
+                diffs[k] = (yaml_v, saved_v)
+        if diffs:
             raise ValueError(f"Config mismatch! Differences: {diffs}")
     from worldmodel.model.mamba2 import FrameStackMamba2
     from worldmodel.training.metrics import LossWeights
     from worldmodel.training.trainer import Trainer
 
     enc_cfg = EncodingConfig(**{k: v for k, v in enc_cfg_dict.items() if v is not None})
+
+    # Tensor dimension sanity check
+    expected_floats = enc_cfg.float_per_player * 2
+    actual_floats = payload["floats"].shape[1]
+    if actual_floats != expected_floats:
+        raise ValueError(
+            f"Float tensor width {actual_floats} != expected {expected_floats} from config. "
+            f"The .pt file was likely encoded with a different EncodingConfig."
+        )
 
     # Build MeleeDataset from pre-encoded tensors
     dataset = MeleeDataset.from_tensors(
@@ -479,7 +494,7 @@ def pre_encode(
         "game_offsets": torch.tensor(np.cumsum([0] + all_lengths)),
         "game_lengths": all_lengths,
         "num_games": total_games,
-        "encoding_config": enc_cfg_dict,
+        "encoding_config": enc_cfg_dict,  # TODO: save full resolved config (needs dataclasses import)
     }
 
     output_path = f"{DATA_VOLUME_PATH}{output}"
