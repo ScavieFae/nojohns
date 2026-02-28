@@ -9,11 +9,15 @@
 
 ScavieFae reads Scav's code and writes review feedback. ScavieFae does NOT edit Python files in `worldmodel/`.
 
+## Experiment Workflow
+
+One branch per experiment family (`scav/research/e{NNN}-{slug}`), with orthogonal variants isolated by config flags, not branches. See **`docs/EXPERIMENT-WORKFLOW.md`** for the full lifecycle.
+
 ## Working Branch
 
-All world model work happens on `scav/combat-context-heads` unless otherwise specified. Both agents should be on this branch when working on world model tasks.
+Feature/ops work happens on `scav/combat-context-heads` or topic branches. Experiments use `scav/research/` prefix branches.
 
-**ScavieFae: stay on this branch.** Do not switch back to `main` after reviewing — you'll just have to switch back. Handoff docs and CLAUDE.md edits go here too.
+**ScavieFae: stay on the working branch.** Do not switch back to `main` after reviewing. Handoff docs and CLAUDE.md edits go on the working branch.
 
 ## Coordination
 
@@ -34,6 +38,7 @@ Use `worldmodel/docs/HANDOFF-MODAL.md` for review feedback, questions, and block
 | `RUNBOOK.md` | Training ops — recipes, experiment tracking, data sources |
 | `docs/MODAL-REVIEW-RUNBOOK.md` | Modal pipeline review checklist + Scav-2 feedback |
 | `docs/HANDOFF-MODAL.md` | Active review feedback from ScavieFae → Scav |
+| `docs/EXPERIMENT-WORKFLOW.md` | Experiment lifecycle — branching, naming, configs, eval |
 | `docs/ROADMAP.md` | Consolidated roadmap — all improvements, experiments, moonshots |
 | `docs/OVERNIGHT-PLAN.md` | Feb 25 overnight training strategy, scaling estimates, K comparison |
 | `experiments/mamba2-medium-gpu.yaml` | 4.3M Mamba-2 K=10 — validated on A100 |

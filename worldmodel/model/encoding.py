@@ -76,6 +76,8 @@ class EncodingConfig:
     hitstun_scale: float = 0.02  # normalization: range 0-50 → 0-1
     focal_offset: int = 0  # E008: last D context frames are ctrl-only, predict frame t-D
     multi_position: bool = False  # E008c: predict at every context position
+    ctrl_residual_to_action: bool = False  # E010a: feed ctrl directly into action heads
+    ctrl_threshold_features: bool = False  # E010c: deadzone-derived binary features for ctrl
 
     # Derived dimensions (per player, default / state_age_as_embed / projectiles)
     # core_continuous: percent, x, y, shield = 4
@@ -160,8 +162,17 @@ class EncodingConfig:
 
     @property
     def ctrl_conditioning_dim(self) -> int:
+        """Dim of next_ctrl tensor from dataset (no threshold features)."""
         base = self.controller_dim * 2 + self.ctrl_extra_dim  # 26 or 42
         return base * (1 + self.lookahead)  # ×2 for lookahead=1, ×3 for lookahead=2, etc.
+
+    @property
+    def ctrl_proj_input_dim(self) -> int:
+        """Dim of ctrl after on-the-fly threshold features (E010c). Used for ctrl_proj."""
+        base = self.ctrl_conditioning_dim
+        if self.ctrl_threshold_features:
+            base += 10 * (1 + self.lookahead)  # 5 features × 2 players per timestep
+        return base
 
     @property
     def player_dim(self) -> int:

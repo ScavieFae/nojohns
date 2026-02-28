@@ -20,6 +20,33 @@ import torch.nn.functional as F
 from worldmodel.model.encoding import EncodingConfig
 
 
+# ---------- E010c: Threshold features ----------
+
+
+def _ctrl_threshold_features(main_x: torch.Tensor, main_y: torch.Tensor) -> torch.Tensor:
+    """Compute Melee-specific threshold features from stick values (torch version).
+
+    Input: main_x, main_y in [0, 1] range (0.5 = centered).
+    Returns: (..., 5) tensor of binary/continuous derived features.
+    """
+    cx = main_x - 0.5  # [-0.5, 0.5]
+    cy = main_y - 0.5
+    magnitude = torch.sqrt(cx**2 + cy**2)
+    abs_x = torch.abs(cx)
+
+    # Melee thresholds (in centered ±0.5 space)
+    DEADZONE = 0.2875 * 0.5     # ~0.144
+    DASH_THRESH = 0.79 * 0.5    # ~0.395
+
+    in_deadzone = (magnitude < DEADZONE).float()
+    walk_zone = ((abs_x >= DEADZONE) & (abs_x < DASH_THRESH)).float()
+    dash_zone = (abs_x >= DASH_THRESH).float()
+    x_sign = torch.sign(cx)
+    stick_y_up = (cy > DEADZONE).float()
+
+    return torch.stack([in_deadzone, walk_zone, dash_zone, x_sign, stick_y_up], dim=-1)
+
+
 # ---------- Primitives ----------
 
 
@@ -389,15 +416,20 @@ class FrameStackMamba2(nn.Module):
         self.final_norm = RMSNorm(d_model)
 
         # Controller conditioning (additive, not concatenative)
-        self.ctrl_proj = nn.Linear(cfg.ctrl_conditioning_dim, d_model)
+        # E010c: ctrl_proj_input_dim includes threshold features computed on-the-fly
+        self.ctrl_proj = nn.Linear(cfg.ctrl_proj_input_dim, d_model)
 
         # --- Prediction heads (identical to FrameStackMLP) ---
         self.continuous_head = nn.Linear(d_model, 8)
         self.binary_head = nn.Linear(d_model, cfg.predicted_binary_dim)
         self.velocity_head = nn.Linear(d_model, cfg.predicted_velocity_dim)   # 10
         self.dynamics_head = nn.Linear(d_model, cfg.predicted_dynamics_dim)   # 6
-        self.p0_action_head = nn.Linear(d_model, cfg.action_vocab)
-        self.p1_action_head = nn.Linear(d_model, cfg.action_vocab)
+
+        # E010a: action heads get direct ctrl residual for sharper threshold learning
+        action_input_dim = d_model + cfg.ctrl_proj_input_dim if cfg.ctrl_residual_to_action else d_model
+        self.p0_action_head = nn.Linear(action_input_dim, cfg.action_vocab)
+        self.p1_action_head = nn.Linear(action_input_dim, cfg.action_vocab)
+
         self.p0_jumps_head = nn.Linear(d_model, cfg.jumps_vocab)
         self.p1_jumps_head = nn.Linear(d_model, cfg.jumps_vocab)
         # Combat context heads (predict per player)
@@ -454,22 +486,31 @@ class FrameStackMamba2(nn.Module):
 
         return torch.cat(parts, dim=-1)  # (B, K, frame_dim)
 
-    def _apply_heads(self, h: torch.Tensor) -> dict[str, torch.Tensor]:
+    def _apply_heads(
+        self, h: torch.Tensor, ctrl: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         """Apply all prediction heads to hidden state(s).
 
         Args:
             h: (B, d_model) for single-position, or (B*K, d_model) for multi-position.
+            ctrl: (B, ctrl_dim) or (B*K, ctrl_dim) — raw ctrl for E010a action head residual.
 
         Returns:
             Dict of prediction tensors.
         """
+        # E010a: action heads get [h; ctrl] for direct threshold learning
+        if self.cfg.ctrl_residual_to_action and ctrl is not None:
+            h_action = torch.cat([h, ctrl], dim=-1)
+        else:
+            h_action = h
+
         return {
             "continuous_delta": self.continuous_head(h),
             "binary_logits": self.binary_head(h),
             "velocity_delta": self.velocity_head(h),
             "dynamics_pred": self.dynamics_head(h),
-            "p0_action_logits": self.p0_action_head(h),
-            "p1_action_logits": self.p1_action_head(h),
+            "p0_action_logits": self.p0_action_head(h_action),
+            "p1_action_logits": self.p1_action_head(h_action),
             "p0_jumps_logits": self.p0_jumps_head(h),
             "p1_jumps_logits": self.p1_jumps_head(h),
             "p0_l_cancel_logits": self.p0_l_cancel_head(h),
@@ -503,49 +544,80 @@ class FrameStackMamba2(nn.Module):
         for layer in self.layers:
             x = x + layer["mamba"](layer["norm"](x))
 
+        cfg = self.cfg
+        fp = cfg.float_per_player
+        cd = cfg.continuous_dim
+        bd = cfg.binary_dim
+        ctrl_start = cd + bd
+        ctrl_end = ctrl_start + cfg.controller_dim
+
+        # E010c: compute threshold features from raw stick values and append to ctrl
+        def _augment_ctrl(ctrl_tensor: torch.Tensor) -> torch.Tensor:
+            """Append threshold features to ctrl if E010c is enabled.
+
+            Args:
+                ctrl_tensor: (..., 26+) with p0_ctrl and p1_ctrl concatenated.
+                    p0 main_x at [..., 0], p0 main_y at [..., 1],
+                    p1 main_x at [..., 13], p1 main_y at [..., 14].
+            """
+            if not cfg.ctrl_threshold_features:
+                return ctrl_tensor
+            p0_thresh = _ctrl_threshold_features(ctrl_tensor[..., 0], ctrl_tensor[..., 1])
+            p1_thresh = _ctrl_threshold_features(ctrl_tensor[..., 13], ctrl_tensor[..., 14])
+            return torch.cat([ctrl_tensor, p0_thresh, p1_thresh], dim=-1)
+
         if self.multi_position:
             # E008c: predict at every position. At position i, predict frame i+1.
             # Controller conditioning: for pos 0..K-2, ctrl comes from context frame i+1.
             # For pos K-1, ctrl comes from next_ctrl (the standard target frame's ctrl).
             h_all = self.final_norm(x)  # (B, K, d_model)
 
-            # Extract controller floats from context for positions 1..K-1.
-            # float_ctx layout per player: [continuous | binary | controller]
-            # Controller starts at continuous_dim + binary_dim for each player.
-            cfg = self.cfg
-            fp = cfg.float_per_player
-            cd = cfg.continuous_dim
-            bd = cfg.binary_dim
-            ctrl_start = cd + bd
-            ctrl_end = ctrl_start + cfg.controller_dim
-
             # Build per-position ctrl: concat p0_ctrl and p1_ctrl from the NEXT context frame
             ctx_p0_ctrl = float_ctx[:, 1:, ctrl_start:ctrl_end]  # (B, K-1, 13)
             ctx_p1_ctrl = float_ctx[:, 1:, fp + ctrl_start:fp + ctrl_end]  # (B, K-1, 13)
             ctx_ctrl = torch.cat([ctx_p0_ctrl, ctx_p1_ctrl], dim=-1)  # (B, K-1, 26)
 
-            # Last position uses next_ctrl
-            last_ctrl = next_ctrl[:, :cfg.controller_dim * 2].unsqueeze(1)  # (B, 1, 26)
-            all_ctrl = torch.cat([ctx_ctrl, last_ctrl], dim=1)  # (B, K, 26)
+            # Last position uses next_ctrl (raw 26-dim controller portion)
+            last_ctrl_raw = next_ctrl[:, :cfg.controller_dim * 2].unsqueeze(1)  # (B, 1, 26)
+            all_ctrl_raw = torch.cat([ctx_ctrl, last_ctrl_raw], dim=1)  # (B, K, 26)
+
+            # E010c: augment with threshold features before projection
+            all_ctrl_aug = _augment_ctrl(all_ctrl_raw)  # (B, K, 26) or (B, K, 36)
 
             # Project ctrl and add to hidden states.
-            # For inner positions (0..K-2), pad to ctrl_conditioning_dim if needed
-            # (press_events=false means ctrl_conditioning_dim == 26, so no real pad).
-            # Last position gets full next_ctrl through a separate path for correctness.
+            # Inner positions: pad to ctrl_proj_input_dim if needed (press_events etc.)
+            inner_ctrl_aug = all_ctrl_aug[:, :-1, :]
             h_inner = h_all[:, :-1, :] + self.ctrl_proj(
-                F.pad(ctx_ctrl, (0, cfg.ctrl_conditioning_dim - cfg.controller_dim * 2))
+                F.pad(inner_ctrl_aug, (0, cfg.ctrl_proj_input_dim - inner_ctrl_aug.shape[-1]))
             )  # (B, K-1, d_model)
-            h_last = h_all[:, -1:, :] + self.ctrl_proj(next_ctrl).unsqueeze(1)  # (B, 1, d_model)
+
+            # Last position gets full next_ctrl augmented with threshold features
+            last_next_ctrl = _augment_ctrl(next_ctrl)
+            h_last = h_all[:, -1:, :] + self.ctrl_proj(last_next_ctrl).unsqueeze(1)  # (B, 1, d_model)
             h = torch.cat([h_inner, h_last], dim=1)  # (B, K, d_model)
 
             # Apply prediction heads to all positions
             h_flat = h.reshape(B * K, -1)
-            preds = self._apply_heads(h_flat)
+            # E010a: pass flattened ctrl for action head residual
+            ctrl_flat = None
+            if cfg.ctrl_residual_to_action:
+                # Build full-dim ctrl for all K positions (pad inner, use augmented last)
+                inner_padded = F.pad(
+                    all_ctrl_aug[:, :-1, :],
+                    (0, cfg.ctrl_proj_input_dim - all_ctrl_aug.shape[-1]),
+                )  # (B, K-1, ctrl_proj_input_dim)
+                last_aug = last_next_ctrl.unsqueeze(1)  # (B, 1, ctrl_proj_input_dim)
+                all_ctrl_full = torch.cat([inner_padded, last_aug], dim=1)  # (B, K, ctrl_proj_input_dim)
+                ctrl_flat = all_ctrl_full.reshape(B * K, -1)
+            preds = self._apply_heads(h_flat, ctrl=ctrl_flat)
             # Reshape all outputs to (B, K, ...)
             preds = {k: v.reshape(B, K, *v.shape[1:]) for k, v in preds.items()}
             preds["_multi_position"] = True  # signal to loss computation
             return preds
         else:
             h = self.final_norm(x[:, -1, :])
-            h = h + self.ctrl_proj(next_ctrl)
-            return self._apply_heads(h)
+            aug_ctrl = _augment_ctrl(next_ctrl)
+            h = h + self.ctrl_proj(aug_ctrl)
+            # E010a: pass ctrl for action head residual
+            action_ctrl = aug_ctrl if cfg.ctrl_residual_to_action else None
+            return self._apply_heads(h, ctrl=action_ctrl)

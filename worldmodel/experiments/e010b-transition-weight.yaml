@@ -1,0 +1,54 @@
+# E010b: Transition-weighted action loss
+# Hypothesis: 96.7% overall action accuracy is dominated by steady-state frames.
+# Weighting transition frames 5x higher forces the model to learn state changes.
+# ~10% of frames are transitions, so 5x gives them ~35% of action gradient.
+# Base: E009a (K=10, v3, focal_offset=3, multi_position=true)
+
+data:
+  dataset_dir: null
+  max_games: 2000
+
+encoding:
+  state_age_as_embed: true
+  state_age_embed_vocab: 150
+  state_age_embed_dim: 8
+  press_events: false
+  lookahead: 0
+  focal_offset: 3
+  multi_position: true
+  projectiles: false
+  state_flags: true
+  hitstun: true
+
+model:
+  arch: mamba2
+  context_len: 10
+  d_model: 384
+  d_state: 64
+  n_layers: 4
+  headdim: 64
+  dropout: 0.1
+  chunk_size: 10
+
+training:
+  lr: 0.0005
+  weight_decay: 0.00001
+  batch_size: 4096
+  num_epochs: 2
+  train_split: 0.9
+  log_interval: 1000
+
+loss_weights:
+  continuous: 1.0
+  velocity: 0.5
+  dynamics: 0.5
+  binary: 1.0
+  action: 2.0
+  jumps: 0.5
+  l_cancel: 0.3
+  hurtbox: 0.3
+  ground: 0.3
+  last_attack: 0.3
+  action_change_weight: 5.0
+
+save_dir: checkpoints/e010b-transition-weight

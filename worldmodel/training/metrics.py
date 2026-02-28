@@ -121,6 +121,7 @@ class LossWeights:
     hurtbox: float = 0.3
     ground: float = 0.3
     last_attack: float = 0.3
+    action_change_weight: float = 1.0  # E010b: multiplier for action-change frames (1.0 = off)
 
 
 @dataclass
@@ -312,8 +313,21 @@ class MetricsTracker:
             metrics.binary_acc = ((predictions["binary_logits"] > 0).float() == binary_true).float().mean().item()
 
         # Action loss (CE per player)
-        p0_act_loss = F.cross_entropy(predictions["p0_action_logits"], p0_action_true)
-        p1_act_loss = F.cross_entropy(predictions["p1_action_logits"], p1_action_true)
+        # E010b: weight action-change frames higher to improve transition prediction
+        w = self.weights.action_change_weight
+        if int_ctx is not None and w > 1.0:
+            # Detect frames where action changes from context's last frame
+            prev_p0 = int_ctx[:, -1, 0]  # previous p0 action
+            prev_p1 = int_ctx[:, -1, self.cfg.int_per_player]  # previous p1 action
+            p0_changed = (prev_p0 != p0_action_true).float()
+            p1_changed = (prev_p1 != p1_action_true).float()
+            p0_sample_w = 1.0 + (w - 1.0) * p0_changed  # 1.0 for steady, w for change
+            p1_sample_w = 1.0 + (w - 1.0) * p1_changed
+            p0_act_loss = (F.cross_entropy(predictions["p0_action_logits"], p0_action_true, reduction='none') * p0_sample_w).mean()
+            p1_act_loss = (F.cross_entropy(predictions["p1_action_logits"], p1_action_true, reduction='none') * p1_sample_w).mean()
+        else:
+            p0_act_loss = F.cross_entropy(predictions["p0_action_logits"], p0_action_true)
+            p1_act_loss = F.cross_entropy(predictions["p1_action_logits"], p1_action_true)
         action_loss = (p0_act_loss + p1_act_loss) / 2
         metrics.action_loss = action_loss.item()
 
