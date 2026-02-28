@@ -202,10 +202,17 @@ class Trainer:
         dyn_per_player = 3 + (1 if cfg.hitstun else 0)  # hitlag, stocks, combo [, hitstun]
         expected_float_tgt = (cfg.core_continuous_dim * 2 + cfg.velocity_dim * 2
                               + cfg.binary_dim * 2 + dyn_per_player * 2)
-        if float_tgt.shape != (expected_float_tgt,):
-            errors.append(f"float_tgt: got {tuple(float_tgt.shape)}, expected ({expected_float_tgt},)")
-        if int_tgt.shape != (cfg.target_int_dim,):
-            errors.append(f"int_tgt: got {tuple(int_tgt.shape)}, expected ({cfg.target_int_dim},)")
+        # E008c: multi-position returns (K, D) and (K, 12) targets
+        if cfg.multi_position:
+            if float_tgt.shape != (K, expected_float_tgt):
+                errors.append(f"float_tgt: got {tuple(float_tgt.shape)}, expected ({K}, {expected_float_tgt})")
+            if int_tgt.shape != (K, cfg.target_int_dim):
+                errors.append(f"int_tgt: got {tuple(int_tgt.shape)}, expected ({K}, {cfg.target_int_dim})")
+        else:
+            if float_tgt.shape != (expected_float_tgt,):
+                errors.append(f"float_tgt: got {tuple(float_tgt.shape)}, expected ({expected_float_tgt},)")
+            if int_tgt.shape != (cfg.target_int_dim,):
+                errors.append(f"int_tgt: got {tuple(int_tgt.shape)}, expected ({cfg.target_int_dim},)")
 
         if errors:
             msg = "Shape preflight FAILED — data/config mismatch:\n  " + "\n  ".join(errors)

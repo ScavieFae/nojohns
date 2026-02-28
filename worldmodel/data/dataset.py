@@ -226,6 +226,7 @@ class MeleeFrameDataset(Dataset):
         self._press_events = cfg.press_events
         self._lookahead = cfg.lookahead
         self._focal_offset = cfg.focal_offset
+        self._multi_position = cfg.multi_position
 
         if cfg.focal_offset > 0:
             assert cfg.focal_offset < context_len, (
@@ -287,8 +288,18 @@ class MeleeFrameDataset(Dataset):
 
         next_ctrl = torch.cat(ctrl_parts)  # (26*(1+d),) or (42*(1+d),)
 
+        # E008c: multi-position — return K targets (one per context position)
+        if self._multi_position:
+            return self._get_multi_position(t, d, float_ctx, int_ctx, next_ctrl)
+
         # Target frame: t+d (same as baseline — focal_offset only changes context, not target)
         tgt_idx = t + d
+        float_tgt, int_tgt = self._build_targets(tgt_idx)
+
+        return float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt
+
+    def _build_targets(self, tgt_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build float and int targets for a single frame."""
         tgt_float = self.data.floats[tgt_idx]
         prev_float = self.data.floats[tgt_idx - 1]
 
@@ -312,9 +323,9 @@ class MeleeFrameDataset(Dataset):
             p0_vel_delta, p1_vel_delta,        # (10)
             p0_binary, p1_binary,              # (6)
             p0_dyn, p1_dyn,                    # (6)
-        ])  # (30,)
+        ])  # (D,)
 
-        # Int targets: focal frame's categoricals (6 per player)
+        # Int targets: categoricals (6 per player)
         tgt_ints = self.data.ints[tgt_idx]
         p1_off = self._p1_int_offset
         int_tgt = torch.stack([
@@ -331,6 +342,55 @@ class MeleeFrameDataset(Dataset):
             tgt_ints[p1_off + 5], # p1_ground
             tgt_ints[p1_off + 6], # p1_last_attack
         ])  # (12,)
+
+        return float_tgt, int_tgt
+
+    def _get_multi_position(
+        self,
+        t: int,
+        d: int,
+        float_ctx: torch.Tensor,
+        int_ctx: torch.Tensor,
+        next_ctrl: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """E008c: compute K targets — one for each context position.
+
+        At position i, predict frame (ctx_start + i + 1). The previous frame
+        for computing deltas is ctx_start + i = the context frame itself.
+        """
+        K = self.context_len
+        D = self._focal_offset
+        ctx_start = t + D - K  # first context frame index
+
+        # Vectorized: targets are context frames shifted by 1
+        prev_floats = self.data.floats[ctx_start:ctx_start + K]     # (K, F) — same as float_ctx
+        tgt_floats = self.data.floats[ctx_start + 1:ctx_start + K + 1]  # (K, F)
+
+        p0_cont_delta = tgt_floats[:, self._p0_cont] - prev_floats[:, self._p0_cont]  # (K, 4)
+        p1_cont_delta = tgt_floats[:, self._p1_cont] - prev_floats[:, self._p1_cont]
+        p0_vel_delta = tgt_floats[:, self._p0_vel] - prev_floats[:, self._p0_vel]      # (K, 5)
+        p1_vel_delta = tgt_floats[:, self._p1_vel] - prev_floats[:, self._p1_vel]
+        p0_binary = tgt_floats[:, self._p0_bin]                                         # (K, B)
+        p1_binary = tgt_floats[:, self._p1_bin]
+        p0_dyn = tgt_floats[:, self._p0_dyn]                                            # (K, Y)
+        p1_dyn = tgt_floats[:, self._p1_dyn]
+
+        float_tgt = torch.cat([
+            p0_cont_delta, p1_cont_delta,
+            p0_vel_delta, p1_vel_delta,
+            p0_binary, p1_binary,
+            p0_dyn, p1_dyn,
+        ], dim=1)  # (K, D)
+
+        # Int targets for all K positions
+        tgt_ints = self.data.ints[ctx_start + 1:ctx_start + K + 1]  # (K, I)
+        p1_off = self._p1_int_offset
+        int_tgt = torch.stack([
+            tgt_ints[:, 0], tgt_ints[:, 1], tgt_ints[:, 3],
+            tgt_ints[:, 4], tgt_ints[:, 5], tgt_ints[:, 6],
+            tgt_ints[:, p1_off], tgt_ints[:, p1_off + 1], tgt_ints[:, p1_off + 3],
+            tgt_ints[:, p1_off + 4], tgt_ints[:, p1_off + 5], tgt_ints[:, p1_off + 6],
+        ], dim=1)  # (K, 12)
 
         return float_ctx, int_ctx, next_ctrl, float_tgt, int_tgt
 

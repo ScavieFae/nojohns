@@ -245,6 +245,17 @@ class MetricsTracker:
     ) -> tuple[torch.Tensor, BatchMetrics]:
         metrics = BatchMetrics()
 
+        # E008c: multi-position — reshape (B, K, ...) to (B*K, ...) for uniform loss
+        multi_pos = predictions.pop("_multi_position", False)
+        if multi_pos:
+            B, K = float_tgt.shape[:2]
+            float_tgt = float_tgt.reshape(B * K, -1)
+            int_tgt = int_tgt.reshape(B * K, -1)
+            predictions = {k: v.reshape(B * K, *v.shape[2:]) for k, v in predictions.items()}
+            # For action-change: at position i, "previous action" is int_ctx[:, i, 0]
+            if int_ctx is not None:
+                int_ctx = int_ctx.reshape(B * K, 1, -1)  # (B*K, 1, I)
+
         # Unpack targets (config-driven slicing)
         cont_delta_true = float_tgt[:, :self._cont_end]       # (B, 8) position/shield deltas
         vel_delta_true = float_tgt[:, self._cont_end:self._vel_end]  # (B, 10) velocity deltas

@@ -1,9 +1,7 @@
 # E008c: Multi-position prediction (GPT-style)
 # Branch: scav/E008c-multi-position
 # Diff from baseline: multi_position=true, predict at every position in context
-# NOTE: Loss computation changes needed in metrics.py -- this config will NOT
-# work until MetricsTracker is updated to handle (B, K, ...) shaped predictions.
-# This branch sets up the model-side changes; loss integration is TODO.
+# Dataset returns (K, D) and (K, 12) targets. MetricsTracker reshapes to (B*K, ...).
 
 data:
   dataset_dir: null
@@ -18,8 +16,8 @@ encoding:
   focal_offset: 0
   multi_position: true
   projectiles: false
-  state_flags: true
-  hitstun: true
+  state_flags: false   # encoded-2k.pt predates v3 features
+  hitstun: false
 
 model:
   arch: mamba2
