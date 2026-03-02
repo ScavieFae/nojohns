@@ -647,40 +647,41 @@ def fill_gaps_from_training_data(
 # Source: Melee frame data wiki, ikneedata.com
 # ---------------------------------------------------------------------------
 
-# Common throw action state IDs (from ssbm-data Common)
-# 212: CATCH, 213: CATCH_DASH, 214: CATCH_PULL, 216: CATCH_WAIT
-# 217: THROW_F, 219: THROW_B, 220: THROW_HI (throw up), 221: THROW_LW (throw down)
+# Common throw action state IDs (from ssbm-data Common action_state.json)
+# 212: CATCH, 213: CATCH_PULL, 214: CATCH_DASH, 216: CATCH_WAIT
+# 217: CATCH_ATTACK (pummel), 218: CATCH_CUT
+# 219: THROW_F, 220: THROW_B, 221: THROW_HI, 222: THROW_LW
 
 THROW_DATA = {
     # Fox throws: known frame data
     # (char_id, action_id): {damage, angle, bkb, kbg, total_frames}
-    (1, 217): {"damage": 4, "angle": 45, "bkb": 55, "kbg": 105, "total_frames": 25},  # Fox fthrow
-    (1, 219): {"damage": 2, "angle": 135, "bkb": 70, "kbg": 50, "total_frames": 30},  # Fox bthrow
+    (1, 219): {"damage": 4, "angle": 45, "bkb": 55, "kbg": 105, "total_frames": 25},  # Fox fthrow
+    (1, 220): {"damage": 2, "angle": 135, "bkb": 70, "kbg": 50, "total_frames": 30},  # Fox bthrow
     (1, 221): {"damage": 2, "angle": 88, "bkb": 70, "kbg": 60, "total_frames": 30},   # Fox uthrow (famous chaingrab)
     (1, 222): {"damage": 1, "angle": 0, "bkb": 60, "kbg": 80, "total_frames": 30},    # Fox dthrow
     # Falco throws
-    (22, 217): {"damage": 4, "angle": 45, "bkb": 60, "kbg": 90, "total_frames": 25},  # Falco fthrow
-    (22, 219): {"damage": 2, "angle": 135, "bkb": 70, "kbg": 50, "total_frames": 30},
+    (22, 219): {"damage": 4, "angle": 45, "bkb": 60, "kbg": 90, "total_frames": 25},  # Falco fthrow
+    (22, 220): {"damage": 2, "angle": 135, "bkb": 70, "kbg": 50, "total_frames": 30},  # Falco bthrow
     (22, 221): {"damage": 2, "angle": 88, "bkb": 70, "kbg": 60, "total_frames": 30},
     (22, 222): {"damage": 1, "angle": 0, "bkb": 60, "kbg": 80, "total_frames": 30},
     # Marth throws
-    (18, 217): {"damage": 4, "angle": 45, "bkb": 40, "kbg": 170, "total_frames": 25},  # Marth fthrow
-    (18, 219): {"damage": 4, "angle": 45, "bkb": 50, "kbg": 130, "total_frames": 30},
+    (18, 219): {"damage": 4, "angle": 45, "bkb": 40, "kbg": 170, "total_frames": 25},  # Marth fthrow
+    (18, 220): {"damage": 4, "angle": 45, "bkb": 50, "kbg": 130, "total_frames": 30},  # Marth bthrow
     (18, 221): {"damage": 4, "angle": 88, "bkb": 60, "kbg": 130, "total_frames": 30},  # Marth uthrow
     (18, 222): {"damage": 1, "angle": 0, "bkb": 20, "kbg": 100, "total_frames": 30},
     # Captain Falcon throws
-    (2, 217): {"damage": 5, "angle": 45, "bkb": 20, "kbg": 128, "total_frames": 30},
-    (2, 219): {"damage": 5, "angle": 45, "bkb": 50, "kbg": 128, "total_frames": 30},
+    (2, 219): {"damage": 5, "angle": 45, "bkb": 20, "kbg": 128, "total_frames": 30},  # Falcon fthrow
+    (2, 220): {"damage": 5, "angle": 45, "bkb": 50, "kbg": 128, "total_frames": 30},  # Falcon bthrow
     (2, 221): {"damage": 4, "angle": 88, "bkb": 70, "kbg": 100, "total_frames": 35},
     (2, 222): {"damage": 7, "angle": 0, "bkb": 80, "kbg": 40, "total_frames": 30},
     # Sheik throws
-    (7, 217): {"damage": 5, "angle": 45, "bkb": 20, "kbg": 110, "total_frames": 25},
-    (7, 219): {"damage": 5, "angle": 130, "bkb": 50, "kbg": 128, "total_frames": 30},
+    (7, 219): {"damage": 5, "angle": 45, "bkb": 20, "kbg": 110, "total_frames": 25},  # Sheik fthrow
+    (7, 220): {"damage": 5, "angle": 130, "bkb": 50, "kbg": 128, "total_frames": 30},  # Sheik bthrow
     (7, 221): {"damage": 3, "angle": 88, "bkb": 55, "kbg": 170, "total_frames": 30},
     (7, 222): {"damage": 2, "angle": 270, "bkb": 40, "kbg": 220, "total_frames": 30},  # Sheik dthrow (chain grab)
     # Peach throws
-    (9, 217): {"damage": 2, "angle": 80, "bkb": 70, "kbg": 90, "total_frames": 25},
-    (9, 219): {"damage": 2, "angle": 135, "bkb": 70, "kbg": 90, "total_frames": 30},
+    (9, 219): {"damage": 2, "angle": 80, "bkb": 70, "kbg": 90, "total_frames": 25},  # Peach fthrow
+    (9, 220): {"damage": 2, "angle": 135, "bkb": 70, "kbg": 90, "total_frames": 30},  # Peach bthrow
     (9, 221): {"damage": 2, "angle": 90, "bkb": 90, "kbg": 68, "total_frames": 30},
     (9, 222): {"damage": 0, "angle": 0, "bkb": 0, "kbg": 0, "total_frames": 30},
 }
