@@ -15,6 +15,10 @@ Detached training (returns immediately, check wandb for progress):
 
 Sweep (parallel runs on separate A100s):
     .venv/bin/modal run worldmodel/scripts/modal_train.py::sweep --names "lr3e4,lr1e3"
+
+Filter encoded data (keep only specific characters + stage):
+    .venv/bin/modal run worldmodel/scripts/modal_train.py::filter_encoded
+    .venv/bin/modal run worldmodel/scripts/modal_train.py::filter_encoded --characters "1,2,7,18,22" --stage 31
 """
 
 import modal
@@ -1126,3 +1130,199 @@ def sweep(
     for name, h in handles:
         h.get()
         print(f"  Done: {name}")
+
+
+@app.function(
+    volumes={DATA_VOLUME_PATH: volume},
+    image=image,
+    timeout=14400,  # 4h — I/O bound, sequential processing of large parts
+    cpu=4,
+    memory=196608,  # 192 GB — one 90GB part + accumulated filtered results
+)
+def _filter_encoded_remote(
+    input_files: str,
+    output_file: str,
+    characters: str,
+    stage: int,
+):
+    """Filter pre-encoded .pt files to games matching character + stage criteria.
+
+    Processes parts sequentially to stay within memory budget. Each part is
+    loaded, filtered by checking int tensor columns for character/stage, and
+    matching games are cloned and accumulated. After all parts, results are
+    concatenated and saved as a single .pt file.
+    """
+    import gc
+    import sys
+    import time
+    import logging
+
+    sys.path.insert(0, "/root/nojohns")
+    sys.stdout.reconfigure(line_buffering=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    import torch
+    import numpy as np
+
+    char_set = {int(c) for c in characters.split(",")}
+    files = [f.strip() for f in input_files.split(",")]
+
+    print(f"Filter: {len(files)} parts → chars={sorted(char_set)}, stage={stage}")
+    print(f"Output: {output_file}")
+
+    # Int tensor column indices (v3 layout, state_age_as_embed=True):
+    #   p0: [action=0, jumps=1, character=2, l_cancel=3, hurtbox=4, ground=5, last_attack=6, state_age=7]
+    #   p1: [action=8, jumps=9, character=10, l_cancel=11, hurtbox=12, ground=13, last_attack=14, state_age=15]
+    #   stage=16
+    P0_CHAR_COL = 2
+    P1_CHAR_COL = 10
+    STAGE_COL = 16
+
+    all_floats = []
+    all_ints = []
+    all_lengths = []
+    encoding_config = None
+    total_kept_games = 0
+    total_kept_frames = 0
+    total_input_games = 0
+    t_start = time.time()
+
+    for part_idx, ef in enumerate(files):
+        ep = f"{DATA_VOLUME_PATH}{ef}"
+        if not os.path.exists(ep):
+            print(f"  WARNING: {ep} not found, skipping")
+            continue
+
+        print(f"\n--- Part {part_idx}: {ef} ---")
+        t0 = time.time()
+        payload = torch.load(ep, weights_only=False)
+        load_time = time.time() - t0
+        print(f"  Loaded in {load_time:.1f}s — {payload['floats'].shape[0]:,} frames, {payload['num_games']} games")
+
+        if encoding_config is None:
+            encoding_config = payload.get("encoding_config", {})
+
+        floats = payload["floats"]
+        ints = payload["ints"]
+        offsets = payload["game_offsets"]
+        lengths = payload["game_lengths"]
+        num_games = payload["num_games"]
+        total_input_games += num_games
+
+        kept_in_part = 0
+        kept_frames_in_part = 0
+
+        t0 = time.time()
+        for g in range(num_games):
+            start = int(offsets[g])
+            length = int(lengths[g])
+
+            p0_char = int(ints[start, P0_CHAR_COL])
+            p1_char = int(ints[start, P1_CHAR_COL])
+            game_stage = int(ints[start, STAGE_COL])
+
+            if p0_char in char_set and p1_char in char_set and game_stage == stage:
+                end = start + length
+                # Clone to decouple from the original part tensor (allows gc)
+                all_floats.append(floats[start:end].clone())
+                all_ints.append(ints[start:end].clone())
+                all_lengths.append(length)
+                kept_in_part += 1
+                kept_frames_in_part += length
+
+        filter_time = time.time() - t0
+        total_kept_games += kept_in_part
+        total_kept_frames += kept_frames_in_part
+
+        # Free part memory before loading next
+        del payload, floats, ints, offsets, lengths
+        gc.collect()
+
+        print(f"  Filtered in {filter_time:.1f}s — kept {kept_in_part}/{num_games} games ({kept_frames_in_part:,} frames)")
+        print(f"  Running total: {total_kept_games} games, {total_kept_frames:,} frames")
+
+    if total_kept_games == 0:
+        print("\nWARNING: No games matched the filter! Nothing to save.")
+        return {"total_games": 0, "total_frames": 0, "size_gb": 0}
+
+    # Concatenate all filtered games
+    print(f"\nConcatenating {total_kept_games} games ({total_kept_frames:,} frames)...")
+    t0 = time.time()
+    final_floats = torch.cat(all_floats)
+    del all_floats
+    gc.collect()
+    final_ints = torch.cat(all_ints)
+    del all_ints
+    gc.collect()
+    print(f"  Concatenated in {time.time() - t0:.1f}s — floats {final_floats.shape}, ints {final_ints.shape}")
+
+    game_offsets = torch.tensor(np.cumsum([0] + all_lengths))
+
+    # Save with encoding_config preserved from input
+    output_path = f"{DATA_VOLUME_PATH}{output_file}"
+    result_payload = {
+        "floats": final_floats,
+        "ints": final_ints,
+        "game_offsets": game_offsets,
+        "game_lengths": all_lengths,
+        "num_games": total_kept_games,
+        "encoding_config": encoding_config,
+    }
+
+    print(f"Saving to {output_path}...")
+    t0 = time.time()
+    torch.save(result_payload, output_path)
+    size_gb = os.path.getsize(output_path) / 1e9
+    save_time = time.time() - t0
+    print(f"  Saved in {save_time:.1f}s ({size_gb:.1f} GB)")
+
+    volume.commit()
+
+    total_time = time.time() - t_start
+    pct = total_kept_games / total_input_games * 100 if total_input_games > 0 else 0
+    print(f"\n=== FILTER COMPLETE ({total_time:.0f}s) ===")
+    print(f"  Input:  {total_input_games} games across {len(files)} parts")
+    print(f"  Output: {total_kept_games} games, {total_kept_frames:,} frames ({size_gb:.1f} GB)")
+    print(f"  Filter rate: {pct:.1f}% of games kept")
+    print(f"\nVerify: modal volume ls melee-training-data {output_file}")
+    print(f"Train:  modal run --detach worldmodel/scripts/modal_train.py::train --encoded-file {output_file}")
+
+    return {
+        "total_games": total_kept_games,
+        "total_frames": total_kept_frames,
+        "size_gb": round(size_gb, 2),
+    }
+
+
+@app.local_entrypoint()
+def filter_encoded(
+    input_files: str = "/encoded-v3-ranked-50k-part-0.pt,/encoded-v3-ranked-50k-part-1.pt,/encoded-v3-ranked-50k-part-2.pt,/encoded-v3-ranked-50k-part-3.pt,/encoded-v3-ranked-50k-part-4.pt",
+    output_file: str = "/encoded-v3-ranked-fd-top5.pt",
+    characters: str = "1,2,7,18,22",
+    stage: int = 31,
+):
+    """Filter encoded .pt files to games with specific characters and stage.
+
+    Keeps only games where BOTH players are in the character set AND the stage matches.
+    Processes parts sequentially (each ~90 GB), saves a single filtered .pt file.
+
+    Usage:
+        modal run worldmodel/scripts/modal_train.py::filter_encoded
+        modal run worldmodel/scripts/modal_train.py::filter_encoded \\
+            --characters "1,2,7,18,22" --stage 31
+    """
+    print(f"Launching filter: chars={characters}, stage={stage}")
+    print(f"  Input:  {input_files}")
+    print(f"  Output: {output_file}")
+
+    result = _filter_encoded_remote.remote(input_files, output_file, characters, stage)
+
+    if result["total_games"] == 0:
+        print("\nNo games matched — check character IDs and stage ID")
+    else:
+        print(f"\nDone! {result['total_games']} games, {result['total_frames']:,} frames ({result['size_gb']:.1f} GB)")
+        print(f"Verify: modal volume ls melee-training-data {output_file}")
