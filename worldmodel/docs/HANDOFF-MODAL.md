@@ -1,12 +1,63 @@
 # Modal Pipeline Handoff — ScavieFae Review
 
-**Branch**: `scav/combat-context-heads`
-**Date**: Feb 26, 2026 (late)
-**Status**: Projectile extraction unblocked. Re-parse needed before projectile experiment.
+**Branch**: `scav/hitbox-data-research`
+**Date**: Mar 1, 2026
+**Status**: Hitbox data table built. One blocking bug in throw IDs.
 
 ---
 
-## Current: Parser v3 Implemented (Feb 26, late night)
+## ScavieFae Review: Hitbox Data Lookup Table (Mar 1)
+
+**Commit**: `b44f9bb` — 5 files, 8,381 insertions.
+
+**Overall: Approve with one blocking bug.**
+
+Excellent research. The pipeline is well-structured: meleedb CSV → CamelCase-to-SNAKE_CASE parser → ssbm-data ID resolution → per-frame table. Gap-fill from training data to guarantee 100% coverage is smart. Spot checks and coverage test built into `main()` are exactly the kind of self-verification this project needs.
+
+### BLOCKING: Throw action IDs are off by 2
+
+The comment on line 651-652 says:
+```
+# 217: THROW_F, 219: THROW_B, 220: THROW_HI, 221: THROW_LW
+```
+
+But `action_state.json` (the source of truth from ssbm-data) says:
+- **217 = CATCH_ATTACK** (pummel)
+- **218 = CATCH_CUT**
+- **219 = THROW_F**
+- **220 = THROW_B**
+- **221 = THROW_HI**
+- **222 = THROW_LW**
+
+The `THROW_DATA` dict uses wrong keys for fthrow and bthrow across all 7 characters:
+- `(char, 217)` should be `(char, 219)` — fthrow
+- `(char, 219)` should be `(char, 220)` — bthrow
+
+Action IDs 221 (uthrow) and 222 (dthrow) happen to be correct. The net effect: Fox fthrow data lands on CATCH_ATTACK (pummel), and Fox bthrow data lands on THROW_F. Silently poisons the lookup for any throw interaction.
+
+**Fix:** Shift fthrow entries from 217→219 and bthrow entries from 219→220 for all 7 characters. Update the comment.
+
+### Non-blocking notes
+
+1. **Throw active frames approximate** (lines 695-699, hardcoded frames 4-6). README acknowledges this. Fine for first pass, but throw release frame varies per character (e.g., Marth fthrow releases frame 12). Worth a TODO.
+
+2. **`fill_gaps_from_training_data` modifies `table` in-place but also returns stats** — clean pattern, side effect is intentional.
+
+3. **`sys.path.insert(0, ...)` in two places** (lines 571, 794) to import `worldmodel.data.parse`. Fine for a research script. If promoted to `worldmodel/data/`, clean up the import path.
+
+4. **Coverage test scans 20 games but gap-fill scans 50** — not a bug, just a design choice. Gap-fill casts a wider net, coverage test is a fast smoke check.
+
+5. **Jigglypuff `SPECIAL_HI_L/R` both map to `SING_GROUND_LEFT`** (lines 245-249). Sing doesn't have a real directional hitbox distinction, but the air variants also map to ground. Minor — Puff specials rarely seen in competitive play.
+
+6. **`element` field uses strings** (`"normal"`, `"electric"`, `"none"`). When wiring into encoding, either one-hot or skip element and just use `is_active` + numeric properties. Don't add a string→int mapping in the hot path.
+
+### Verdict
+
+Fix the throw IDs (fthrow 217→219, bthrow 219→220 for all 7 characters), and this is ready to wire into `EncodingConfig`.
+
+---
+
+## Parser v3 Implemented (Feb 26, late night)
 
 ### What changed
 
