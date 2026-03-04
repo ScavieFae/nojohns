@@ -431,8 +431,7 @@ class NetplayRunner:
         self._menu_navigator = SlippiMenuNavigator()
         self._menu_helper = melee.MenuHelper()
         self._our_port = 1  # Updated by port detection when game starts
-        self._in_name_entry = False
-        self._was_past_name_entry = False
+        self._name_entry_done = False
 
         # Live streaming setup
         self._streamer: MatchStreamer | None = None
@@ -869,29 +868,25 @@ class NetplayRunner:
     def _handle_menu(self, state: melee.GameState) -> None:
         """Navigate menus via Slippi direct connect.
 
-        Uses libmelee's menu_helper_simple (which handles code entry and
-        character selection correctly). On bounce-back from a failed
-        connection, creates a fresh MenuHelper to reset internal state —
-        otherwise it tries to press START on an empty name entry field.
+        Uses libmelee's menu_helper_simple for code entry and character
+        selection. Once past name entry (searching/connecting phase),
+        stops sending inputs so we don't accidentally cancel the search.
         """
-        # Detect bounce-back: if we were past name entry but are back in it,
-        # the connection failed and Slippi cleared the field. Reset the
-        # MenuHelper so it re-types the connect code from scratch.
-        if (state.menu_state in [Menu.CHARACTER_SELECT, Menu.SLIPPI_ONLINE_CSS]
-                and state.submenu == SubMenu.NAME_ENTRY_SUBMENU):
-            if not self._in_name_entry:
-                # First time entering name entry — normal flow
-                self._in_name_entry = True
-            elif getattr(self, '_was_past_name_entry', False):
-                # We were past name entry and got bounced back
-                logger.info("Bounce-back to name entry detected — resetting MenuHelper")
-                self._menu_helper = melee.MenuHelper()
-                self._was_past_name_entry = False
-        else:
-            if self._in_name_entry:
-                # We just left name entry — mark that we've been past it
-                self._was_past_name_entry = True
-                self._in_name_entry = False
+        in_name_entry = (
+            state.menu_state in [Menu.CHARACTER_SELECT, Menu.SLIPPI_ONLINE_CSS]
+            and state.submenu == SubMenu.NAME_ENTRY_SUBMENU
+        )
+
+        if in_name_entry:
+            self._name_entry_done = False
+        elif state.menu_state in [Menu.CHARACTER_SELECT, Menu.SLIPPI_ONLINE_CSS]:
+            if not self._name_entry_done:
+                self._name_entry_done = True
+                logger.info("Past name entry — waiting for connection (hands off)")
+            # Don't send any inputs during searching/connecting phase.
+            # menu_helper_simple would press buttons that cancel the search.
+            self._controller.release_all()
+            return
 
         self._menu_helper.menu_helper_simple(
             gamestate=state,
