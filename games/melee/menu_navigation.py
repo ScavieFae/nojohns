@@ -64,6 +64,7 @@ class SlippiMenuNavigator:
         self.last_menu_selection = None
         self.position_history = []  # Track recent positions to detect loops
         self.attempts_for_current_char = 0
+        self._menu_helper = melee.MenuHelper()  # vladfi1 fork: instance methods, not static
 
     def navigate_menus(
         self,
@@ -98,7 +99,7 @@ class SlippiMenuNavigator:
 
         # Press start screen - proceed
         elif menu_state == Menu.PRESS_START:
-            melee.MenuHelper.choose_versus_mode(gamestate, controller)
+            self._menu_helper.choose_versus_mode(gamestate, controller)
 
         # Character select screen (online or local)
         elif menu_state in [Menu.CHARACTER_SELECT, Menu.SLIPPI_ONLINE_CSS]:
@@ -107,7 +108,7 @@ class SlippiMenuNavigator:
                 self._enter_connect_code(gamestate, controller, connect_code)
             # Regular character select
             else:
-                melee.MenuHelper.choose_character(
+                self._menu_helper.choose_character(
                     character=character,
                     gamestate=gamestate,
                     controller=controller,
@@ -119,7 +120,7 @@ class SlippiMenuNavigator:
 
         # Stage select
         elif menu_state == Menu.STAGE_SELECT:
-            melee.MenuHelper.choose_stage(
+            self._menu_helper.choose_stage(
                 stage=stage,
                 gamestate=gamestate,
                 controller=controller,
@@ -127,7 +128,7 @@ class SlippiMenuNavigator:
 
         # Postgame - skip back to menus
         elif menu_state == Menu.POSTGAME_SCORES:
-            melee.MenuHelper.skip_postgame(controller, gamestate)
+            self._menu_helper.skip_postgame(controller, gamestate)
 
     def _navigate_to_online(
         self,
@@ -137,9 +138,9 @@ class SlippiMenuNavigator:
     ) -> None:
         """Navigate from MAIN_MENU to Slippi online/direct connect."""
         if connect_code:
-            melee.MenuHelper.choose_direct_online(gamestate, controller)
+            self._menu_helper.choose_direct_online(gamestate, controller)
         else:
-            melee.MenuHelper.choose_versus_mode(gamestate, controller)
+            self._menu_helper.choose_versus_mode(gamestate, controller)
 
     def _enter_connect_code(
         self,
