@@ -431,6 +431,8 @@ class NetplayRunner:
         self._menu_navigator = SlippiMenuNavigator()
         self._menu_helper = melee.MenuHelper()
         self._our_port = 1  # Updated by port detection when game starts
+        self._in_name_entry = False
+        self._was_past_name_entry = False
 
         # Live streaming setup
         self._streamer: MatchStreamer | None = None
@@ -867,30 +869,39 @@ class NetplayRunner:
     def _handle_menu(self, state: melee.GameState) -> None:
         """Navigate menus via Slippi direct connect.
 
-        Uses our custom SlippiMenuNavigator instead of libmelee's buggy
-        menu_helper_simple. Detects bounce-backs to name entry (after a
-        failed connection) and resets navigator state so the connect code
-        gets re-typed instead of pressing START on an empty field.
+        Uses libmelee's menu_helper_simple (which handles code entry and
+        character selection correctly). On bounce-back from a failed
+        connection, creates a fresh MenuHelper to reset internal state —
+        otherwise it tries to press START on an empty name entry field.
         """
-        # Detect bounce-back: if we're back at name entry but the navigator
-        # already finished typing the code, Slippi cleared the field on us.
-        # Reset so it re-types the connect code from scratch.
+        # Detect bounce-back: if we were past name entry but are back in it,
+        # the connection failed and Slippi cleared the field. Reset the
+        # MenuHelper so it re-types the connect code from scratch.
         if (state.menu_state in [Menu.CHARACTER_SELECT, Menu.SLIPPI_ONLINE_CSS]
-                and state.submenu == SubMenu.NAME_ENTRY_SUBMENU
-                and self._menu_navigator.connect_code_index >= len(self.config.opponent_code)):
-            logger.info("Bounce-back to name entry detected — resetting navigator")
-            self._menu_navigator.connect_code_index = 0
-            self._menu_navigator.inputs_live = False
-            self._menu_navigator.attempts_for_current_char = 0
-            self._menu_navigator.position_history = []
+                and state.submenu == SubMenu.NAME_ENTRY_SUBMENU):
+            if not self._in_name_entry:
+                # First time entering name entry — normal flow
+                self._in_name_entry = True
+            elif getattr(self, '_was_past_name_entry', False):
+                # We were past name entry and got bounced back
+                logger.info("Bounce-back to name entry detected — resetting MenuHelper")
+                self._menu_helper = melee.MenuHelper()
+                self._was_past_name_entry = False
+        else:
+            if self._in_name_entry:
+                # We just left name entry — mark that we've been past it
+                self._was_past_name_entry = True
+                self._in_name_entry = False
 
-        self._menu_navigator.navigate_menus(
+        self._menu_helper.menu_helper_simple(
             gamestate=state,
             controller=self._controller,
+            character_selected=self.config.character,
+            stage_selected=self.config.stage,
             connect_code=self.config.opponent_code,
-            character=self.config.character,
-            stage=self.config.stage,
+            cpu_level=0,
             autostart=True,
+            swag=False,
         )
 
     def _to_fighter_result(self, game: GameResult) -> FighterMatchResult:
