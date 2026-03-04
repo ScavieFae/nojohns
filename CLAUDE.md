@@ -462,6 +462,8 @@ validation that requires "netplay" in the path.
 
 18. **CPU load causes desyncs**: Slippi's rollback is sensitive to frame timing. Background processes eating CPU cause desyncs. Close heavy apps during netplay.
 
+18b. **WiFi network matters for Slippi direct connect**: Some networks block or mangle the UDP hole-punch Slippi uses. `Gentle Thrills` WiFi causes direct connect to loop forever (types code, searches, kicks back to name entry). `Queen of Wands` works fine. Both machines do NOT need to be on the same network (cross-city worked Feb 25), but both need a network that allows UDP traversal. If direct connect loops, try a different WiFi before debugging code.
+
 19. **`--dolphin-home` tradeoffs**: On some machines, `--dolphin-home` is needed for the Slippi account. On others, it causes a non-working fullscreen mode. If menu nav gets stuck at name selection on match 2+, `--dolphin-home` may be the issue — or the fix.
 
 20. **Sheik and Ice Climbers**: `Character.SHEIK` can't be selected from the CSS (she's Zelda's down-B transform). `Character.ICECLIMBERS` doesn't exist in libmelee — use `Character.POPO`. Both will hang the menu navigator forever.
