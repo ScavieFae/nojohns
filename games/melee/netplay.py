@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import melee
-from melee import Character, Stage
+from melee import Character, Menu, Stage, SubMenu
 
 # Optional: httpx for streaming (legacy HTTP fallback)
 try:
@@ -867,18 +867,30 @@ class NetplayRunner:
     def _handle_menu(self, state: melee.GameState) -> None:
         """Navigate menus via Slippi direct connect.
 
-        Uses libmelee's menu_helper_simple. Now that accessibility permissions
-        are enabled, this should work properly.
+        Uses our custom SlippiMenuNavigator instead of libmelee's buggy
+        menu_helper_simple. Detects bounce-backs to name entry (after a
+        failed connection) and resets navigator state so the connect code
+        gets re-typed instead of pressing START on an empty field.
         """
-        self._menu_helper.menu_helper_simple(
+        # Detect bounce-back: if we're back at name entry but the navigator
+        # already finished typing the code, Slippi cleared the field on us.
+        # Reset so it re-types the connect code from scratch.
+        if (state.menu_state in [Menu.CHARACTER_SELECT, Menu.SLIPPI_ONLINE_CSS]
+                and state.submenu == SubMenu.NAME_ENTRY_SUBMENU
+                and self._menu_navigator.connect_code_index >= len(self.config.opponent_code)):
+            logger.info("Bounce-back to name entry detected — resetting navigator")
+            self._menu_navigator.connect_code_index = 0
+            self._menu_navigator.inputs_live = False
+            self._menu_navigator.attempts_for_current_char = 0
+            self._menu_navigator.position_history = []
+
+        self._menu_navigator.navigate_menus(
             gamestate=state,
             controller=self._controller,
-            character_selected=self.config.character,
-            stage_selected=self.config.stage,
             connect_code=self.config.opponent_code,
-            cpu_level=0,
+            character=self.config.character,
+            stage=self.config.stage,
             autostart=True,
-            swag=False,
         )
 
     def _to_fighter_result(self, game: GameResult) -> FighterMatchResult:

@@ -1,0 +1,54 @@
+# Exp 3a+1a: 1-frame lookahead + state_age embedding
+# Stacks lookahead on top of the Round 1 winner (1a).
+# Tests whether lookahead adds value when the model already has
+# frame-exact animation timing via state_age embedding.
+#
+# Expected dimension changes vs baseline:
+#   ctrl_conditioning_dim: 26 → 52 (two frames of ctrl)
+#   continuous_dim: 13 → 12 (state_age removed from float)
+#   embed_dim: 60 → 68 (state_age_embed_dim=8 added)
+#   int_per_player: 7 → 8 (state_age_int column added)
+
+data:
+  dataset_dir: null
+  max_games: 2000
+  stage_filter: null
+  character_filter: null
+
+encoding:
+  xy_scale: 0.05
+  percent_scale: 0.01
+  shield_scale: 0.01
+  action_vocab: 400
+  action_embed_dim: 32
+  jumps_vocab: 8
+  jumps_embed_dim: 4
+  # Exp 1a
+  state_age_as_embed: true
+  state_age_embed_vocab: 150
+  state_age_embed_dim: 8
+  press_events: false
+  # Exp 3a
+  lookahead: 1
+
+model:
+  context_len: 10
+  hidden_dim: 512
+  trunk_dim: 256
+  dropout: 0.1
+
+training:
+  lr: 0.001
+  weight_decay: 0.00001
+  batch_size: 512
+  num_epochs: 2
+  train_split: 0.9
+  device: null
+
+loss_weights:
+  continuous: 1.0
+  binary: 0.5
+  action: 2.0
+  jumps: 0.5
+
+save_dir: worldmodel/checkpoints

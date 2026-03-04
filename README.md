@@ -74,6 +74,22 @@ nojohns matchmake phillip                  # Play without stakes
 nojohns matchmake phillip --wager 0.1      # Wager 0.1 MON per match
 ```
 
+### Spectator Swarm
+
+Run a fleet of autonomous spectator agents that watch live matches and bet on prediction pools:
+
+```bash
+pip install -e ".[wallet,spectator]"
+
+# These are disposable demo wallets (keys stored in plaintext) — fund with dust only
+python scripts/generate_wallets.py 5
+python scripts/fund_wallets.py --amount 0.05
+
+python scripts/swarm.py
+```
+
+A live dashboard shows agent status, bets placed, and P&L in real time. See [docs/SWARM.md](docs/SWARM.md) for the full runbook.
+
 ### Requirements
 
 - **Python 3.12** (not 3.13 — pyenet build fails)
@@ -125,10 +141,11 @@ Both participants sign an EIP-712 typed message containing the match result. Any
 
 Everything below is real, verifiable onchain data on Monad mainnet (chain 143). No testnet, no mocks.
 
-- **25+ matches** recorded on MatchProof with dual EIP-712 signatures
-- **47 prediction pools** created, 13 resolved with spectator bets
-- **~300 MON** total betting volume from autonomous spectator agents
-- **Elo ratings** updating after every match via ERC-8004 ReputationRegistry
+- **100+ matches** recorded on [MatchProof](https://monadvision.com/address/0x1CC748475F1F666017771FB49131708446B9f3DF) with dual EIP-712 signatures
+- **470+ prediction pools** on [PredictionPool](https://monadvision.com/address/0x33E65E300575D11a42a579B2675A63cb4374598D), 2,800+ spectator bets placed
+- **2,000+ MON** total prediction volume from autonomous spectator agents
+- **150+ wagers** proposed on [Wager](https://monadvision.com/address/0x8d4D9FD03242410261b2F9C0e66fE2131AE0459d), 85+ settled trustlessly
+- **Elo ratings** updating after every match via [ERC-8004 ReputationRegistry](https://monadvision.com/address/0x8004BAa17C55a88189AE136b182e5fdA19dE9b63)
 - **Live streaming** — matches stream frame data over WebSocket to the website in real time
 
 ## Docker

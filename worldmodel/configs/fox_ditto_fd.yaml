@@ -1,0 +1,39 @@
+# Phase 1: Fox ditto on Final Destination
+# Narrow scope — single character, single stage, no items
+
+data:
+  dataset_dir: null  # Set via CLI --dataset flag
+  max_games: null    # null = load all matching games
+  stage_filter: 31   # Final Destination (melee.Stage.FINAL_DESTINATION = 31)
+  character_filter: null  # null = any character (set to 2 for Fox dittos only)
+
+encoding:
+  xy_scale: 0.05
+  percent_scale: 0.01
+  shield_scale: 0.01
+  action_vocab: 400
+  action_embed_dim: 32
+  jumps_vocab: 8
+  jumps_embed_dim: 4
+
+model:
+  context_len: 10
+  hidden_dim: 512
+  trunk_dim: 256
+  dropout: 0.1
+
+training:
+  lr: 0.001
+  weight_decay: 0.00001
+  batch_size: 256
+  num_epochs: 50
+  train_split: 0.9
+  device: null  # null = auto-detect (MPS on Mac, CUDA on Linux)
+
+loss_weights:
+  continuous: 1.0
+  binary: 0.5
+  action: 2.0
+  jumps: 0.5
+
+save_dir: worldmodel/checkpoints
