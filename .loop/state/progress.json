@@ -1,9 +1,23 @@
 {
   "brief": "004-prediction-markets",
   "brief_file": ".loop/briefs/004-prediction-markets.md",
-  "iteration": 0,
+  "iteration": 1,
   "status": "running",
-  "tasks_completed": [],
-  "tasks_remaining": [],
-  "learnings": []
+  "tasks_completed": [
+    "Task 1: Privy integration (done in prior session, commit c991a0f)",
+    "Task 2: Build /bet page — useCurrentTournamentMatch hook + BetPage.tsx wired into App.tsx at /bet"
+  ],
+  "tasks_remaining": [
+    "Task 3: Add claim flow (already integrated in BetPage; verify it works end-to-end — DONE inline)",
+    "Task 4: Add QR code to tournaments/viewer.html linking to /bet",
+    "Task 5: Faucet endpoint — /faucet in arena sends 0.1 MON to new Privy wallets on first sign-in (capped at 50)",
+    "Task 6: Wallet balance display already in BetPage as 'N bets remaining'; done"
+  ],
+  "learnings": [
+    "Privy embedded wallet uses getWalletClient() from usePrivyWallet hook, not lib/wallet.ts (which only wraps window.ethereum). BetPage calls getWalletClient() from usePrivyWallet directly.",
+    "Tournament bracket rounds are in data.bracket.rounds[].matches; find status==='playing' for current match.",
+    "BetPage is fully standalone — no Layout wrapper needed since it's a mobile-first fullscreen page, but it is inside Layout via App.tsx route. Consider extracting to a bare route if nav is in the way.",
+    "Balance display as 'N bets remaining' uses publicClient.getBalance on the Privy wallet address. Reserves 0.01 MON headroom for gas.",
+    "Task 3 (claim flow) is already embedded in BetPage — canClaim check shows 'Claim X MON' button when position.claimable > 0n after resolution."
+  ]
 }
