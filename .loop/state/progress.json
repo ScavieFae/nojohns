@@ -1,24 +1,9 @@
 {
-  "brief": "001-bracket-system",
-  "brief_file": ".loop/briefs/001-bracket-system.md",
-  "iteration": 6,
-  "status": "complete",
-  "tasks_completed": [
-    "Task 1: Create tournaments/models.py — dataclasses for Tournament, Bracket, Round, Match, Entry",
-    "Task 2: Create tournaments/bracket.py — single elimination bracket generation with advance() and coinflip",
-    "Task 3: Create tournaments/tournament.py — lifecycle orchestration with SQLite persistence",
-    "Task 4: Add arena endpoints — POST/GET /tournaments, POST /tournaments/{id}/advance, POST /tournaments/{id}/next",
-    "Task 5: Build bracket viewer — tournaments/viewer.html (self-contained, polls /bracket every 3s)",
-    "Task 6: Build admin panel — tournaments/admin.html (create, start next, force-advance, rematch)"
-  ],
+  "brief": "004-prediction-markets",
+  "brief_file": ".loop/briefs/004-prediction-markets.md",
+  "iteration": 0,
+  "status": "running",
+  "tasks_completed": [],
   "tasks_remaining": [],
-  "learnings": [
-    "Existing arena/db.py uses SQLite with RLock, row_factory=sqlite3.Row, WAL mode",
-    "Arena queue/match pattern: db methods return dict[str, Any], status strings like 'playing'/'completed'",
-    "vladfi1 libmelee fork — don't import melee in tournament code, no game dependency needed here",
-    "Tests use .venv/bin/python -m pytest tests/ -v -o addopts=",
-    "Admin endpoints are prefixed /admin/tournaments/{id}/ and require Bearer token via ADMIN_TOKEN env var",
-    "force-advance takes {round, slot, winner_name}; advance takes same + optional score_a/score_b",
-    "All 6 tasks done — models, bracket engine, tournament lifecycle, arena endpoints, viewer, admin panel"
-  ]
+  "learnings": []
 }
