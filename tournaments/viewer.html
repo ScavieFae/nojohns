@@ -275,6 +275,52 @@ body {
 }
 .error-toast.visible { display: block; }
 
+/* ── Bet QR Panel ────────────────────────────────────────────── */
+
+.bet-qr {
+  position: fixed;
+  bottom: 28px;
+  left: 28px;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 50;
+}
+
+.bet-qr-img {
+  width: 160px;
+  height: 160px;
+  display: block;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px;
+}
+
+.bet-qr-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: #4ade80;
+  text-align: center;
+}
+
+.bet-qr-url {
+  font-size: 9px;
+  color: #3a3a3a;
+  font-family: monospace;
+  text-align: center;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Animations ─────────────────────────────────────────────── */
 
 @keyframes pulse {
@@ -304,6 +350,12 @@ body {
 </div>
 
 <div class="error-toast" id="error-toast">Connection lost — retrying…</div>
+
+<div class="bet-qr" id="bet-qr">
+  <img class="bet-qr-img" id="bet-qr-img" alt="QR code — scan to bet" />
+  <div class="bet-qr-label">Scan to Bet</div>
+  <div class="bet-qr-url" id="bet-qr-url"></div>
+</div>
 
 <script>
 // ── Config ────────────────────────────────────────────────────
@@ -553,6 +605,19 @@ window.addEventListener('resize', () => {
     }
   }, 200);
 });
+
+// ── Bet QR Code ───────────────────────────────────────────────
+
+(function initBetQr() {
+  const betUrl = params.get('bet_url') || (location.origin + '/bet');
+  const qrImg  = document.getElementById('bet-qr-img');
+  const qrUrl  = document.getElementById('bet-qr-url');
+
+  qrImg.src = 'https://chart.googleapis.com/chart?cht=qr&chs=320x320&chl='
+    + encodeURIComponent(betUrl) + '&choe=UTF-8&chld=M|1';
+  qrUrl.textContent = betUrl;
+  qrUrl.title = betUrl;
+})();
 
 // Start polling
 poll();
