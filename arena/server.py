@@ -23,6 +23,9 @@ Tournaments:
     POST   /tournaments/{id}/advance           Report match result + advance bracket
     POST   /tournaments/{id}/next              Queue next match into arena (admin)
     POST   /admin/tournaments/{id}/force-advance  Force-advance a match (admin)
+
+Faucet:
+    POST   /faucet                             Fund a new Privy wallet with 0.1 MON (capped at 50)
 """
 
 import asyncio
@@ -1508,6 +1511,101 @@ def list_pools() -> dict[str, Any]:
     return {
         "pools": pools,
         "count": len(pools),
+    }
+
+
+# ======================================================================
+# Faucet Endpoint
+# ======================================================================
+
+# 0.1 MON in wei
+_FAUCET_AMOUNT_WEI = int(0.1 * 10**18)
+# Max number of wallets we'll fund (bounds operator exposure)
+_FAUCET_CAP = 50
+
+
+def _send_native(to_address: str, amount_wei: int, account, rpc_url: str, chain_id: int) -> str:
+    """Send native MON to an address. Returns tx hash hex string."""
+    from web3 import Web3
+
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    nonce = w3.eth.get_transaction_count(account.address)
+    tx = {
+        "to": Web3.to_checksum_address(to_address),
+        "value": amount_wei,
+        "gas": 21000,
+        "gasPrice": w3.eth.gas_price,
+        "nonce": nonce,
+        "chainId": chain_id,
+    }
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    return tx_hash.hex()
+
+
+class FaucetRequest(BaseModel):
+    address: str  # Privy embedded wallet address
+
+
+@app.post("/faucet")
+def faucet(req: FaucetRequest) -> dict[str, Any]:
+    """Fund a new spectator wallet with 0.1 MON for betting.
+
+    Called by the /bet page after Privy creates an embedded wallet.
+    Idempotent — calling twice for the same address returns success without
+    sending a second transaction. Capped at FAUCET_CAP wallets total.
+
+    Requires ARENA_PRIVATE_KEY (arena wallet must hold MON).
+    """
+    address = req.address.strip()
+    if not address.startswith("0x") or len(address) != 42:
+        raise HTTPException(status_code=400, detail="Invalid address")
+
+    account = _get_arena_account()
+    if account is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Faucet not configured (ARENA_PRIVATE_KEY missing)",
+        )
+
+    db = get_db()
+
+    # Idempotent: already funded
+    if db.is_wallet_funded(address):
+        return {"success": True, "funded": False, "reason": "already_funded"}
+
+    # Cap check
+    count = db.funded_wallet_count()
+    if count >= _FAUCET_CAP:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Faucet cap reached ({_FAUCET_CAP} wallets funded)",
+        )
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    chain_id = int(os.environ.get("MONAD_CHAIN_ID", "143"))
+
+    try:
+        from web3 import Web3  # noqa: F401 — confirm web3 is installed before DB write
+    except ImportError:
+        raise HTTPException(status_code=503, detail="web3 not installed on server")
+
+    try:
+        tx_hash = _send_native(address, _FAUCET_AMOUNT_WEI, account, rpc_url, chain_id)
+    except Exception as e:
+        logger.warning(f"Faucet send failed for {address}: {e}")
+        raise HTTPException(status_code=502, detail=f"Transaction failed: {e}")
+
+    db.record_funded_wallet(address, tx_hash)
+    logger.info(f"Faucet: funded {address} with 0.1 MON — tx={tx_hash} ({count + 1}/{_FAUCET_CAP})")
+
+    return {
+        "success": True,
+        "funded": True,
+        "tx_hash": tx_hash,
+        "amount_mon": 0.1,
+        "wallets_funded": count + 1,
+        "cap": _FAUCET_CAP,
     }
 
 

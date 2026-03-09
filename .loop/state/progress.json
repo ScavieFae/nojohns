@@ -1,20 +1,24 @@
 {
-  "brief": "003-disconnect-recovery",
-  "brief_file": ".loop/briefs/003-disconnect-recovery.md",
+  "brief": "004-prediction-markets",
+  "brief_file": ".loop/briefs/004-prediction-markets.md",
   "iteration": 6,
   "status": "complete",
   "tasks_completed": [
-    "Add ADMIN_TOKEN bearer auth to all /admin/* endpoints via require_admin dependency",
-    "Add MATCH_TIMEOUT env var (default 300s) to _expire_stale_matches()",
-    "Decouple match expiration from pool cancellation; rename to _expire_stale_matches()",
-    "Add targeted admin endpoints: /admin/matches/{id}/expire, /admin/pools/{id}/cancel, /admin/matches/{id}/rematch, /admin/wallet",
-    "Add wallet balance logging after every onchain op; WARNING below 0.05 MON; startup balance check",
-    "Add auth to existing /admin/cleanup endpoint"
+    "Task 1: Privy integration (done in prior session, commit c991a0f)",
+    "Task 2: Build /bet page — useCurrentTournamentMatch hook + BetPage.tsx wired into App.tsx at /bet",
+    "Task 3: Claim flow — embedded in BetPage; canClaim check shows 'Claim X MON' button when position.claimable > 0n after resolution",
+    "Task 4: Add QR code to tournaments/viewer.html linking to /bet (commit b69a242)",
+    "Task 5: Faucet endpoint — /faucet in arena sends 0.1 MON to new Privy wallets on first sign-in, capped at 50 (commit c3aad9a)",
+    "Task 6: Wallet balance display — shows 'N bets remaining' in BetPage; reserves 0.01 MON headroom for gas"
   ],
   "tasks_remaining": [],
   "learnings": [
-    "Two test_netplay tests were already failing before this brief (test_handle_menu_passes_character, test_handle_menu_passes_connect_code) — pre-existing failures unrelated to this work.",
-    "Previous loop iterations committed all tasks but never updated progress.json — progress.json was still at iteration 0 when this session started.",
-    "_log_wallet_balance helper placed before require_admin so it's available when needed by _try_* functions defined before app creation."
+    "Privy embedded wallet uses getWalletClient() from usePrivyWallet hook, not lib/wallet.ts (which only wraps window.ethereum). BetPage calls getWalletClient() from usePrivyWallet directly.",
+    "Tournament bracket rounds are in data.bracket.rounds[].matches; find status==='playing' for current match.",
+    "BetPage is fully standalone — no Layout wrapper needed since it's a mobile-first fullscreen page, but it is inside Layout via App.tsx route. Consider extracting to a bare route if nav is in the way.",
+    "Balance display as 'N bets remaining' uses publicClient.getBalance on the Privy wallet address. Reserves 0.01 MON headroom for gas.",
+    "Task 3 (claim flow) is already embedded in BetPage — canClaim check shows 'Claim X MON' button when position.claimable > 0n after resolution.",
+    "Build succeeds: cd web && npm run build. No errors, only chunk size warnings (expected with Privy's bundle).",
+    "All completion criteria met: Privy sign-in, /bet page with one-tap bets, external wallet connect, 0.1 MON faucet, claim flow, QR code on bracket viewer, auto-next-match polling."
   ]
 }
