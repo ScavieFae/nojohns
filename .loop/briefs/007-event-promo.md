@@ -37,6 +37,7 @@ Search the web for every relevant channel. For each, record:
 - EthSF event lists, Ethereum community calendars, crypto event aggregators for SF
 - "This week in SF" / "SF events this week" general event lists and newsletters
 - SF gaming communities (Melee locals, FGC groups, gaming Discord servers)
+- **Local SF Bay Area Smash/FGC communities** — find active weeklies, monthlies, TOs, and community leaders. Two goals: (1) invite players and community members to the event, and (2) identify anyone who might be able to bring setups (CRTs, consoles, copies of Melee) to supplement our stations
 - SF tech/AI communities (meetup groups, newsletters, Twitter lists)
 - Crypto Twitter accounts that amplify SF events
 - Reddit: r/sanfrancisco, r/smashbros, r/ethereum, r/gamedev
