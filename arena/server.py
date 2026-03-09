@@ -25,7 +25,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .db import ArenaDB
@@ -101,6 +101,20 @@ def _get_arena_account():
     except Exception as e:
         logger.warning(f"Failed to load arena wallet: {e}")
         return None
+
+
+def require_admin(authorization: str | None = Header(default=None)):
+    """FastAPI dependency: validate ADMIN_TOKEN bearer auth on admin endpoints.
+
+    If ADMIN_TOKEN env var is set, requests must include `Authorization: Bearer <token>`.
+    If ADMIN_TOKEN is not set (dev mode), requests are allowed with a warning.
+    """
+    token = os.environ.get("ADMIN_TOKEN")
+    if not token:
+        logger.warning("ADMIN_TOKEN not configured — admin endpoints are unprotected")
+        return
+    if not authorization or authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _post_elo_updates(match: dict):
@@ -832,7 +846,7 @@ def get_signatures(match_id: str) -> dict[str, Any]:
 
 
 @app.post("/admin/cleanup")
-def admin_cleanup() -> dict[str, Any]:
+def admin_cleanup(_: None = Depends(require_admin)) -> dict[str, Any]:
     """Force-expire stale queue entries and matches. For debugging."""
     db = get_db()
     expired_queue = db.expire_stale_entries(timeout_seconds=0)
