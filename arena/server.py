@@ -469,15 +469,14 @@ def _try_resolve_pool(match_id: str):
         logger.warning(f"Failed to resolve prediction pool {pool_id}: {e}")
 
 
-def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
-    """Expire stale matches, cancel their prediction pools, and void stuck wagers."""
-    expired_ids = db.expire_stale_matches(timeout_seconds)
-    if expired_ids:
-        steps = []
-        for mid in expired_ids:
-            steps.append((_try_cancel_pool, mid))
-            steps.append((_try_void_wager, mid))
-        _background_chain(*steps)
+def _expire_stale_matches(db: ArenaDB) -> list[str]:
+    """Expire stale matches. Does NOT cancel prediction pools — that's an explicit admin action.
+
+    Timeout is controlled by MATCH_TIMEOUT env var (default 300s / 5 min).
+    Expired match IDs are returned so callers can take further action if needed.
+    """
+    timeout_seconds = int(os.environ.get("MATCH_TIMEOUT", "300"))
+    return db.expire_stale_matches(timeout_seconds)
 
 
 # Global DB instance — set during lifespan
@@ -665,7 +664,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
 
     # Sweep stale entries on each queue operation
     db.expire_stale_entries()
-    _expire_matches_and_cancel_pools(db)
+    _expire_stale_matches(db)
 
     queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address, req.agent_id)
     logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) agent_id={req.agent_id} -> {queue_id}")
@@ -869,7 +868,7 @@ def health() -> dict[str, Any]:
     _manager.sweep_stale()
     db = get_db()
     db.expire_stale_entries()
-    _expire_matches_and_cancel_pools(db)
+    _expire_stale_matches(db)
     # Prefer in-memory manager (has frame data for viewers), fall back to DB
     # after restarts when manager state is lost but DB still has playing matches
     live_ids = list(_manager.match_info.keys())
