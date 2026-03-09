@@ -1,19 +1,12 @@
 {
-  "active": [
+  "active": [],
+  "completed_pending_eval": [
     {
       "brief": "004-prediction-markets",
       "branch": "004-prediction-markets",
       "brief_file": ".loop/briefs/004-prediction-markets.md",
-      "dispatched_at": "2026-03-09T22:42:19Z"
-    }
-  ],
-  "completed_pending_eval": [
-    {
-      "brief": "003-disconnect-recovery",
-      "branch": "003-disconnect-recovery",
-      "brief_file": ".loop/briefs/003-disconnect-recovery.md",
-      "dispatched_at": "2026-03-09T22:29:03Z",
-      "completed_at": "2026-03-09T22:42:18Z"
+      "dispatched_at": "2026-03-09T22:42:19Z",
+      "completed_at": "2026-03-09T23:12:44Z"
     }
   ],
   "history": [
@@ -21,7 +14,13 @@
       "brief": "001-bracket-system",
       "branch": "001-bracket-system",
       "merged_at": "2026-03-09T22:29:07Z",
-      "evaluation": ""
+      "evaluation": ".loop/evaluations/001-bracket-system.md"
+    },
+    {
+      "brief": "003-disconnect-recovery",
+      "branch": "003-disconnect-recovery",
+      "merged_at": "2026-03-09T22:42:18Z",
+      "evaluation": ".loop/evaluations/003-disconnect-recovery.md"
     }
   ]
 }
