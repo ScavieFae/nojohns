@@ -862,6 +862,96 @@ def admin_cleanup(_: None = Depends(require_admin)) -> dict[str, Any]:
     }
 
 
+@app.post("/admin/matches/{match_id}/expire")
+def admin_expire_match(match_id: str, _: None = Depends(require_admin)) -> dict[str, Any]:
+    """Expire a single stuck match. Does NOT cancel its prediction pool."""
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if match["status"] != "playing":
+        return {"match_id": match_id, "status": match["status"], "changed": False}
+    db.expire_match(match_id)
+    logger.info(f"Admin expired match {match_id}")
+    return {"match_id": match_id, "status": "expired", "changed": True}
+
+
+@app.post("/admin/pools/{pool_id}/cancel")
+def admin_cancel_pool(pool_id: int, _: None = Depends(require_admin)) -> dict[str, Any]:
+    """Cancel a prediction pool onchain, enabling refunds."""
+    account = _get_arena_account()
+    if account is None:
+        raise HTTPException(status_code=503, detail="Arena wallet not configured")
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        raise HTTPException(status_code=503, detail="PREDICTION_POOL not configured")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    try:
+        from nojohns.contract import cancel_pool
+
+        cancel_pool(pool_id, account, rpc_url, pool_address)
+        logger.info(f"Admin cancelled pool {pool_id}")
+        return {"pool_id": pool_id, "cancelled": True}
+    except ImportError:
+        raise HTTPException(status_code=503, detail="web3 not installed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/matches/{match_id}/rematch")
+def admin_rematch(match_id: str, _: None = Depends(require_admin)) -> dict[str, Any]:
+    """Re-queue the same two players from an expired match. Creates a new match."""
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    p1_code = match["p1_connect_code"]
+    p2_code = match["p2_connect_code"]
+    p1_wallet = match.get("p1_wallet")
+    p2_wallet = match.get("p2_wallet")
+    p1_agent_id = match.get("p1_agent_id")
+    p2_agent_id = match.get("p2_agent_id")
+
+    # Create fresh queue entries for both players and immediately match them
+    p1_queue_id = db.add_to_queue(p1_code, None, p1_wallet, p1_agent_id)
+    p2_queue_id = db.add_to_queue(p2_code, None, p2_wallet, p2_agent_id)
+    p1_entry = db.get_queue_entry(p1_queue_id)
+    p2_entry = db.get_queue_entry(p2_queue_id)
+    new_match_id = db.create_match(p1_entry, p2_entry)
+    logger.info(f"Admin rematch: {p1_code} vs {p2_code} -> {new_match_id} (from {match_id})")
+
+    # Create prediction pool for the new match
+    _background_chain((_try_create_pool, new_match_id, p1_wallet, p2_wallet))
+
+    return {
+        "new_match_id": new_match_id,
+        "p1_connect_code": p1_code,
+        "p2_connect_code": p2_code,
+    }
+
+
+@app.get("/admin/wallet")
+def admin_wallet(_: None = Depends(require_admin)) -> dict[str, Any]:
+    """Return arena wallet address and MON balance."""
+    account = _get_arena_account()
+    if account is None:
+        raise HTTPException(status_code=503, detail="Arena wallet not configured")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    balance_mon = None
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        balance_wei = w3.eth.get_balance(account.address)
+        balance_mon = float(Web3.from_wei(balance_wei, "ether"))
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"Failed to fetch wallet balance: {e}")
+    return {"address": account.address, "balance_mon": balance_mon}
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, Any]:
     """Server health check. Returns live match IDs for spectator discovery."""

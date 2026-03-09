@@ -261,6 +261,16 @@ class ArenaDB:
 
             return expired_ids
 
+    def expire_match(self, match_id: str) -> bool:
+        """Expire a single match by ID. Returns True if it was playing and is now expired."""
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE matches SET status = 'expired' WHERE id = ? AND status = 'playing'",
+                (match_id,),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+
     def set_pool_id(self, match_id: str, pool_id: int) -> None:
         """Store the onchain prediction pool ID for a match."""
         with self._lock:
