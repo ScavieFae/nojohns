@@ -1,5 +1,12 @@
 {
-  "active": [],
+  "active": [
+    {
+      "brief": "006-human-vs-agent",
+      "branch": "006-human-vs-agent",
+      "brief_file": ".loop/briefs/006-human-vs-agent.md",
+      "dispatched_at": "2026-03-09T23:12:46Z"
+    }
+  ],
   "completed_pending_eval": [
     {
       "brief": "004-prediction-markets",
