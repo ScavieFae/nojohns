@@ -1,13 +1,14 @@
 {
-  "active": [
+  "active": [],
+  "completed_pending_eval": [
     {
       "brief": "003-disconnect-recovery",
       "branch": "003-disconnect-recovery",
       "brief_file": ".loop/briefs/003-disconnect-recovery.md",
-      "dispatched_at": "2026-03-09T22:29:03Z"
+      "dispatched_at": "2026-03-09T22:29:03Z",
+      "completed_at": "2026-03-09T22:42:18Z"
     }
   ],
-  "completed_pending_eval": [],
   "history": [
     {
       "brief": "001-bracket-system",
