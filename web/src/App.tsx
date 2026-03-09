@@ -7,6 +7,7 @@ import { CompetePage } from "./pages/CompetePage";
 import { LivePage } from "./pages/LivePage";
 import { ViewerDemo } from "./components/viewer/ViewerDemo";
 import { DemoPage } from "./pages/DemoPage";
+import { BetPage } from "./pages/BetPage";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/live/:matchId" element={<LivePage />} />
         <Route path="/demo" element={<DemoPage />} />
         <Route path="/viewer" element={<ViewerDemo />} />
+        <Route path="/bet" element={<BetPage />} />
       </Routes>
     </Layout>
   );
