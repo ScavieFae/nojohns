@@ -103,6 +103,30 @@ def _get_arena_account():
         return None
 
 
+LOW_BALANCE_THRESHOLD_MON = 0.05
+
+
+def _log_wallet_balance(account, rpc_url: str, context: str):
+    """Fetch and log wallet balance. Emits WARNING if below LOW_BALANCE_THRESHOLD_MON."""
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        balance_wei = w3.eth.get_balance(account.address)
+        balance_mon = float(Web3.from_wei(balance_wei, "ether"))
+        if balance_mon < LOW_BALANCE_THRESHOLD_MON:
+            logger.warning(
+                f"Arena wallet LOW BALANCE after {context}: {balance_mon:.4f} MON "
+                f"(threshold: {LOW_BALANCE_THRESHOLD_MON} MON)"
+            )
+        else:
+            logger.info(f"Arena wallet balance after {context}: {balance_mon:.4f} MON")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"Balance check failed after {context}: {e}")
+
+
 def require_admin(authorization: str | None = Header(default=None)):
     """FastAPI dependency: validate ADMIN_TOKEN bearer auth on admin endpoints.
 
@@ -345,6 +369,7 @@ def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None
         # Store pool_id in DB
         db = get_db()
         db.set_pool_id(match_id, pool_id)
+        _log_wallet_balance(account, rpc_url, f"create_pool(match={match_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool creation")
     except Exception as e:
@@ -380,6 +405,7 @@ def _try_cancel_pool(match_id: str):
 
         cancel_pool(pool_id, account, rpc_url, pool_address)
         logger.info(f"Prediction pool {pool_id} cancelled for expired match {match_id}")
+        _log_wallet_balance(account, rpc_url, f"cancel_pool(pool={pool_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool cancellation")
     except Exception as e:
@@ -462,6 +488,7 @@ def _try_resolve_pool(match_id: str):
 
         tx_hash = resolve_pool(pool_id, account, rpc_url, pool_address)
         logger.info(f"Prediction pool {pool_id} resolved for match {match_id}: tx={tx_hash}")
+        _log_wallet_balance(account, rpc_url, f"resolve_pool(pool={pool_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool resolution")
     except Exception as e:
@@ -518,6 +545,24 @@ def _log_startup_config():
         account = _get_arena_account()
         if account:
             logger.info(f"  Arena wallet: {account.address}")
+            # Log starting balance so operator can verify before match night
+            try:
+                from web3 import Web3
+
+                w3 = Web3(Web3.HTTPProvider(rpc_url))
+                balance_wei = w3.eth.get_balance(account.address)
+                balance_mon = float(Web3.from_wei(balance_wei, "ether"))
+                if balance_mon < LOW_BALANCE_THRESHOLD_MON:
+                    logger.warning(
+                        f"  Arena wallet STARTING BALANCE LOW: {balance_mon:.4f} MON "
+                        f"(threshold: {LOW_BALANCE_THRESHOLD_MON} MON) — top up before match night!"
+                    )
+                else:
+                    logger.info(f"  Arena wallet balance: {balance_mon:.4f} MON")
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.debug(f"  Balance check failed: {e}")
         else:
             logger.warning("  Arena wallet: key set but failed to load!")
     else:
