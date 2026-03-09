@@ -1,9 +1,20 @@
 {
   "brief": "003-disconnect-recovery",
   "brief_file": ".loop/briefs/003-disconnect-recovery.md",
-  "iteration": 0,
-  "status": "running",
-  "tasks_completed": [],
+  "iteration": 6,
+  "status": "complete",
+  "tasks_completed": [
+    "Add ADMIN_TOKEN bearer auth to all /admin/* endpoints via require_admin dependency",
+    "Add MATCH_TIMEOUT env var (default 300s) to _expire_stale_matches()",
+    "Decouple match expiration from pool cancellation; rename to _expire_stale_matches()",
+    "Add targeted admin endpoints: /admin/matches/{id}/expire, /admin/pools/{id}/cancel, /admin/matches/{id}/rematch, /admin/wallet",
+    "Add wallet balance logging after every onchain op; WARNING below 0.05 MON; startup balance check",
+    "Add auth to existing /admin/cleanup endpoint"
+  ],
   "tasks_remaining": [],
-  "learnings": []
+  "learnings": [
+    "Two test_netplay tests were already failing before this brief (test_handle_menu_passes_character, test_handle_menu_passes_connect_code) — pre-existing failures unrelated to this work.",
+    "Previous loop iterations committed all tasks but never updated progress.json — progress.json was still at iteration 0 when this session started.",
+    "_log_wallet_balance helper placed before require_admin so it's available when needed by _try_* functions defined before app creation."
+  ]
 }
