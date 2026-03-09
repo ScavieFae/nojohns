@@ -14,6 +14,15 @@ Live streaming:
     WS     /ws/stream/{id}      WebSocket for frame upload (client -> arena)
     POST   /matches/{id}/frame  Post frame data (client -> arena, legacy)
     POST   /matches/{id}/start  Signal match start with player info (legacy)
+
+Tournaments:
+    POST   /tournaments                        Create tournament (admin)
+    GET    /tournaments                        List all tournaments
+    GET    /tournaments/{id}                   Full tournament state
+    GET    /tournaments/{id}/bracket           Bracket JSON (viewer polls this)
+    POST   /tournaments/{id}/advance           Report match result + advance bracket
+    POST   /tournaments/{id}/next              Queue next match into arena (admin)
+    POST   /admin/tournaments/{id}/force-advance  Force-advance a match (admin)
 """
 
 import asyncio
@@ -25,7 +34,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .db import ArenaDB
@@ -1352,3 +1361,185 @@ def list_pools() -> dict[str, Any]:
         "pools": pools,
         "count": len(pools),
     }
+
+
+# ======================================================================
+# Tournament Endpoints
+# ======================================================================
+
+
+def _require_admin(authorization: str | None) -> None:
+    """Validate ADMIN_TOKEN bearer auth. Raises 401 if invalid."""
+    token = os.environ.get("ADMIN_TOKEN")
+    if not token:
+        return  # No token configured — skip auth (dev mode)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if authorization[len("Bearer "):] != token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+
+class EntryRequest(BaseModel):
+    name: str
+    character: str
+    strategy: str
+    connect_code: str
+    wallet_address: str | None = None
+
+
+class CreateTournamentRequest(BaseModel):
+    name: str
+    entries: list[EntryRequest]
+
+
+class AdvanceRequest(BaseModel):
+    round: int
+    slot: int
+    winner_name: str
+    score_a: int | None = None
+    score_b: int | None = None
+
+
+class ForceAdvanceRequest(BaseModel):
+    round: int
+    slot: int
+    winner_name: str
+
+
+@app.post("/tournaments")
+def create_tournament(
+    req: CreateTournamentRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Create a new tournament. Requires admin token if ADMIN_TOKEN is set."""
+    _require_admin(authorization)
+
+    from tournaments.models import Entry
+    from tournaments.tournament import create_tournament as _create
+
+    db = get_db()
+    entries = [
+        Entry(
+            name=e.name,
+            character=e.character,
+            strategy=e.strategy,  # type: ignore[arg-type]
+            connect_code=e.connect_code,
+            wallet_address=e.wallet_address,
+        )
+        for e in req.entries
+    ]
+    tournament = _create(db, req.name, entries)
+    return tournament.to_dict()
+
+
+@app.get("/tournaments")
+def list_all_tournaments() -> dict[str, Any]:
+    """List all tournaments (summary — no bracket data)."""
+    db = get_db()
+    from tournaments.tournament import list_tournaments
+    rows = list_tournaments(db)
+    return {"tournaments": rows, "count": len(rows)}
+
+
+@app.get("/tournaments/{tournament_id}")
+def get_tournament(tournament_id: str) -> dict[str, Any]:
+    """Full tournament state including bracket."""
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    return t.to_dict()
+
+
+@app.get("/tournaments/{tournament_id}/bracket")
+def get_bracket(tournament_id: str) -> dict[str, Any]:
+    """Bracket JSON — the viewer polls this every 3s."""
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    champion = t.bracket.champion()
+    return {
+        "tournament_id": t.id,
+        "name": t.name,
+        "status": t.status,
+        "champion": champion.to_dict() if champion else None,
+        "bracket": t.bracket.to_dict(),
+    }
+
+
+@app.post("/tournaments/{tournament_id}/advance")
+def advance_tournament(
+    tournament_id: str,
+    req: AdvanceRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Report a match result and advance the bracket."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get, report_result
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        t = report_result(db, t, req.round, req.slot, req.winner_name, req.score_a, req.score_b)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return t.to_dict()
+
+
+@app.post("/tournaments/{tournament_id}/next")
+def queue_next(
+    tournament_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Queue the next match into the arena. Operator taps this when ready."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get, queue_next_match
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    match = queue_next_match(db, t)
+    if match is None:
+        champion = t.bracket.champion()
+        return {
+            "queued": False,
+            "message": "No matches remaining" if champion else "No playable matches",
+            "champion": champion.to_dict() if champion else None,
+        }
+
+    return {
+        "queued": True,
+        "match": match.to_dict(),
+    }
+
+
+@app.post("/admin/tournaments/{tournament_id}/force-advance")
+def force_advance_match(
+    tournament_id: str,
+    req: ForceAdvanceRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Force-advance a match regardless of status. Admin override."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get, force_advance
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        t = force_advance(db, t, req.round, req.slot, req.winner_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return t.to_dict()
