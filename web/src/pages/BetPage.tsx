@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { parseEther, formatEther } from "viem";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePrivyWallet } from "../hooks/usePrivyWallet";
 import { useCurrentTournamentMatch } from "../hooks/useCurrentTournamentMatch";
 import { usePredictionPool, useUserPosition, PoolStatus } from "../hooks/usePredictionPool";
 import { publicClient } from "../viem";
-import { CONTRACTS } from "../config";
+import { CONTRACTS, ARENA_URL } from "../config";
 import { predictionPoolAbi } from "../abi/predictionPool";
 
 // Fixed bet amount — one tap, one bet
@@ -161,7 +161,7 @@ function OddsBar({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function BetPage() {
-  const { ready, isAuthenticated, login, account, getWalletClient } = usePrivyWallet();
+  const { ready, isAuthenticated, login, account, getWalletClient, isEmbeddedWallet } = usePrivyWallet();
   const { match, isLoading: matchLoading } = useCurrentTournamentMatch();
   const queryClient = useQueryClient();
 
@@ -171,6 +171,21 @@ export function BetPage() {
   );
   const position = useUserPosition(poolId, account);
   const { data: balance } = useBalance(account);
+
+  // Faucet: fund new embedded wallets once on sign-in
+  const faucetCalled = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || !account || !isEmbeddedWallet || faucetCalled.current) return;
+    faucetCalled.current = true;
+    fetch(`${ARENA_URL}/faucet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: account }),
+    }).catch(() => {
+      // Faucet failure is non-fatal — user can still browse but may not be able to bet
+      faucetCalled.current = false; // allow retry on next render
+    });
+  }, [isAuthenticated, account, isEmbeddedWallet]);
 
   // Transaction state
   const [txPending, setTxPending] = useState(false);

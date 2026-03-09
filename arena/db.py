@@ -124,6 +124,18 @@ class ArenaDB:
             except sqlite3.OperationalError:
                 pass
 
+        # Faucet tracking — persists funded wallet addresses
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faucet_wallets (
+                address TEXT PRIMARY KEY,
+                tx_hash TEXT,
+                funded_at TEXT
+            )
+            """
+        )
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # Queue
     # ------------------------------------------------------------------
@@ -522,6 +534,36 @@ class ArenaDB:
                 "ORDER BY created_at DESC"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Faucet
+    # ------------------------------------------------------------------
+
+    def is_wallet_funded(self, address: str) -> bool:
+        """Return True if this wallet has already been funded by the faucet."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM faucet_wallets WHERE address = ? COLLATE NOCASE",
+                (address,),
+            ).fetchone()
+            return row is not None
+
+    def funded_wallet_count(self) -> int:
+        """Return total number of wallets funded by the faucet."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM faucet_wallets"
+            ).fetchone()[0]
+
+    def record_funded_wallet(self, address: str, tx_hash: str) -> None:
+        """Record a wallet as funded. Upserts by address."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO faucet_wallets (address, tx_hash, funded_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(address) DO NOTHING",
+                (address.lower(), tx_hash, _now()),
+            )
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Stats
