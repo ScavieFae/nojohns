@@ -74,6 +74,15 @@ class ArenaDB:
                 created_at TEXT,
                 UNIQUE(match_id, address)
             );
+
+            CREATE TABLE IF NOT EXISTS tournaments (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                data TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
             """
         )
 
@@ -539,6 +548,40 @@ class ArenaDB:
                 "SELECT id FROM matches WHERE status = 'playing'"
             ).fetchall()
             return [r[0] for r in rows]
+
+
+    # ------------------------------------------------------------------
+    # Tournaments
+    # ------------------------------------------------------------------
+
+    def save_tournament(self, tournament_id: str, name: str, status: str, data: str) -> None:
+        """Upsert a tournament record. data is JSON string of full bracket state."""
+        with self._lock:
+            now = _now()
+            self._conn.execute(
+                "INSERT INTO tournaments (id, name, status, data, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET name=?, status=?, data=?, updated_at=?",
+                (tournament_id, name, status, data, now, now, name, status, data, now),
+            )
+            self._conn.commit()
+
+    def load_tournament(self, tournament_id: str) -> dict[str, Any] | None:
+        """Load a tournament record. Returns dict with id/name/status/data or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, name, status, data FROM tournaments WHERE id = ?",
+                (tournament_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_tournaments(self) -> list[dict[str, Any]]:
+        """List all tournaments, newest first. Returns id/name/status (no bracket data)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, status, created_at FROM tournaments ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
 
 def _now() -> str:
