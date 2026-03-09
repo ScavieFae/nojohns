@@ -1,5 +1,12 @@
 {
-  "active": [],
+  "active": [
+    {
+      "brief": "004-prediction-markets",
+      "branch": "004-prediction-markets",
+      "brief_file": ".loop/briefs/004-prediction-markets.md",
+      "dispatched_at": "2026-03-09T22:42:19Z"
+    }
+  ],
   "completed_pending_eval": [
     {
       "brief": "003-disconnect-recovery",
