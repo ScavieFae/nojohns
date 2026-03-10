@@ -382,7 +382,16 @@ class MatchRunner:
 
         CPU ports: use the controller to select character, then disconnect.
         Melee auto-converts an unplugged port with a character selected to CPU.
+
+        Autostart is suppressed until all CPU ports have been disconnected,
+        otherwise the game starts before the CPU conversion happens.
         """
+        # Check if any CPU ports still need to be disconnected
+        cpu_ports_pending = False
+        for port, cpu in [(1, settings.p1_cpu_level), (2, settings.p2_cpu_level)]:
+            if cpu > 0 and port in self._controllers:
+                cpu_ports_pending = True
+
         for port, char, cpu in [
             (1, settings.p1_character, settings.p1_cpu_level),
             (2, settings.p2_character, settings.p2_cpu_level),
@@ -403,6 +412,12 @@ class MatchRunner:
                     logger.info(f"   Port {port}: character selected, disconnected → CPU")
                     continue
 
+            # Don't autostart until all CPU ports have disconnected
+            can_autostart = (
+                cpu == 0
+                and not settings.no_autostart
+                and not cpu_ports_pending
+            )
             self._menu_helper.menu_helper_simple(
                 gamestate=state,
                 controller=self._controllers[port],
@@ -410,7 +425,7 @@ class MatchRunner:
                 stage_selected=settings.stage,
                 connect_code="",
                 cpu_level=0,  # Never use libmelee's CPU toggle — we use disconnect instead
-                autostart=(cpu == 0 and not settings.no_autostart),
+                autostart=can_autostart,
                 swag=False,
             )
     
