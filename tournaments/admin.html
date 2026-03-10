@@ -531,6 +531,9 @@ body {
     <span class="section-title">Force Advance</span>
   </div>
   <div class="section-body">
+    <button class="btn btn-secondary" id="btn-rematch" onclick="rematch()" style="display:none; margin-bottom:12px;">
+      ↺ Rematch Current Match
+    </button>
     <p style="font-size:13px; color:#666; margin-bottom:12px;">Override any match regardless of status. Use for timeouts, disconnects, and admin decisions.</p>
     <div class="force-form">
       <input type="number" id="force-round" min="0" placeholder="Round #">
@@ -735,6 +738,8 @@ function updateMatchCard(m) {
     badge.textContent = 'No match';
     badge.className = 'match-status-badge badge-pending';
     btnToggle.style.display = 'none';
+    const btnR = document.getElementById('btn-rematch');
+    if (btnR) btnR.style.display = 'none';
     return;
   }
 
@@ -751,6 +756,10 @@ function updateMatchCard(m) {
 
   // Show report toggle if match is playing or pending-with-entries
   btnToggle.style.display = (m.entry_a && m.entry_b && m.status !== 'complete') ? '' : 'none';
+
+  // Show rematch if we have an arena match ID (match has been queued)
+  const btnRematch = document.getElementById('btn-rematch');
+  if (btnRematch) btnRematch.style.display = m.arena_match_id ? '' : 'none';
 }
 
 function populateWinnerSelect(m) {
@@ -835,6 +844,24 @@ async function reportResult() {
     renderTournamentState(t);
   } catch (e) {
     toast(`Failed: ${e.message}`, 'err');
+  }
+}
+
+async function rematch() {
+  if (!currentTournament || !currentMatch || !currentMatch.arena_match_id) {
+    return toast('No active match to rematch', 'err');
+  }
+  const aName = currentMatch.entry_a?.name ?? '?';
+  const bName = currentMatch.entry_b?.name ?? '?';
+  if (!confirm(`Re-queue ${aName} vs ${bName}?`)) return;
+  try {
+    await apiFetch(`/admin/matches/${currentMatch.arena_match_id}/rematch`, { method: 'POST' });
+    toast(`Rematch queued: ${aName} vs ${bName}`, 'ok');
+    const t = await apiFetch(`/tournaments/${currentTournament.id}`);
+    currentTournament = t;
+    renderTournamentState(t);
+  } catch (e) {
+    toast(`Rematch failed: ${e.message}`, 'err');
   }
 }
 
