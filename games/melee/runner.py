@@ -382,7 +382,20 @@ class MatchRunner:
         CPU ports use libmelee's built-in CPU toggle: menu_helper navigates
         the cursor to the HMN/CPU button, clicks it, grabs the CPU level
         slider, and drags it to the right value (1-9).
+
+        Autostart is suppressed until all CPU ports have the correct
+        controller_status and cpu_level, otherwise port 1 starts the match
+        before port 2 finishes toggling to CPU.
         """
+        # Check if all CPU ports are fully configured
+        cpu_ready = True
+        for port, cpu in [(1, settings.p1_cpu_level), (2, settings.p2_cpu_level)]:
+            if cpu > 0:
+                player = state.players.get(port)
+                if not player or player.controller_status != melee.enums.ControllerStatus.CONTROLLER_CPU \
+                        or player.cpu_level != cpu:
+                    cpu_ready = False
+
         for port, char, cpu in [
             (1, settings.p1_character, settings.p1_cpu_level),
             (2, settings.p2_character, settings.p2_cpu_level),
@@ -390,6 +403,10 @@ class MatchRunner:
             if port not in self._controllers:
                 continue
 
+            can_autostart = (
+                not settings.no_autostart
+                and cpu_ready
+            )
             self._menu_helper.menu_helper_simple(
                 gamestate=state,
                 controller=self._controllers[port],
@@ -397,7 +414,7 @@ class MatchRunner:
                 stage_selected=settings.stage,
                 connect_code="",
                 cpu_level=cpu,
-                autostart=(not settings.no_autostart),
+                autostart=can_autostart,
                 swag=False,
             )
     
