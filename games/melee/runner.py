@@ -58,6 +58,9 @@ class MatchSettings:
     p1_cpu_level: int = 0
     p2_cpu_level: int = 0
 
+    # If True, don't auto-start the match — pause at CSS for visual verification
+    no_autostart: bool = False
+
 
 @dataclass
 class GameResult:
@@ -148,7 +151,7 @@ class MatchRunner:
         
         try:
             self._setup_console()
-            self._setup_controllers()
+            self._setup_controllers(settings)
             self._launch_and_connect()
 
             game_num = 0
@@ -219,8 +222,13 @@ class MatchRunner:
             save_replays=self.dolphin.slippi_replay_dir is not None,
         )
 
-    def _setup_controllers(self) -> None:
-        """Set up virtual controllers for both ports."""
+    def _setup_controllers(self, settings: MatchSettings | None = None) -> None:
+        """Set up virtual controllers for both ports.
+
+        All ports get STANDARD controllers for menu navigation. CPU ports
+        will be disconnected after character selection — Melee auto-converts
+        an unplugged port with a selected character to CPU.
+        """
         logger.debug("Setting up controllers")
 
         for port in [1, 2]:
@@ -299,10 +307,10 @@ class MatchRunner:
                     start_frame = state.frame
                     logger.info("Game started")
 
-                    # Notify fighters that the game has started (if they implement it)
-                    if hasattr(fighter1, 'on_game_start'):
+                    # Notify fighters that the game has started (skip CPU ports)
+                    if settings.p1_cpu_level == 0 and hasattr(fighter1, 'on_game_start'):
                         fighter1.on_game_start(1, state)
-                    if hasattr(fighter2, 'on_game_start'):
+                    if settings.p2_cpu_level == 0 and hasattr(fighter2, 'on_game_start'):
                         fighter2.on_game_start(2, state)
 
                 # Track damage dealt
@@ -314,18 +322,20 @@ class MatchRunner:
                             damage_dealt[opponent_port] += player.percent - last_percent[port]
                         last_percent[port] = player.percent
 
-                # Get actions from fighters
+                # Get actions from fighters (skip CPU-controlled ports)
                 try:
-                    action1 = fighter1.act(state)
-                    action2 = fighter2.act(state)
+                    action1 = fighter1.act(state) if settings.p1_cpu_level == 0 else None
+                    action2 = fighter2.act(state) if settings.p2_cpu_level == 0 else None
                 except Exception as e:
                     logger.error(f"Fighter error: {e}", exc_info=True)
-                    action1 = ControllerState()
-                    action2 = ControllerState()
+                    action1 = ControllerState() if settings.p1_cpu_level == 0 else None
+                    action2 = ControllerState() if settings.p2_cpu_level == 0 else None
 
-                # Apply actions
-                action1.to_libmelee(self._controllers[1])
-                action2.to_libmelee(self._controllers[2])
+                # Apply actions (CPU ports have no controller)
+                if action1 is not None and 1 in self._controllers:
+                    action1.to_libmelee(self._controllers[1])
+                if action2 is not None and 2 in self._controllers:
+                    action2.to_libmelee(self._controllers[2])
 
                 # Frame callback
                 if on_frame:
@@ -368,19 +378,39 @@ class MatchRunner:
             self._handle_menu(state, settings)
     
     def _handle_menu(self, state: melee.GameState, settings: MatchSettings) -> None:
-        """Navigate menus to start the game."""
+        """Navigate menus to start the game.
+
+        CPU ports: use the controller to select character, then disconnect.
+        Melee auto-converts an unplugged port with a character selected to CPU.
+        """
         for port, char, cpu in [
             (1, settings.p1_character, settings.p1_cpu_level),
             (2, settings.p2_character, settings.p2_cpu_level),
         ]:
+            if port not in self._controllers:
+                continue  # Already disconnected
+
+            # For CPU ports: once character is selected (coin_down), disconnect
+            # the controller. Melee will convert it to CPU automatically.
+            if cpu > 0:
+                player = state.players.get(port)
+                if player and player.coin_down:
+                    ctrl = self._controllers[port]
+                    ctrl.disconnect()
+                    if ctrl in self._console.controllers:
+                        self._console.controllers.remove(ctrl)
+                    del self._controllers[port]
+                    logger.info(f"   Port {port}: character selected, disconnected → CPU")
+                    continue
+
             self._menu_helper.menu_helper_simple(
                 gamestate=state,
                 controller=self._controllers[port],
                 character_selected=char,
                 stage_selected=settings.stage,
                 connect_code="",
-                cpu_level=cpu,
-                autostart=True,
+                cpu_level=0,  # Never use libmelee's CPU toggle — we use disconnect instead
+                autostart=(cpu == 0 and not settings.no_autostart),
                 swag=False,
             )
     

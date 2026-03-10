@@ -956,15 +956,10 @@ def _parse_player_arg(tokens: list[str]) -> tuple[str, str, int]:
     return (fighter_token, char_token, 0)
 
 
-def cmd_tournament(args):
-    """Run a local tournament match with arena integration and frame streaming."""
-    import time
-    import urllib.error
-
+def cmd_local(args):
+    """Run a pure local match — no arena, no streaming, no prediction market."""
     from games.melee import DolphinConfig, MatchRunner, MatchSettings
-    from games.melee.netplay import MatchStreamer, extract_player_frame
     from melee import Character, Stage
-    from nojohns import DoNothingFighter
 
     # Parse player args
     try:
@@ -974,13 +969,11 @@ def cmd_tournament(args):
         logger.error(str(e))
         return 1
 
-    # Load fighters (skip for CPU opponents — use do-nothing placeholder)
     fighter1 = load_fighter(p1_fighter_name)
     fighter2 = load_fighter(p2_fighter_name)
     if fighter1 is None or fighter2 is None:
         return 1
 
-    # Resolve characters
     p1_character = _resolve_character(p1_char, Character)
     p2_character = _resolve_character(p2_char, Character)
 
@@ -997,13 +990,8 @@ def cmd_tournament(args):
         stage_name = args.stage.upper()
     stage = Stage[stage_name]
 
-    # Set up Dolphin
-    dolphin = DolphinConfig(
-        dolphin_path=args.dolphin,
-        iso_path=args.iso,
-    )
+    dolphin = DolphinConfig(dolphin_path=args.dolphin, iso_path=args.iso)
 
-    # Match settings
     settings = MatchSettings(
         games=args.games,
         stocks=args.stocks,
@@ -1013,62 +1001,151 @@ def cmd_tournament(args):
         p2_character=p2_character,
         p1_cpu_level=p1_cpu,
         p2_cpu_level=p2_cpu,
+        no_autostart=getattr(args, 'no_autostart', False),
     )
 
-    # Display info
     p1_label = f"CPU-{p1_cpu}" if p1_cpu else fighter1.metadata.display_name
     p2_label = f"CPU-{p2_cpu}" if p2_cpu else fighter2.metadata.display_name
-    logger.info("No Johns — Tournament Match")
+    logger.info("No Johns — Local Match")
     logger.info(f"   P1: {p1_label} ({p1_character.name})")
     logger.info(f"   P2: {p2_label} ({p2_character.name})")
     logger.info(f"   Stage: {stage.name}")
     logger.info(f"   Format: Bo{settings.games}, {settings.stocks} stock")
 
-    # Arena integration (optional — works without arena too)
+    def on_game_end(game):
+        logger.info(f"   Game over! P{game.winner_port} wins "
+                     f"({game.p1_stocks}-{game.p2_stocks} stocks)")
+
+    runner = MatchRunner(dolphin)
+    try:
+        result = runner.run_match(
+            fighter1, fighter2, settings,
+            on_game_end=on_game_end,
+        )
+
+        logger.info("")
+        logger.info(f"Match Complete! Winner: P{result.winner_port} ({result.score})")
+        logger.info(f"   P1 ({p1_label}): {result.p1_games_won} games")
+        logger.info(f"   P2 ({p2_label}): {result.p2_games_won} games")
+        return 0
+
+    except KeyboardInterrupt:
+        logger.info("\nMatch cancelled.")
+        return 130
+    except Exception as e:
+        logger.error(f"Match error: {e}")
+        return 1
+
+
+def cmd_tournament(args):
+    """Run a tournament match — fetches config from arena, streams frames, reports results."""
+    from games.melee import DolphinConfig, MatchRunner, MatchSettings
+    from games.melee.netplay import MatchStreamer, extract_player_frame
+    from melee import Character, Stage
+
     server = args.server
-    match_id = None
-    streamer = None
-    _post = _get = _delete = None
+    if not server:
+        logger.error("--server is required for tournament mode")
+        return 1
 
-    if server:
-        server = server.rstrip("/")
-        _post, _get, _delete = _make_arena_helpers(server)
+    server = server.rstrip("/")
+    _post, _get, _delete = _make_arena_helpers(server)
 
-        # Create match directly in arena (bypass normal queue flow)
+    match_id = args.matchid
+
+    # Fetch match config from arena
+    try:
+        match_data = _get(f"/matches/{match_id}")
+    except Exception as e:
+        logger.error(f"Failed to fetch match {match_id}: {e}")
+        return 1
+
+    if match_data.get("status") == "complete":
+        logger.error(f"Match {match_id} is already complete")
+        return 1
+
+    # Extract fighter info from the match
+    # Tournament matches store fighter_name in connect_code metadata via queue_join,
+    # but we need to figure out who's who. The arena stores the fighter_name
+    # that was passed to /queue/join — we can look it up from queue entries.
+    p1_code = match_data.get("p1_connect_code", "")
+    p2_code = match_data.get("p2_connect_code", "")
+
+    # For tournament matches, the fighter name IS the entry name.
+    # We use the connect code prefix as a hint, and fall back to CLI args.
+    p1_fighter_name = args.p1_fighter or "phillip"
+    p2_fighter_name = args.p2_fighter or "phillip"
+    p1_char = args.p1_char or "RANDOM"
+    p2_char = args.p2_char or "RANDOM"
+
+    # If this is a bracket match, try to get fighter/character from tournament data
+    if args.tournament_id:
         try:
-            resp = _post("/queue/join", {
-                "connect_code": f"LOCAL-P1",
-                "fighter_name": p1_fighter_name,
-            })
-            queue_id_1 = resp.get("queue_id")
-
-            resp = _post("/queue/join", {
-                "connect_code": f"LOCAL-P2",
-                "fighter_name": p2_fighter_name,
-            })
-            # The second join should match with the first
-            queue_id_2 = resp.get("queue_id")
-            match_id = resp.get("match_id")
-
-            if not match_id:
-                # Poll for match
-                resp = _get(f"/queue/{queue_id_1}")
-                match_id = resp.get("match_id")
-
-            if match_id:
-                logger.info(f"   Arena match: {match_id}")
-
-                # Start frame streamer
-                streamer = MatchStreamer(server, match_id)
-                streamer.start()
-            else:
-                logger.warning("Arena: could not create match — running without streaming")
+            tourn = _get(f"/tournaments/{args.tournament_id}")
+            bracket = tourn.get("bracket", {})
+            matches = bracket.get("matches", [])
+            for m in matches:
+                if m.get("arena_match_id") == match_id:
+                    if m.get("entry_a"):
+                        p1_fighter_name = m["entry_a"].get("name", p1_fighter_name)
+                        p1_char = m["entry_a"].get("character", p1_char)
+                    if m.get("entry_b"):
+                        p2_fighter_name = m["entry_b"].get("name", p2_fighter_name)
+                        p2_char = m["entry_b"].get("character", p2_char)
+                    break
         except Exception as e:
-            logger.warning(f"Arena unavailable ({e}) — running without streaming")
+            logger.warning(f"Could not fetch tournament data: {e}")
 
-    # Build frame callback that streams to arena
+    # Load fighters
+    fighter1 = load_fighter(p1_fighter_name)
+    fighter2 = load_fighter(p2_fighter_name)
+    if fighter1 is None or fighter2 is None:
+        return 1
+
+    p1_character = _resolve_character(p1_char.upper(), Character)
+    p2_character = _resolve_character(p2_char.upper(), Character)
+
+    # Resolve stage
+    stage_arg = args.stage or "RANDOM"
+    if stage_arg.upper() == "RANDOM":
+        import random
+        stages = [
+            "FINAL_DESTINATION", "BATTLEFIELD", "YOSHIS_STORY",
+            "DREAMLAND", "FOUNTAIN_OF_DREAMS", "POKEMON_STADIUM",
+        ]
+        stage_name = random.choice(stages)
+        logger.info(f"Random stage: {stage_name}")
+    else:
+        stage_name = stage_arg.upper()
+    stage = Stage[stage_name]
+
+    dolphin = DolphinConfig(dolphin_path=args.dolphin, iso_path=args.iso)
+
+    settings = MatchSettings(
+        games=args.games,
+        stocks=args.stocks,
+        time_minutes=args.time,
+        stage=stage,
+        p1_character=p1_character,
+        p2_character=p2_character,
+    )
+
+    p1_label = fighter1.metadata.display_name
+    p2_label = fighter2.metadata.display_name
+    logger.info("No Johns — Tournament Match")
+    logger.info(f"   Match ID: {match_id}")
+    logger.info(f"   P1: {p1_label} ({p1_character.name})")
+    logger.info(f"   P2: {p2_label} ({p2_character.name})")
+    logger.info(f"   Stage: {stage.name}")
+    logger.info(f"   Format: Bo{settings.games}, {settings.stocks} stock")
+
+    # Start frame streamer
+    streamer = MatchStreamer(server, match_id)
+    streamer.start()
+    logger.info(f"   Streaming to {server}")
+
     def on_frame(state):
-        if streamer and state.players:
+        if state.players:
             players = []
             for port, player in state.players.items():
                 if player:
@@ -1078,13 +1155,11 @@ def cmd_tournament(args):
     def on_game_end(game):
         logger.info(f"   Game over! P{game.winner_port} wins "
                      f"({game.p1_stocks}-{game.p2_stocks} stocks)")
-        if streamer:
-            streamer.send_game_end(
-                game_number=len(runner._match_results) + 1 if hasattr(runner, '_match_results') else 1,
-                winner_port=game.winner_port,
-            )
+        streamer.send_game_end(
+            game_number=len(runner._match_results) + 1 if hasattr(runner, '_match_results') else 1,
+            winner_port=game.winner_port,
+        )
 
-    # Run the match
     runner = MatchRunner(dolphin)
     try:
         result = runner.run_match(
@@ -1099,22 +1174,25 @@ def cmd_tournament(args):
         logger.info(f"   P2 ({p2_label}): {result.p2_games_won} games")
 
         # Report result to arena
-        if server and match_id and _post:
-            try:
-                winner_name = p1_fighter_name if result.winner_port == 1 else p2_fighter_name
-                winner_stocks = result.games[-1].p1_stocks if result.winner_port == 1 else result.games[-1].p2_stocks
-                loser_stocks = result.games[-1].p2_stocks if result.winner_port == 1 else result.games[-1].p1_stocks
+        try:
+            winner_stocks = int(result.games[-1].p1_stocks if result.winner_port == 1 else result.games[-1].p2_stocks)
+            loser_stocks = int(result.games[-1].p2_stocks if result.winner_port == 1 else result.games[-1].p1_stocks)
 
-                _post(f"/matches/{match_id}/result", {
-                    "queue_id": queue_id_1 if result.winner_port == 1 else queue_id_2,
-                    "outcome": "COMPLETED",
-                    "duration_seconds": 0,
-                    "stocks_remaining": winner_stocks,
-                    "opponent_stocks": loser_stocks,
-                })
-                logger.info(f"   Result reported to arena")
-            except Exception as e:
-                logger.warning(f"Failed to report result: {e}")
+            # Use the queue IDs from the match data
+            p1_qid = match_data.get("p1_queue_id", "")
+            p2_qid = match_data.get("p2_queue_id", "")
+            winner_qid = p1_qid if result.winner_port == 1 else p2_qid
+
+            _post(f"/matches/{match_id}/result", {
+                "queue_id": winner_qid,
+                "outcome": "COMPLETED",
+                "duration_seconds": 0,
+                "stocks_remaining": winner_stocks,
+                "opponent_stocks": loser_stocks,
+            })
+            logger.info(f"   Result reported to arena")
+        except Exception as e:
+            logger.warning(f"Failed to report result: {e}")
 
         return 0
 
@@ -1125,8 +1203,7 @@ def cmd_tournament(args):
         logger.error(f"Match error: {e}")
         return 1
     finally:
-        if streamer:
-            streamer.stop()
+        streamer.stop()
 
 
 def _sign_and_submit(match_id: str, outcome: str, _get, _post) -> bool:
@@ -3133,17 +3210,39 @@ def main():
     spectate_parser.add_argument("--interval", type=int, default=None, help="Poll interval in seconds (default: 10)")
     spectate_parser.set_defaults(func=cmd_spectate)
 
-    # tournament command — single-machine matches with arena integration
+    # local command — pure local match, no arena/streaming
+    local_parser = subparsers.add_parser(
+        "local",
+        help="Run a local match (no arena, no streaming, no prediction market)",
+    )
+    local_parser.add_argument("--p1", nargs="*", default=None,
+                              help="Player 1: fighter char (e.g. phillip fox, cpu-9 mario)")
+    local_parser.add_argument("--p2", nargs="*", default=None,
+                              help="Player 2: fighter char (e.g. random random, cpu-5 falco)")
+    local_parser.add_argument("--stage", default="RANDOM", help="Stage name or RANDOM (default: RANDOM)")
+    local_parser.add_argument("--games", type=int, default=1, help="Number of games (default: 1)")
+    local_parser.add_argument("--stocks", type=int, default=4, help="Stocks per game (default: 4)")
+    local_parser.add_argument("--time", type=int, default=8, help="Time limit in minutes (default: 8)")
+    local_parser.add_argument("--no-autostart", action="store_true",
+                              help="Pause at character select so you can verify before starting")
+    local_parser.add_argument("-d", "--dolphin", default=None, help="Dolphin path")
+    local_parser.add_argument("-i", "--iso", default=None, help="Melee ISO path")
+    local_parser.set_defaults(func=cmd_local)
+
+    # tournament command — runs a match from arena, streams frames, reports results
     tourn_parser = subparsers.add_parser(
         "tournament",
-        help="Run a local tournament match (single machine, with arena streaming)",
+        help="Run a tournament match (fetches from arena, streams frames, prediction market)",
     )
-    tourn_parser.add_argument("--p1", nargs="*", default=None,
-                              help="Player 1: fighter char (e.g. phillip fox, cpu-9 mario)")
-    tourn_parser.add_argument("--p2", nargs="*", default=None,
-                              help="Player 2: fighter char (e.g. random random, cpu-5 falco)")
-    tourn_parser.add_argument("--stage", default="RANDOM", help="Stage name or RANDOM (default: RANDOM)")
-    tourn_parser.add_argument("--server", default=None, help="Arena server URL for streaming/results")
+    tourn_parser.add_argument("--matchid", required=True, help="Arena match ID to execute")
+    tourn_parser.add_argument("--server", default=None, help="Arena server URL (required)")
+    tourn_parser.add_argument("--tournament-id", default=None,
+                              help="Tournament ID (auto-fetches fighter/character from bracket)")
+    tourn_parser.add_argument("--p1-fighter", default=None, help="Override P1 fighter name")
+    tourn_parser.add_argument("--p2-fighter", default=None, help="Override P2 fighter name")
+    tourn_parser.add_argument("--p1-char", default=None, help="Override P1 character")
+    tourn_parser.add_argument("--p2-char", default=None, help="Override P2 character")
+    tourn_parser.add_argument("--stage", default=None, help="Stage name or RANDOM (default: RANDOM)")
     tourn_parser.add_argument("--games", type=int, default=1, help="Number of games (default: 1)")
     tourn_parser.add_argument("--stocks", type=int, default=4, help="Stocks per game (default: 4)")
     tourn_parser.add_argument("--time", type=int, default=8, help="Time limit in minutes (default: 8)")
@@ -3154,7 +3253,7 @@ def main():
     args = parser.parse_args()
 
     # Load config and resolve args for game commands
-    game_commands = {"fight", "netplay", "netplay-test", "matchmake", "auto", "tournament"}
+    game_commands = {"fight", "netplay", "netplay-test", "matchmake", "auto", "tournament", "local"}
     if args.command in game_commands:
         nj_cfg = load_config()
         game_cfg = nj_cfg.games.get("melee")
