@@ -386,6 +386,24 @@ def parse_match_output(stdout: str, stderr: str, exit_code: int, timed_out: bool
 # Runner
 # ============================================================================
 
+def _kill_stale_dolphins():
+    """Kill any leftover Dolphin processes from previous matches.
+
+    Dolphin often ignores SIGTERM from libmelee's cleanup, leaving zombie
+    processes that block the next match from launching.
+    """
+    try:
+        result = subprocess.run(
+            ["pkill", "-9", "-f", "Slippi Dolphin"],
+            capture_output=True, timeout=5,
+        )
+        if result.returncode == 0:
+            print("  Killed stale Dolphin process(es)")
+            time.sleep(1)  # Let the OS reclaim resources
+    except Exception:
+        pass
+
+
 def run_local_match(config: dict, timeout: int, match_num: int) -> dict:
     """Run a local match via `nojohns local`."""
     cmd = [
@@ -675,6 +693,9 @@ def main():
                 if not arena.start():
                     print("  Arena restart failed, falling back to local")
                     mode = "local"
+
+            # Kill any stale Dolphins before launching next match
+            _kill_stale_dolphins()
 
             config = gen_match_config(mode)
 
