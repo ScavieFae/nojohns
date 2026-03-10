@@ -225,9 +225,8 @@ class MatchRunner:
     def _setup_controllers(self, settings: MatchSettings | None = None) -> None:
         """Set up virtual controllers for both ports.
 
-        All ports get STANDARD controllers for menu navigation. CPU ports
-        will be disconnected after character selection — Melee auto-converts
-        an unplugged port with a selected character to CPU.
+        All ports get STANDARD controllers. CPU ports use libmelee's built-in
+        HMN/CPU toggle on the CSS to set the CPU level.
         """
         logger.debug("Setting up controllers")
 
@@ -380,52 +379,25 @@ class MatchRunner:
     def _handle_menu(self, state: melee.GameState, settings: MatchSettings) -> None:
         """Navigate menus to start the game.
 
-        CPU ports: use the controller to select character, then disconnect.
-        Melee auto-converts an unplugged port with a character selected to CPU.
-
-        Autostart is suppressed until all CPU ports have been disconnected,
-        otherwise the game starts before the CPU conversion happens.
+        CPU ports use libmelee's built-in CPU toggle: menu_helper navigates
+        the cursor to the HMN/CPU button, clicks it, grabs the CPU level
+        slider, and drags it to the right value (1-9).
         """
-        # Check if any CPU ports still need to be disconnected
-        cpu_ports_pending = False
-        for port, cpu in [(1, settings.p1_cpu_level), (2, settings.p2_cpu_level)]:
-            if cpu > 0 and port in self._controllers:
-                cpu_ports_pending = True
-
         for port, char, cpu in [
             (1, settings.p1_character, settings.p1_cpu_level),
             (2, settings.p2_character, settings.p2_cpu_level),
         ]:
             if port not in self._controllers:
-                continue  # Already disconnected
+                continue
 
-            # For CPU ports: once character is selected (coin_down), disconnect
-            # the controller. Melee will convert it to CPU automatically.
-            if cpu > 0:
-                player = state.players.get(port)
-                if player and player.coin_down:
-                    ctrl = self._controllers[port]
-                    ctrl.disconnect()
-                    if ctrl in self._console.controllers:
-                        self._console.controllers.remove(ctrl)
-                    del self._controllers[port]
-                    logger.info(f"   Port {port}: character selected, disconnected → CPU")
-                    continue
-
-            # Don't autostart until all CPU ports have disconnected
-            can_autostart = (
-                cpu == 0
-                and not settings.no_autostart
-                and not cpu_ports_pending
-            )
             self._menu_helper.menu_helper_simple(
                 gamestate=state,
                 controller=self._controllers[port],
                 character_selected=char,
                 stage_selected=settings.stage,
                 connect_code="",
-                cpu_level=0,  # Never use libmelee's CPU toggle — we use disconnect instead
-                autostart=can_autostart,
+                cpu_level=cpu,
+                autostart=(not settings.no_autostart),
                 swag=False,
             )
     
