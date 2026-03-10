@@ -406,6 +406,35 @@ body {
   flex: 1;
 }
 
+/* ── Mode toggle ─────────────────────────────────────────────── */
+
+.mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.mode-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.mode-label.full { color: #4ade80; }
+.mode-label.reg  { color: #fbbf24; }
+
+.mode-hint {
+  font-size: 11px;
+  color: #555;
+  margin-top: 2px;
+}
+
 /* ── Champion ────────────────────────────────────────────────── */
 
 .champion-card {
@@ -430,6 +459,17 @@ body {
   <div class="logo">No Johns</div>
   <div class="header-title">Admin Panel</div>
   <div style="font-size: 11px; color: #333;">Fight Night</div>
+</div>
+
+<!-- Mode toggle -->
+<div class="mode-bar">
+  <div>
+    <div class="mode-label full" id="mode-label">Full Admin</div>
+    <div class="mode-hint" id="mode-hint">All controls visible</div>
+  </div>
+  <button class="btn btn-secondary" style="width:auto;padding:8px 16px;font-size:13px;" onclick="toggleMode()">
+    Switch Mode
+  </button>
 </div>
 
 <!-- Config bar -->
@@ -587,6 +627,7 @@ body {
 let currentTournament = null;
 let currentMatch = null; // { round, slot, entry_a, entry_b }
 let pollInterval = null;
+let registrationMode = false;
 
 const CHARACTERS = [
   'CPTFALCON','FOX','MARTH','JIGGLYPUFF','SHEIK','FALCO','PIKACHU',
@@ -641,6 +682,29 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
+// ── Mode toggle ───────────────────────────────────────────────
+
+function toggleMode() {
+  registrationMode = !registrationMode;
+  const label = document.getElementById('mode-label');
+  const hint  = document.getElementById('mode-hint');
+  if (registrationMode) {
+    label.textContent = 'Registration Mode';
+    label.className = 'mode-label reg';
+    hint.textContent = 'Match controls hidden — safe for helpers';
+  } else {
+    label.textContent = 'Full Admin';
+    label.className = 'mode-label full';
+    hint.textContent = 'All controls visible';
+  }
+  // Re-apply visibility to control sections
+  const hasLoaded = !!currentTournament;
+  document.getElementById('match-controls-section').style.display =
+    (!registrationMode && hasLoaded) ? '' : 'none';
+  document.getElementById('force-section').style.display =
+    (!registrationMode && hasLoaded) ? '' : 'none';
+}
+
 // ── Tournament list ───────────────────────────────────────────
 
 async function refreshTournamentList() {
@@ -692,9 +756,9 @@ function startPolling(id) {
 // ── Render tournament state ───────────────────────────────────
 
 function renderTournamentState(t) {
-  // Show controls
-  document.getElementById('match-controls-section').style.display = '';
-  document.getElementById('force-section').style.display = '';
+  // Show controls only in full admin mode
+  document.getElementById('match-controls-section').style.display = registrationMode ? 'none' : '';
+  document.getElementById('force-section').style.display = registrationMode ? 'none' : '';
 
   // Champion
   const champ = t.bracket.rounds.at(-1)?.[0]?.winner;
