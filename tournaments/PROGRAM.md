@@ -298,76 +298,106 @@ This is the first time real MON is at stake in prediction markets. Safety measur
 
 ## Go-Live Checklist
 
-Everything needed by Wednesday 7 PM. Checked off as completed.
+Everything needed by Wednesday 7 PM.
+
+**Statuses:** `NOT STARTED` → `DEVELOPING` → `BLOCKED` → `READY FOR REVIEW` → `APPROVED`
+
+`APPROVED` is a hard gate — only Mattie can mark something approved after review.
 
 ### Code — Must Have (P0)
 
-**Bracket System (Brief 001)**
-- [ ] `tournaments/models.py` — Tournament, Bracket, Round, Match, Entry dataclasses
-- [ ] `tournaments/bracket.py` — single elimination generation, seeding, byes, advancement
-- [ ] `tournaments/tournament.py` — lifecycle orchestration, state persistence (SQLite)
-- [ ] Arena endpoints — POST /tournaments, GET /tournaments/{id}/bracket, POST /tournaments/{id}/advance, POST /tournaments/{id}/next
-- [ ] `tournaments/viewer.html` — bracket viewer, polls arena, projector-ready at 1920x1080
-- [ ] `tournaments/admin.html` — operator panel (create tournament, start next match, force-advance, rematch)
+**Bracket System (Brief 001)** — `READY FOR REVIEW`
+| Item | Status |
+|------|--------|
+| `tournaments/models.py` — dataclasses | READY FOR REVIEW |
+| `tournaments/bracket.py` — generation, seeding, byes, advancement | READY FOR REVIEW |
+| `tournaments/tournament.py` — lifecycle, SQLite persistence | READY FOR REVIEW |
+| Arena endpoints — CRUD, bracket, advance, next | READY FOR REVIEW |
+| `tournaments/viewer.html` — bracket viewer, projector-ready | READY FOR REVIEW |
+| `tournaments/admin.html` — operator panel | READY FOR REVIEW |
 
-**Disconnect Recovery (Brief 003)**
-- [ ] ADMIN_TOKEN auth on all /admin/* endpoints (including existing /admin/cleanup)
-- [ ] MATCH_TIMEOUT env var (default 300s, replaces hardcoded 1800s)
-- [ ] Decouple match expiration from pool cancellation (rename to `_expire_stale_matches()`)
-- [ ] POST /admin/matches/{id}/expire — expire one match (does NOT cancel pool)
-- [ ] POST /admin/pools/{id}/cancel — cancel one pool onchain
-- [ ] POST /admin/matches/{id}/rematch — re-queue same players
-- [ ] GET /admin/wallet — address + MON balance
-- [ ] Wallet balance logging after onchain ops, WARNING below 0.05 MON
+**Disconnect Recovery (Brief 003)** — `READY FOR REVIEW`
+| Item | Status |
+|------|--------|
+| ADMIN_TOKEN auth on all /admin/* endpoints | READY FOR REVIEW |
+| MATCH_TIMEOUT env var (default 300s) | READY FOR REVIEW |
+| Decouple match expiration from pool cancellation | READY FOR REVIEW |
+| POST /admin/matches/{id}/expire | READY FOR REVIEW |
+| POST /admin/pools/{id}/cancel | READY FOR REVIEW |
+| POST /admin/matches/{id}/rematch | READY FOR REVIEW |
+| GET /admin/wallet — address + balance | READY FOR REVIEW |
+| Wallet balance logging, WARNING below 0.05 MON | READY FOR REVIEW |
 
-**Character Hardening (Brief 002 — Manual Session Tuesday)**
-- [ ] Test all 23 characters on both machines (5 rounds each or random)
-- [ ] Build safe character pool from test results
-- [ ] Pre-generate 20 connect codes (no '9' digit)
-- [ ] Reduce loop detection threshold from 30 → 15
+**Character Hardening (Brief 002 — Manual Session Tuesday)** — `NOT STARTED`
+| Item | Status |
+|------|--------|
+| Test all 23 characters on both machines | NOT STARTED |
+| Build safe character pool from results | NOT STARTED |
+| Pre-generate 20 connect codes (no '9' digit) | NOT STARTED |
+| Reduce loop detection threshold 30 → 15 | NOT STARTED |
+
+**Hardening (Brief 008)** — `NOT STARTED`
+| Item | Status |
+|------|--------|
+| Test Privy on Monad chain 143 | NOT STARTED |
+| One-machine local fallback (`nojohns fight`) | NOT STARTED |
+| Rematch button in admin.html | NOT STARTED |
+| Operator runbook (printed checklist) | NOT STARTED |
+| Registration flow works on non-operator computer | NOT STARTED |
+| Vertical slice: end-to-end from tournament create → match → bet → resolve | NOT STARTED |
 
 ### Code — Should Have (P1)
 
-**Prediction Markets (Brief 004)**
-- [ ] Privy integration in web app (email sign-in → embedded wallet)
-- [ ] `/bet` page — current match, odds bar, "Bet on X" / "Bet on Y" buttons
-- [ ] Claim payout + claim refund buttons
-- [ ] Faucet endpoint — auto-fund new Privy wallets (0.1 MON, cap 50)
-- [ ] QR code on bracket viewer linking to /bet
+**Prediction Markets (Brief 004)** — `READY FOR REVIEW`
+| Item | Status |
+|------|--------|
+| Privy integration (email sign-in → embedded wallet) | READY FOR REVIEW |
+| `/bet` page — current match, odds, one-tap betting | READY FOR REVIEW |
+| Claim payout + claim refund buttons | READY FOR REVIEW |
+| Faucet endpoint — auto-fund new wallets (cap 50) | READY FOR REVIEW |
+| QR code on bracket viewer linking to /bet | READY FOR REVIEW |
 
 ### Code — Nice to Have (P2)
 
-**Human vs Agent (Brief 006)**
-- [ ] Challenge mode in MatchRunner (port 1 bot, port 2 GCN adapter)
-- [ ] `nojohns challenge <fighter>` CLI command
-- [ ] match_type field on arena matches (tournament/challenge/exhibition)
-- [ ] `tournaments/scoreboard.html` — human vs agent tally
-- [ ] Hardware test: GCC adapter + Dolphin + Phillip on one machine
+**Human vs Agent (Brief 006)** — `NOT STARTED`
+| Item | Status |
+|------|--------|
+| Challenge mode in MatchRunner (STANDARD + GCN_ADAPTER) | NOT STARTED |
+| `nojohns challenge <fighter>` CLI command | NOT STARTED |
+| match_type field on arena matches | NOT STARTED |
+| `tournaments/scoreboard.html` — human vs agent tally | NOT STARTED |
+| Hardware test: GCC adapter + Dolphin + Phillip | NOT STARTED |
 
 ### Ops — Must Do
 
-- [ ] Fund arena wallet with 0.5 MON
-- [ ] Deploy bracket viewer to tournaments.nojohns.gg (Vercel)
-- [ ] Deploy updated arena to Railway (ADMIN_TOKEN, MATCH_TIMEOUT env vars)
-- [ ] Dress rehearsal: 8-agent simulated tournament Tuesday evening
-- [ ] Test WiFi at Frontier Tower (both machines, 3 test matches)
+| Item | Status |
+|------|--------|
+| Fund arena wallet with 0.5 MON | NOT STARTED |
+| Deploy bracket viewer to tournaments.nojohns.gg (Vercel) | NOT STARTED |
+| Deploy updated arena to Railway (ADMIN_TOKEN, MATCH_TIMEOUT) | NOT STARTED |
+| Dress rehearsal: 8-agent simulated tournament Tue evening | NOT STARTED |
+| Test WiFi at Frontier Tower (both machines, 3 test matches) | NOT STARTED |
 
 ### Ops — Day Of (Wednesday)
 
-- [ ] Fix anything from Tuesday dress rehearsal
-- [ ] Final deploy (arena + web)
-- [ ] Set up secondary display at venue (bracket viewer)
-- [ ] Verify arena server running (Railway)
-- [ ] Verify Monad RPC responsive
-- [ ] Load admin panel on operator device (Mattie's phone/laptop)
+| Item | Status |
+|------|--------|
+| Fix anything from Tuesday dress rehearsal | NOT STARTED |
+| Final deploy (arena + web) | NOT STARTED |
+| Set up secondary display at venue (bracket viewer) | NOT STARTED |
+| Verify arena server running (Railway) | NOT STARTED |
+| Verify Monad RPC responsive | NOT STARTED |
+| Load admin panel on operator device | NOT STARTED |
 
 ### Outreach & Logistics
 
-- [ ] Ask Monad about sponsoring the event
-- [ ] Reach out to NorCal Melee for extra setups
-- [ ] Find Smash communities to advertise Fight Night
-- [ ] Look for sponsors (Burner Wallet, others)
-- [ ] Print betting instruction cards (QR code to /bet)
+| Item | Status |
+|------|--------|
+| Ask Monad about sponsoring the event | NOT STARTED |
+| Reach out to NorCal Melee for extra setups | NOT STARTED |
+| Find Smash communities to advertise Fight Night | NOT STARTED |
+| Look for sponsors (Burner Wallet, others) | NOT STARTED |
+| Print betting instruction cards (QR code to /bet) | NOT STARTED |
 
 ---
 

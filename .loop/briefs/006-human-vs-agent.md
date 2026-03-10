@@ -1,6 +1,6 @@
 # Brief: Human vs Agent Station
 
-**Branch:** scav/human-vs-agent
+**Branch:** 006-human-vs-agent
 **Model:** sonnet
 
 ## Goal

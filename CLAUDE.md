@@ -8,89 +8,36 @@ No Johns is agent competition infrastructure. Autonomous agents compete in skill
 
 **Key insight**: Moltbots are the *owners* (social layer, matchmaking, wagers, strategy), Fighters are the *players* (actual game AI). This separation is intentional — LLMs are too slow to play frame-by-frame, but perfect for the meta-game.
 
-## Three-Agent Development
+## Development — Fight Night Sprint (Mar 9-11, 2026)
 
-This project is developed by three Claude Code agents. **Check which agent you are before editing files.**
-
-| Agent | Role | Owns | Branch prefix |
-|-------|------|------|---------------|
-| **Scav** | Python, arena, game integration | `nojohns/`, `games/`, `arena/`, `fighters/` | `scav/` |
-| **ScavieFae** | Contracts, website | `contracts/`, `web/` | `scaviefae/` |
-| **ScavBug** | Bugs, docs, GitHub meta-work | `docs/` (shared), issues, comments | `scavbug/` |
-
-### How to Know Which Agent You Are
-
-- **Scav**: Working on Python code, arena server, or game integration. Memory file is `memory/MEMORY.md`.
-- **ScavieFae**: Working on Solidity contracts or the website. On a separate machine.
-- **ScavBug**: User said "you're ScavBug" or context is about bugs/docs/issues. Memory file is `memory/SCAVBUG.md`.
-
-If unclear, ask Mattie.
-
-### Directory Ownership
-
-| Directory | Owner | Notes |
-|-----------|-------|-------|
-| `nojohns/`, `games/`, `arena/`, `fighters/` | **Scav** | Python code |
-| `contracts/`, `web/` | **ScavieFae** | Solidity + frontend |
-| `docs/`, `tests/`, root files | **Shared** | ScavBug can edit docs |
-
-**Do not edit files in another agent's directories.** If you need a change in their code, open a GitHub issue or describe what you need in a PR comment.
+**All agent separation (Scav/ScavieFae/ScavBug) is suspended for the Fight Night sprint.** One agent, all directories. No ownership boundaries. Move fast.
 
 ### Branches
 
-Two long-lived branches:
+**For the sprint, `main` is the working branch.** No dev→main release gate.
 
-| Branch | Purpose | Who sees it |
-|--------|---------|-------------|
-| **`main`** | Public-facing. Clean commits, no internal docs. | Users, judges, the world |
-| **`dev`** | Integration branch. All agent work lands here first. | The three agents + Mattie |
+- The `simple-loop` daemon creates worktrees per-brief (`.loop/worktrees/<brief>/`), branches off `main`, merges back
+- Manual work happens on `main` directly or on short-lived feature branches
+- `dev` exists but is not used during the sprint
 
-**Workflow:**
-1. Agents work on prefixed branches (`scav/`, `scaviefae/`, `scavbug/`) off `dev`
-2. PRs merge into `dev`
-3. Curated releases from `dev` → `main` via `scripts/release-to-main.sh` (strips internal files)
+After Fight Night, we can restore the dev→main discipline.
 
-**Files that live on `dev` only** (stripped on release to main):
-- `docs/HANDOFF-SCAV.md`, `docs/HANDOFF-SCAVIEFAE.md` — agent-to-agent coordination
-- `.claude/hooks/`, `.claude/settings.json` — agent configuration and hooks
+### Go-Live Checklist
 
-**Handoff docs** are for planning changes, unanswered questions, and blockers — NOT status updates. A post-pull hook reminds agents to check them.
+**`tournaments/PROGRAM.md` has the master go-live checklist.** Refer to it constantly. Every code task, ops task, and outreach item is tracked there with statuses.
 
-**CODEOWNERS** protects `.claude/`, handoff docs, CLAUDE.md files, and contract source from unauthorized modification. External PRs touching these files require Mattie's review.
+**Statuses:** `NOT STARTED` → `DEVELOPING` → `BLOCKED` → `READY FOR REVIEW` → `APPROVED`
 
-### Coordination
+`APPROVED` is a hard gate — only Mattie can mark something approved after review.
 
-- **Shared schema:** The `MatchResult` struct (defined in `contracts/CLAUDE.md` and `docs/HANDOFF-SCAVIEFAE.md`) is the contract between the Python and Solidity sides. Changes require coordination.
-- **Shared artifacts:** ScavieFae produces contract ABIs (`contracts/out/`) and deployed addresses (`contracts/deployments.json`). Scav produces arena API endpoints and Python signing code.
+### Briefs
+
+All briefs live in `.loop/briefs/`. The loop daemon picks them up in order. See `tournaments/PROGRAM.md` for priority and status.
 
 ### Code Review
 
-- **Contracts before mainnet deploy:** Non-negotiable. ScavieFae opens a PR, the other agent runs `/review-pr` before we deploy with real MON. Testnet deploys can skip review.
-- **Everything else merges freely.** Directory ownership prevents conflicts.
-- **Spotted something in the other agent's directory?** Open a GitHub issue, don't edit the file.
-- **Mechanism:** GitHub PRs via `gh`. Use `/review-pr` skill for structured review.
-
-### For ScavieFae
-
-Read `docs/HANDOFF-SCAVIEFAE.md` first, then `contracts/CLAUDE.md` and `web/CLAUDE.md`.
-
-### For Scav
-
-You own Python, arena, and game integration. Your workstream:
-1. Agent wallet management + EIP-712 match result signing
-2. Arena server enhancements (onchain result submission post-match)
-3. CLI additions (`nojohns setup wallet`, `nojohns wager`)
-4. End-to-end testing on both machines
-
-### For ScavBug
-
-You handle bugs, documentation, and GitHub meta-work. Your scope:
-- **Create/edit:** GitHub issues, PR comments, `docs/` files (TROUBLESHOOTING.md, SETUP guides, etc.)
-- **Read-only:** All code (need to understand it to document it)
-- **Do not edit:** Code in `nojohns/`, `games/`, `contracts/`, `web/`, `arena/`, `fighters/`
-- **Check in with Mattie** before changing CLAUDE.md sections that affect Scav or ScavieFae's behavior
-
-You can propose improvements: GitHub Actions, Claude Code hooks, skills, better CI. File issues for bugs you spot. Document gotchas. Keep TROUBLESHOOTING.md current.
+- **Contracts before mainnet deploy:** Still non-negotiable. Use `/review-pr` before deploying with real MON.
+- **Everything else merges freely** during the sprint.
 
 ## Local Dev Setup
 
