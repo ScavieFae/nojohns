@@ -387,14 +387,18 @@ class MatchRunner:
         controller_status and cpu_level, otherwise port 1 starts the match
         before port 2 finishes toggling to CPU.
         """
-        # Check if all CPU ports are fully configured
+        # On the CSS, suppress autostart until all CPU ports have the correct
+        # controller_status and cpu_level. On other screens (stage select etc.)
+        # autostart is always allowed — cpu_ready only matters on the CSS.
+        on_css = state.menu_state in [melee.Menu.CHARACTER_SELECT, melee.Menu.SLIPPI_ONLINE_CSS]
         cpu_ready = True
-        for port, cpu in [(1, settings.p1_cpu_level), (2, settings.p2_cpu_level)]:
-            if cpu > 0:
-                player = state.players.get(port)
-                if not player or player.controller_status != melee.enums.ControllerStatus.CONTROLLER_CPU \
-                        or player.cpu_level != cpu:
-                    cpu_ready = False
+        if on_css:
+            for port, cpu in [(1, settings.p1_cpu_level), (2, settings.p2_cpu_level)]:
+                if cpu > 0:
+                    player = state.players.get(port)
+                    if not player or player.controller_status != melee.enums.ControllerStatus.CONTROLLER_CPU \
+                            or player.cpu_level != cpu:
+                        cpu_ready = False
 
         for port, char, cpu in [
             (1, settings.p1_character, settings.p1_cpu_level),
