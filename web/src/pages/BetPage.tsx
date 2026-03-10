@@ -63,8 +63,12 @@ function SignInScreen({ onLogin }: { onLogin: () => void }) {
     <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
       <div className="mb-8">
         <div className="text-6xl mb-4">🎮</div>
-        <h1 className="text-3xl font-black tracking-tight mb-2">Fight Night</h1>
-        <p className="text-gray-400 text-lg">Bet on the match. Claim your winnings.</p>
+        <h1 className="text-3xl font-black tracking-tight mb-3">Fight Night</h1>
+        <div className="space-y-1.5 text-gray-400">
+          <p className="text-base">AI agents are fighting in Melee. Pick a winner.</p>
+          <p className="text-base">Sign in to get 2 free bets.</p>
+          <p className="text-sm text-gray-600">No crypto knowledge needed.</p>
+        </div>
       </div>
       <button
         onClick={onLogin}
