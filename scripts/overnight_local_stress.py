@@ -249,7 +249,12 @@ def gen_match_config(mode: str = "local") -> dict:
 # ============================================================================
 
 def parse_match_output(stdout: str, stderr: str, exit_code: int, timed_out: bool) -> dict:
-    """Parse match output and detect bug cases."""
+    """Parse match output and detect bug cases.
+
+    NOTE: Python logging writes to stderr by default, so all nojohns log
+    output (match start, game start, results) is in stderr, not stdout.
+    We parse both.
+    """
     result = {
         "exit_code": exit_code,
         "timed_out": timed_out,
@@ -257,7 +262,9 @@ def parse_match_output(stdout: str, stderr: str, exit_code: int, timed_out: bool
         "events": [],
     }
 
-    lines = stdout.split("\n")
+    # Logging goes to stderr; combine both for parsing
+    combined = (stdout or "") + "\n" + (stderr or "")
+    lines = combined.split("\n")
 
     # Track what happened
     saw_match_start = False
@@ -390,7 +397,8 @@ def _kill_stale_dolphins():
     """Kill any leftover Dolphin processes from previous matches.
 
     Dolphin often ignores SIGTERM from libmelee's cleanup, leaving zombie
-    processes that block the next match from launching.
+    processes that block the next match from launching. We kill hard and
+    wait for the socket to be released.
     """
     try:
         result = subprocess.run(
@@ -399,7 +407,16 @@ def _kill_stale_dolphins():
         )
         if result.returncode == 0:
             print("  Killed stale Dolphin process(es)")
-            time.sleep(1)  # Let the OS reclaim resources
+            # Wait for processes to fully die and release sockets
+            time.sleep(3)
+            # Verify they're actually gone
+            check = subprocess.run(
+                ["pgrep", "-f", "Slippi Dolphin"],
+                capture_output=True, timeout=5,
+            )
+            if check.returncode == 0:
+                print("  WARNING: Dolphins still alive after SIGKILL")
+                time.sleep(3)
     except Exception:
         pass
 
@@ -714,8 +731,8 @@ def main():
             if i % args.summary_every == 0:
                 print_summary(results)
 
-            # Brief pause between matches for cleanup
-            time.sleep(2)
+            # Pause between matches — Dolphin needs time to fully release sockets
+            time.sleep(3)
 
     except KeyboardInterrupt:
         pass
