@@ -1,9 +1,23 @@
 {
   "brief": "008-hardening",
   "brief_file": ".loop/briefs/008-hardening.md",
-  "iteration": 0,
+  "iteration": 2,
   "status": "running",
-  "tasks_completed": [],
-  "tasks_remaining": [],
-  "learnings": []
+  "tasks_completed": [
+    "Task 7: Fix character list typos/duplicates — YOUNKLINK→YLINK, DRMARIO→DOC, ICECLIMBERS→POPO, remove dup MEWTWO, add DK in admin.html; align viewer.html to same libmelee enum names",
+    "Task 1: Rematch button in admin.html — shows in Force Advance section when arena_match_id set, confirm dialog, calls POST /admin/matches/{id}/rematch, refreshes bracket"
+  ],
+  "tasks_remaining": [
+    "Task 2: Registration Mode view in admin.html (helper-safe subset)",
+    "Task 3: Verify/document one-machine local fallback",
+    "Task 4: Write tournaments/RUNBOOK.md",
+    "Task 5: Write vertical slice test checklist",
+    "Task 6: Bet page onboarding splash screen"
+  ],
+  "learnings": [
+    "libmelee Character enum names: CPTFALCON, DK, YLINK, DOC, GAMEANDWATCH, POPO — admin.html and viewer.html were using wrong/inconsistent names",
+    "admin.html and viewer.html character keys MUST match since admin.html sends character names to arena which viewer.html displays",
+    "The 23-character random pool in cli.py is the canonical list: FOX, FALCO, MARTH, CPTFALCON, PEACH, JIGGLYPUFF, SAMUS, DK, PIKACHU, LUIGI, LINK, YLINK, DOC, MARIO, GANONDORF, MEWTWO, ROY, GAMEANDWATCH, NESS, YOSHI, BOWSER, KIRBY, PICHU",
+    "Match objects in bracket JSON include arena_match_id (set when match is queued via queue_next_match). Rematch endpoint is POST /admin/matches/{arena_match_id}/rematch."
+  ]
 }
