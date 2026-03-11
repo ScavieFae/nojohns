@@ -1086,11 +1086,14 @@ function connectMatchStream(arenaMatchId, entryA, entryB) {
   disconnectMatchStream();
 
   matchWsId = arenaMatchId;
-  streamPlayers = {};
-
-  // Pre-populate player names from bracket data (ports assigned on match_start)
-  if (entryA) streamPlayers._nameA = entryA.name;
-  if (entryB) streamPlayers._nameB = entryB.name;
+  // Pre-populate from bracket data so names show immediately, even without match_start.
+  // Ports 1 and 2 are the standard assignment for arena matches.
+  streamPlayers = {
+    _nameA: entryA?.name,
+    _nameB: entryB?.name,
+    1: { name: entryA?.name || 'P1', percent: 0, stocks: 4, maxStocks: 4 },
+    2: { name: entryB?.name || 'P2', percent: 0, stocks: 4, maxStocks: 4 },
+  };
 
   try {
     matchWs = new WebSocket(wsUrl(arenaMatchId));
@@ -1154,6 +1157,17 @@ function handleStreamMessage(msg) {
 
   if (msg.type === 'frame') {
     const players = msg.players || [];
+    // On first frame, map actual ports to bracket names
+    const knownPorts = Object.keys(streamPlayers).filter(k => !k.startsWith('_'));
+    if (knownPorts.length < 2 && players.length >= 2) {
+      // First time seeing ports — assign bracket names
+      const sorted = [...players].sort((a, b) => a.port - b.port);
+      for (let i = 0; i < sorted.length; i++) {
+        const name = i === 0 ? (streamPlayers._nameA || `P${sorted[i].port}`)
+                             : (streamPlayers._nameB || `P${sorted[i].port}`);
+        streamPlayers[sorted[i].port] = { name, percent: 0, stocks: 4, maxStocks: 4 };
+      }
+    }
     for (const p of players) {
       if (!streamPlayers[p.port]) {
         streamPlayers[p.port] = { name: `P${p.port}`, percent: 0, stocks: 4, maxStocks: 4 };
