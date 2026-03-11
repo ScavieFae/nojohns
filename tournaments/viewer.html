@@ -1120,6 +1120,7 @@ function updatePrediction(data) {
   }
 
   if (data.champion) {
+    area._currentPool = null;
     area.innerHTML = `<div style="text-align:center;padding:12px 0;">
       <div style="color:#fbbf24;font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:2px;margin-bottom:6px;">TOURNAMENT COMPLETE</div>
       <div style="color:#6a8a74;font-size:12px;">Markets closed</div>
@@ -1128,6 +1129,7 @@ function updatePrediction(data) {
   }
 
   if (!current || !current.entry_a || !current.entry_b) {
+    area._currentPool = null;
     area.innerHTML = '<div style="color:#1a2a1f;text-align:center;padding:20px 0;">Market opens when match starts</div>';
     return;
   }
@@ -1137,6 +1139,10 @@ function updatePrediction(data) {
   const poolId = current.pool_id;
 
   if (poolId != null) {
+    // Don't rebuild DOM if already showing this pool — prevents flicker
+    if (area._currentPool === poolId) return;
+    area._currentPool = poolId;
+
     area.innerHTML = `<div style="text-align:center;padding:8px 0;">
       <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:6px;">BETTING OPEN</div>
       <div style="display:flex;justify-content:center;gap:16px;margin-bottom:2px;">
@@ -1160,6 +1166,7 @@ function updatePrediction(data) {
     </div>`;
     startOddsPolling(poolId);
   } else {
+    area._currentPool = null;
     area.innerHTML = `<div style="text-align:center;padding:8px 0;">
       <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:10px;">NOW PLAYING</div>
       <div style="display:flex;justify-content:center;gap:16px;">
