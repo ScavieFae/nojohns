@@ -17,7 +17,7 @@ export default function App() {
   if (pathname.startsWith("/tournament/")) {
     return (
       <Routes>
-        <Route path="/tournament/login" element={<TournamentPage />} />
+        <Route path="/tournament/play" element={<TournamentPage />} />
         <Route path="/tournament/bet" element={<BetPage />} />
       </Routes>
     );
