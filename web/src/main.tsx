@@ -17,7 +17,7 @@ const queryClient = new QueryClient({
 });
 
 // Set VITE_PRIVY_APP_ID in .env.local with your app ID from https://dashboard.privy.io
-const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID ?? "clpispdty00ycl80fpueukbhl";
+const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID ?? "cmmmnv59500bj0cl7lny9ulj6";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
