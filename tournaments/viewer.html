@@ -428,7 +428,7 @@ body::after {
   align-items: flex-end;
   padding: 8px 16px;
   pointer-events: none;
-  background: linear-gradient(to top, rgba(16,8,4,0.9) 0%, transparent 100%);
+  background: linear-gradient(to top, rgba(16,8,4,0.95) 0%, rgba(16,8,4,0.4) 60%, transparent 100%);
 }
 
 .stream-stats {
@@ -983,8 +983,17 @@ const STAGE_DATA = {
 };
 const DEFAULT_STAGE = { name:"Stage", main:{x:0,y:0,w:150,h:6}, plats:[] };
 
-// Player colors (port-indexed, same as nojohns.gg/live)
-const PLAYER_COLORS = ["#22c55e", "#ff6b35", "#3b82f6", "#f59e0b"];
+// External character ID → display name (resolves "RANDOM" in bracket data)
+const EXT_TO_CHAR = {
+  0:"CAPTAINFALCON", 1:"DONKEYKONG", 2:"FOX", 3:"MRGAMEANDWATCH", 4:"KIRBY",
+  5:"BOWSER", 6:"LINK", 7:"LUIGI", 8:"MARIO", 9:"MARTH", 10:"MEWTWO",
+  11:"NESS", 12:"PEACH", 13:"PIKACHU", 14:"ICECLIMBERS", 15:"JIGGLYPUFF",
+  16:"SAMUS", 17:"YOSHI", 18:"ZELDA", 19:"SHEIK", 20:"FALCO",
+  21:"YOUNGLINK", 22:"DRMARIO", 23:"ROY", 24:"PICHU", 25:"GANONDORF",
+};
+
+// Player colors (port-indexed)
+const PLAYER_COLORS = ["#44ff88", "#ff6b35", "#3b82f6", "#f59e0b"];
 
 // ── Animation Cache ─────────────────────────────────────────────
 
@@ -1043,13 +1052,37 @@ function initSvgCanvas() {
   const area = document.getElementById('stream-area');
   if (!area || area.querySelector('.stream-canvas-wrap')) return;
 
+  // Clear any existing content (text nodes, fallback stats)
+  area.innerHTML = '';
+
   const wrap = document.createElement('div');
   wrap.className = 'stream-canvas-wrap';
 
   const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '-140 -120 280 200');
+  svg.setAttribute('viewBox', '-100 -80 200 120');
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   svg.id = 'fighter-svg';
+
+  // Glow filter for fighter visibility
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  const filter = document.createElementNS(SVG_NS, 'filter');
+  filter.setAttribute('id', 'fighter-glow');
+  filter.setAttribute('x', '-50%'); filter.setAttribute('y', '-50%');
+  filter.setAttribute('width', '200%'); filter.setAttribute('height', '200%');
+  const blur = document.createElementNS(SVG_NS, 'feGaussianBlur');
+  blur.setAttribute('stdDeviation', '1.5');
+  blur.setAttribute('result', 'glow');
+  const merge = document.createElementNS(SVG_NS, 'feMerge');
+  const mergeGlow = document.createElementNS(SVG_NS, 'feMergeNode');
+  mergeGlow.setAttribute('in', 'glow');
+  const mergeSrc = document.createElementNS(SVG_NS, 'feMergeNode');
+  mergeSrc.setAttribute('in', 'SourceGraphic');
+  merge.appendChild(mergeGlow);
+  merge.appendChild(mergeSrc);
+  filter.appendChild(blur);
+  filter.appendChild(merge);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
 
   // Y-axis inverted group (positive = up in game coords)
   const gameG = document.createElementNS(SVG_NS, 'g');
@@ -1062,13 +1095,14 @@ function initSvgCanvas() {
   stageG.id = 'stage-layer';
   gameG.appendChild(stageG);
 
-  // Players group
+  // Players group with glow
   const playersG = document.createElementNS(SVG_NS, 'g');
   playersG.id = 'players-layer';
+  playersG.setAttribute('filter', 'url(#fighter-glow)');
   gameG.appendChild(playersG);
 
   wrap.appendChild(svg);
-  area.insertBefore(wrap, area.firstChild);
+  area.appendChild(wrap);
   svgInitialized = true;
 }
 
@@ -1157,9 +1191,9 @@ function renderFighters(players) {
       `translate(${x} ${y}) scale(${scale} ${scale}) scale(${facing} 1) scale(0.1 -0.1) translate(-500 -500)`
     );
     path.setAttribute('fill', color);
-    path.setAttribute('stroke', 'black');
-    path.setAttribute('stroke-width', '0.5');
-    path.setAttribute('opacity', '0.9');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', '1.5');
+    path.setAttribute('opacity', '1');
     playersG.appendChild(path);
   }
 }
@@ -1171,6 +1205,15 @@ function onMatchStartAnim(msg) {
   for (const p of players) {
     if (p.characterId != null) {
       svgCharIds[p.port] = p.characterId;
+    }
+  }
+
+  // Resolve actual character names from characterId (overrides "RANDOM")
+  for (const p of players) {
+    if (p.characterId != null && streamPlayers[p.port]) {
+      const extId = EXT_ID_BY_INT[p.characterId];
+      const actualChar = EXT_TO_CHAR[extId];
+      if (actualChar) streamPlayers[p.port].character = actualChar;
     }
   }
 
@@ -1910,14 +1953,9 @@ function renderStreamStats() {
     }
     overlay.innerHTML = statsHtml;
 
-    // Update LIVE badge
-    let badge = area.querySelector('.stream-connected');
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'stream-connected';
-      area.appendChild(badge);
-    }
-    badge.innerHTML = '● LIVE';
+    // No separate LIVE badge — header already says LIVESTREAM
+    const oldBadge = area.querySelector('.stream-connected');
+    if (oldBadge) oldBadge.remove();
   } else {
     // Fallback: text-only layout (no SVG loaded)
     area.innerHTML = `
