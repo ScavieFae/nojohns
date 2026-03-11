@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -144,7 +145,9 @@ body::after {
   overflow: auto;
   border-right: 1px solid rgba(0, 255, 136, 0.06);
   padding: 20px 24px 80px;
+  scrollbar-width: none;
 }
+.panel-bracket::-webkit-scrollbar { display: none; }
 
 .bracket {
   display: flex;
@@ -384,10 +387,11 @@ body::after {
   letter-spacing: 1px;
 }
 
-/* Stream area — live match stats */
+/* Stream area — live match stats + SVG animation */
 .stream-area {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   border-top: 1px solid rgba(0, 255, 136, 0.06);
@@ -399,6 +403,32 @@ body::after {
   min-height: 120px;
   position: relative;
   overflow: hidden;
+}
+
+.stream-canvas-wrap {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+.stream-canvas-wrap svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #060610;
+}
+
+.stream-stats-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 8px 16px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(6,6,16,0.85) 0%, transparent 100%);
 }
 
 .stream-stats {
@@ -473,6 +503,7 @@ body::after {
   letter-spacing: 1px;
   color: #00ff88;
   opacity: 0.6;
+  z-index: 2;
 }
 
 @keyframes hitflash {
@@ -832,6 +863,343 @@ const params   = new URLSearchParams(location.search);
 let   tournId  = params.get('t') || params.get('tournament_id') || null;
 const arenaBase = (params.get('arena') || 'https://nojohns-arena-production.up.railway.app').replace(/\/$/, '');
 const POLL_MS  = 3000;
+
+// ── SVG Fighter Animation Data ──────────────────────────────────
+// Source: SlippiLab (MIT) - https://github.com/frankborden/slippilab
+
+const ANIM_ZIP_BASE = '/zips'; // Relative to site root (works when synced to web/)
+
+// Internal character ID (libmelee) → External character ID (Slippi)
+const EXT_ID_BY_INT = {
+  0:8, 1:2, 2:0, 3:1, 4:4, 5:5, 6:6, 7:19, 8:11, 9:12,
+  10:14, 11:14, 12:13, 13:16, 14:17, 15:15, 16:10, 17:7,
+  18:9, 19:18, 20:21, 21:22, 22:20, 23:24, 24:3, 25:25, 26:23,
+};
+
+// External character ID → ZIP filename
+const ZIP_BY_EXT = {
+  0:"captainFalcon", 1:"donkeyKong", 2:"fox", 3:"mrGameAndWatch", 4:"kirby",
+  5:"bowser", 6:"link", 7:"luigi", 8:"mario", 9:"marth", 10:"mewtwo",
+  11:"ness", 12:"peach", 13:"pikachu", 14:"iceClimbers", 15:"jigglypuff",
+  16:"samus", 17:"yoshi", 18:"zelda", 19:"sheik", 20:"falco",
+  21:"youngLink", 22:"doctorMario", 23:"roy", 24:"pichu", 25:"ganondorf",
+};
+
+// Character scale (indexed by external ID)
+const CHAR_SCALE = {
+  0:1.12, 1:1.30, 2:0.96, 3:0.85, 4:0.82, 5:0.90, 6:1.05, 7:0.95,
+  8:0.95, 9:1.05, 10:1.30, 11:0.90, 12:0.95, 13:0.85, 14:0.90, 15:0.70,
+  16:1.10, 17:1.00, 18:1.00, 19:0.96, 20:0.98, 21:1.05, 22:0.95, 23:1.05,
+  24:0.55, 25:1.20,
+};
+
+// Action state ID → action name (310 entries)
+const ACTION_NAMES = [
+  "DeadDown","DeadLeft","DeadRight","DeadUp","DeadUpStar","DeadUpStarIce",
+  "DeadUpFall","DeadUpFallHitCamera","DeadUpFallHitCameraFlat","DeadUpFallIce",
+  "DeadUpFallHitCameraIce","Sleep","Rebirth","RebirthWait","Wait","WalkSlow",
+  "WalkMiddle","WalkFast","Turn","TurnRun","Dash","Run","RunDirect","RunBrake",
+  "KneeBend","JumpF","JumpB","JumpAerialF","JumpAerialB","Fall","FallF","FallB",
+  "FallAerial","FallAerialF","FallAerialB","FallSpecial","FallSpecialF","FallSpecialB",
+  "DamageFall","Squat","SquatWait","SquatRv","Landing","LandingFallSpecial",
+  "Attack11","Attack12","Attack13","Attack100Start","Attack100Loop","Attack100End",
+  "AttackDash","AttackS3Hi","AttackS3HiS","AttackS3S","AttackS3LwS","AttackS3Lw",
+  "AttackHi3","AttackLw3","AttackS4Hi","AttackS4HiS","AttackS4S","AttackS4LwS",
+  "AttackS4Lw","AttackHi4","AttackLw4","AttackAirN","AttackAirF","AttackAirB",
+  "AttackAirHi","AttackAirLw","LandingAirN","LandingAirF","LandingAirB","LandingAirHi",
+  "LandingAirLw","DamageHi1","DamageHi2","DamageHi3","DamageN1","DamageN2","DamageN3",
+  "DamageLw1","DamageLw2","DamageLw3","DamageAir1","DamageAir2","DamageAir3",
+  "DamageFlyHi","DamageFlyN","DamageFlyLw","DamageFlyTop","DamageFlyRoll",
+  "LightGet","HeavyGet","LightThrowF","LightThrowB","LightThrowHi","LightThrowLw",
+  "LightThrowDash","LightThrowDrop","LightThrowAirF","LightThrowAirB","LightThrowAirHi",
+  "LightThrowAirLw","HeavyThrowF","HeavyThrowB","HeavyThrowHi","HeavyThrowLw",
+  "LightThrowF4","LightThrowB4","LightThrowHi4","LightThrowLw4","LightThrowAirF4",
+  "LightThrowAirB4","LightThrowAirHi4","LightThrowAirLw4","HeavyThrowF4","HeavyThrowB4",
+  "HeavyThrowHi4","HeavyThrowLw4","SwordSwing1","SwordSwing3","SwordSwing4",
+  "SwordSwingDash","BatSwing1","BatSwing3","BatSwing4","BatSwingDash","ParasolSwing1",
+  "ParasolSwing3","ParasolSwing4","ParasolSwingDash","HarisenSwing1","HarisenSwing3",
+  "HarisenSwing4","HarisenSwingDash","StarRodSwing1","StarRodSwing3","StarRodSwing4",
+  "StarRodSwingDash","LipStickSwing1","LipStickSwing3","LipStickSwing4","LipStickSwingDash",
+  "ItemParasolOpen","ItemParasolFall","ItemParasolFallSpecial","ItemParasolDamageFall",
+  "LGunShoot","LGunShootAir","LGunShootEmpty","LGunShootAirEmpty","FireFlowerShoot",
+  "FireFlowerShootAir","ItemScrew","ItemScrewAir","DamageScrew","DamageScrewAir",
+  "ItemScopeStart","ItemScopeRapid","ItemScopeFire","ItemScopeEnd","ItemScopeAirStart",
+  "ItemScopeAirRapid","ItemScopeAirFire","ItemScopeAirEnd","ItemScopeStartEmpty",
+  "ItemScopeRapidEmpty","ItemScopeFireEmpty","ItemScopeEndEmpty","ItemScopeAirStartEmpty",
+  "ItemScopeAirRapidEmpty","ItemScopeAirFireEmpty","ItemScopeAirEndEmpty","LiftWait",
+  "LiftWalk1","LiftWalk2","LiftTurn","GuardOn","Guard","GuardOff","GuardSetOff",
+  "GuardReflect","DownBoundU","DownWaitU","DownDamageU","DownStandU","DownAttackU",
+  "DownFowardU","DownBackU","DownSpotU","DownBoundD","DownWaitD","DownDamageD",
+  "DownStandD","DownAttackD","DownFowardD","DownBackD","DownSpotD","Passive",
+  "PassiveStandF","PassiveStandB","PassiveWall","PassiveWallJump","PassiveCeil",
+  "ShieldBreakFly","ShieldBreakFall","ShieldBreakDownU","ShieldBreakDownD",
+  "ShieldBreakStandU","ShieldBreakStandD","FuraFura","Catch","CatchPull","CatchDash",
+  "CatchDashPull","CatchWait","CatchAttack","CatchCut","ThrowF","ThrowB","ThrowHi",
+  "ThrowLw","CapturePulledHi","CaptureWaitHi","CaptureDamageHi","CapturePulledLw",
+  "CaptureWaitLw","CaptureDamageLw","CaptureCut","CaptureJump","CaptureNeck",
+  "CaptureFoot","EscapeF","EscapeB","Escape","EscapeAir","ReboundStop","Rebound",
+  "ThrownF","ThrownB","ThrownHi","ThrownLw","ThrownLwWomen","Pass","Ottotto",
+  "OttottoWait","FlyReflectWall","FlyReflectCeil","StopWall","StopCeil","MissFoot",
+  "CliffCatch","CliffWait","CliffClimbSlow","CliffClimbQuick","CliffAttackSlow",
+  "CliffAttackQuick","CliffEscapeSlow","CliffEscapeQuick","CliffJumpSlow1",
+  "CliffJumpSlow2","CliffJumpQuick1","CliffJumpQuick2","AppealR","AppealL",
+  "ShoulderedWait","ShoulderedWalkSlow","ShoulderedWalkMiddle","ShoulderedWalkFast",
+  "ShoulderedTurn","ThrownFF","ThrownFB","ThrownFHi","ThrownFLw","CaptureCaptain",
+  "CaptureYoshi","YoshiEgg","CaptureKoopa","CaptureDamageKoopa","CaptureWaitKoopa",
+  "ThrownKoopaF","ThrownKoopaB","CaptureKoopaAir","CaptureDamageKoopaAir",
+  "CaptureWaitKoopaAir","ThrownKoopaAirF","ThrownKoopaAirB","CaptureKirby",
+  "CaptureWaitKirby","ThrownKirbyStar","ThrownCopyStar","ThrownKirby","BarrelWait",
+  "Bury","BuryWait","BuryJump","DamageSong","DamageSongWait","DamageSongRv",
+  "DamageBind","CaptureMewtwo","CaptureMewtwoAir","ThrownMewtwo","ThrownMewtwoAir",
+  "WarpStarJump","WarpStarFall","HammerWait","HammerWalk","HammerTurn","HammerKneeBend",
+  "HammerFall","HammerJump","HammerLanding","KinokoGiantStart","KinokoGiantStartAir",
+  "KinokoGiantEnd","KinokoGiantEndAir","KinokoSmallStart","KinokoSmallStartAir",
+  "KinokoSmallEnd","KinokoSmallEndAir","Entry","EntryStart","EntryEnd","DamageIce",
+  "DamageIceJump","CaptureMasterhand","CapturedamageMasterhand","CapturewaitMasterhand",
+  "ThrownMasterhand","CaptureCrazyhand","CapturedamageCrazyhand","CapturewaitCrazyhand",
+  "ThrownCrazyhand","CaptureKirbyYoshi","KirbyYoshiEgg","CaptureLeadead",
+  "CaptureLikelike","DownReflect","CaptureCrazyhandAir","CapturedamageCrazyhandAir",
+  "CapturewaitCrazyhandAir","ThrownCrazyhandAir","CaptureMasterhandAir",
+  "CapturedamageMasterhandAir","CapturewaitMasterhandAir","ThrownMasterhandAir",
+];
+
+// Animation name remaps
+const ANIM_REMAPS = {
+  AppealL:"Appeal", AppealR:"Appeal", Escape:"EscapeN",
+  GuardReflect:"Guard", GuardSetOff:"GuardDamage",
+  KneeBend:"Landing", LandingFallSpecial:"Landing",
+  CatchDashPull:"CatchWait", CatchPull:"CatchWait",
+  EntryEnd:"Entry", EntryStart:"Entry", Wait:"Wait1",
+};
+
+// Stage platform geometry (indexed by libmelee stage ID)
+const STAGE_DATA = {
+  24: { name:"Battlefield", main:{x:0,y:0,w:136.8,h:6}, plats:[{x:-57.6,y:27.2,w:51,h:3},{x:57.6,y:27.2,w:51,h:3},{x:0,y:54.4,w:51,h:3}] },
+  25: { name:"Final Destination", main:{x:0,y:0,w:171.1,h:6}, plats:[] },
+  26: { name:"Dreamland", main:{x:0,y:0,w:154.6,h:6}, plats:[{x:-61.4,y:30.2,w:31.5,h:3},{x:61.4,y:30.2,w:31.5,h:3},{x:0,y:51.4,w:31.5,h:3}] },
+  6:  { name:"Yoshi's Story", main:{x:0,y:0,w:112,h:6}, plats:[{x:-59.5,y:23.5,w:24,h:3},{x:59.5,y:23.5,w:24,h:3},{x:0,y:42,w:28,h:3}] },
+  8:  { name:"Fountain of Dreams", main:{x:0,y:0,w:126.7,h:6}, plats:[{x:-49.5,y:16.5,w:21,h:3},{x:49.5,y:16.5,w:21,h:3},{x:0,y:42.75,w:28,h:3}] },
+  18: { name:"Pokemon Stadium", main:{x:0,y:0,w:175.5,h:6}, plats:[{x:-55,y:25,w:25,h:3},{x:55,y:25,w:25,h:3}] },
+};
+const DEFAULT_STAGE = { name:"Stage", main:{x:0,y:0,w:150,h:6}, plats:[] };
+
+// Player colors (port-indexed, same as nojohns.gg/live)
+const PLAYER_COLORS = ["#22c55e", "#a855f7", "#3b82f6", "#f59e0b"];
+
+// ── Animation Cache ─────────────────────────────────────────────
+
+const animCache = new Map();   // externalId → {animName: string[]}
+const animLoading = new Map(); // externalId → Promise
+
+function getAnimName(actionName) {
+  return ANIM_REMAPS[actionName] || actionName;
+}
+
+async function fetchCharAnims(externalId) {
+  if (animCache.has(externalId)) return animCache.get(externalId);
+  if (animLoading.has(externalId)) return animLoading.get(externalId);
+
+  const zipName = ZIP_BY_EXT[externalId];
+  if (!zipName) return null;
+
+  const promise = (async () => {
+    try {
+      const resp = await fetch(`${ANIM_ZIP_BASE}/${zipName}.zip`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const buf = await resp.arrayBuffer();
+      const unzipped = fflate.unzipSync(new Uint8Array(buf));
+      const anims = {};
+      for (const [filename, data] of Object.entries(unzipped)) {
+        if (!filename.endsWith('.json')) continue;
+        const name = filename.replace('.json', '');
+        anims[name] = JSON.parse(new TextDecoder().decode(data));
+      }
+      animCache.set(externalId, anims);
+      console.log(`[anim] Loaded ${zipName}: ${Object.keys(anims).length} animations`);
+      return anims;
+    } catch (err) {
+      console.warn(`[anim] Failed to load ${zipName}.zip:`, err);
+      return null;
+    } finally {
+      animLoading.delete(externalId);
+    }
+  })();
+
+  animLoading.set(externalId, promise);
+  return promise;
+}
+
+// ── SVG Fighter Renderer ────────────────────────────────────────
+
+// State for the SVG animation layer
+let svgCharIds = {};      // port → internalCharId (from match_start)
+let svgStageId = null;    // from match_start
+let svgFrameData = null;  // latest frame {players: [...]}
+let svgInitialized = false;
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function initSvgCanvas() {
+  const area = document.getElementById('stream-area');
+  if (!area || area.querySelector('.stream-canvas-wrap')) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'stream-canvas-wrap';
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '-140 -120 280 200');
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.id = 'fighter-svg';
+
+  // Y-axis inverted group (positive = up in game coords)
+  const gameG = document.createElementNS(SVG_NS, 'g');
+  gameG.setAttribute('transform', 'scale(1 -1)');
+  gameG.id = 'game-layer';
+  svg.appendChild(gameG);
+
+  // Stage group
+  const stageG = document.createElementNS(SVG_NS, 'g');
+  stageG.id = 'stage-layer';
+  gameG.appendChild(stageG);
+
+  // Players group
+  const playersG = document.createElementNS(SVG_NS, 'g');
+  playersG.id = 'players-layer';
+  gameG.appendChild(playersG);
+
+  wrap.appendChild(svg);
+  area.insertBefore(wrap, area.firstChild);
+  svgInitialized = true;
+}
+
+function renderStage(stageId) {
+  const stageG = document.getElementById('stage-layer');
+  if (!stageG) return;
+  stageG.innerHTML = '';
+
+  const sd = STAGE_DATA[stageId] || DEFAULT_STAGE;
+
+  // Main platform
+  const main = document.createElementNS(SVG_NS, 'rect');
+  main.setAttribute('x', sd.main.x - sd.main.w / 2);
+  main.setAttribute('y', -sd.main.h);
+  main.setAttribute('width', sd.main.w);
+  main.setAttribute('height', sd.main.h);
+  main.setAttribute('fill', '#3a3a3a');
+  main.setAttribute('stroke', '#555');
+  main.setAttribute('stroke-width', '0.5');
+  main.setAttribute('transform', `translate(0 ${sd.main.y})`);
+  stageG.appendChild(main);
+
+  // Side/top platforms
+  for (const p of sd.plats) {
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('x', p.x - p.w / 2);
+    rect.setAttribute('y', -p.h);
+    rect.setAttribute('width', p.w);
+    rect.setAttribute('height', p.h);
+    rect.setAttribute('fill', '#2a2a2a');
+    rect.setAttribute('stroke', '#555');
+    rect.setAttribute('stroke-width', '0.5');
+    rect.setAttribute('transform', `translate(0 ${p.y})`);
+    stageG.appendChild(rect);
+  }
+}
+
+function renderFighters(players) {
+  const playersG = document.getElementById('players-layer');
+  if (!playersG) return;
+  playersG.innerHTML = '';
+
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    const intId = svgCharIds[p.port];
+    if (intId == null) continue;
+
+    const extId = EXT_ID_BY_INT[intId];
+    if (extId == null) continue;
+
+    const anims = animCache.get(extId);
+    const scale = CHAR_SCALE[extId] || 1.0;
+    const color = PLAYER_COLORS[i] || '#fff';
+    const facing = p.facingDirection || 1;
+    const x = p.x || 0;
+    const y = p.y || 0;
+
+    const actionName = ACTION_NAMES[p.actionStateId] || 'Wait';
+    const animName = getAnimName(actionName);
+    const frames = anims?.[animName] || anims?.['Wait1'] || [];
+
+    const frameIdx = Math.floor(Math.max(0, p.actionFrame || 0)) % Math.max(1, frames.length);
+    let pathD = frames[frameIdx];
+
+    // Resolve frame references like "frame20"
+    if (pathD && pathD.startsWith('frame')) {
+      const refIdx = parseInt(pathD.slice(5), 10);
+      pathD = frames[refIdx];
+    }
+
+    if (!pathD) {
+      // Fallback: colored circle
+      const circle = document.createElementNS(SVG_NS, 'circle');
+      circle.setAttribute('cx', x);
+      circle.setAttribute('cy', y);
+      circle.setAttribute('r', '5');
+      circle.setAttribute('fill', color);
+      circle.setAttribute('opacity', '0.8');
+      playersG.appendChild(circle);
+      continue;
+    }
+
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', pathD);
+    path.setAttribute('transform',
+      `translate(${x} ${y}) scale(${scale} ${scale}) scale(${facing} 1) scale(0.1 -0.1) translate(-500 -500)`
+    );
+    path.setAttribute('fill', color);
+    path.setAttribute('stroke', 'black');
+    path.setAttribute('stroke-width', '0.5');
+    path.setAttribute('opacity', '0.9');
+    playersG.appendChild(path);
+  }
+}
+
+function onMatchStartAnim(msg) {
+  svgCharIds = {};
+  svgStageId = msg.stageId;
+  const players = msg.players || [];
+  for (const p of players) {
+    if (p.characterId != null) {
+      svgCharIds[p.port] = p.characterId;
+    }
+  }
+
+  // Initialize SVG canvas and render stage
+  initSvgCanvas();
+  renderStage(svgStageId);
+
+  // Preload character animations
+  for (const intId of Object.values(svgCharIds)) {
+    const extId = EXT_ID_BY_INT[intId];
+    if (extId != null) fetchCharAnims(extId);
+  }
+}
+
+function onFrameAnim(msg) {
+  if (!svgInitialized) return;
+  svgFrameData = msg;
+  renderFighters(msg.players || []);
+}
+
+function resetAnim() {
+  svgCharIds = {};
+  svgStageId = null;
+  svgFrameData = null;
+  svgInitialized = false;
+  // Remove SVG canvas
+  const wrap = document.querySelector('.stream-canvas-wrap');
+  if (wrap) wrap.remove();
+}
 
 // ── Character abbreviations ───────────────────────────────────
 
@@ -1288,8 +1656,11 @@ function updateActivity(data) {
   pollBetActivity(data);
 }
 
+let betPollInFlight = false;
+
 async function pollBetActivity(data) {
-  // Find current pool_id from playing match
+  if (betPollInFlight) return; // Don't stack requests
+  // Find current pool_id from any active or recent match
   const rounds = data.bracket?.rounds || [];
   let poolId = null;
   let entryA = null, entryB = null;
@@ -1304,15 +1675,18 @@ async function pollBetActivity(data) {
   }
   if (!poolId) return;
 
+  betPollInFlight = true;
   try {
     const resp = await fetch(`${arenaBase}/pools/${poolId}/bets`);
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      console.warn(`[bets] /pools/${poolId}/bets returned ${resp.status}`);
+      return;
+    }
     const result = await resp.json();
     const bets = result.bets || [];
     const prev = lastBetCount[poolId] || 0;
 
     if (bets.length > prev) {
-      // New bets since last poll
       const newBets = bets.slice(prev);
       for (const b of newBets) {
         const side = b.betOnA ? (entryA?.name || 'Player A') : (entryB?.name || 'Player B');
@@ -1321,7 +1695,11 @@ async function pollBetActivity(data) {
       }
     }
     lastBetCount[poolId] = bets.length;
-  } catch (e) { /* silent */ }
+  } catch (e) {
+    console.warn('[bets] pollBetActivity error:', e);
+  } finally {
+    betPollInFlight = false;
+  }
 }
 
 // ── Live Match WebSocket Stream ───────────────────────────────
@@ -1405,6 +1783,8 @@ function handleStreamMessage(msg) {
       streamPlayers[ports[0]].name = streamPlayers._nameA;
       if (streamPlayers._nameB) streamPlayers[ports[1]].name = streamPlayers._nameB;
     }
+    // Initialize SVG animation
+    onMatchStartAnim(msg);
     renderStreamStats();
     return;
   }
@@ -1432,6 +1812,8 @@ function handleStreamMessage(msg) {
       prev.stocks = p.stocks ?? prev.stocks;
       prev._hit = (prev.percent > prevPercent && prevPercent >= 0);
     }
+    // Update SVG fighters
+    onFrameAnim(msg);
     renderStreamStats();
     return;
   }
@@ -1454,7 +1836,21 @@ function renderStreamStats() {
 
   const ports = Object.keys(streamPlayers).filter(k => !k.startsWith('_')).sort();
   if (ports.length < 2) {
-    area.innerHTML = '<span class="stream-connected">CONNECTING</span><span>Waiting for game data…</span>';
+    // Keep SVG canvas if it exists, just update the non-SVG part
+    const existing = area.querySelector('.stream-canvas-wrap');
+    if (existing) {
+      // Remove old overlay/badge if any, keep SVG
+      const oldOverlay = area.querySelector('.stream-stats-overlay');
+      if (oldOverlay) oldOverlay.remove();
+      const oldBadge = area.querySelector('.stream-connected');
+      if (oldBadge) oldBadge.remove();
+      const badge = document.createElement('span');
+      badge.className = 'stream-connected';
+      badge.textContent = 'CONNECTING';
+      area.appendChild(badge);
+    } else {
+      area.innerHTML = '<span class="stream-connected">CONNECTING</span><span>Waiting for game data…</span>';
+    }
     return;
   }
 
@@ -1476,21 +1872,44 @@ function renderStreamStats() {
     return html;
   }
 
-  area.innerHTML = `
-    <span class="stream-connected">● LIVE</span>
-    <div class="stream-stats">
-      <div class="stream-player">
-        <div class="stream-player-name">${escHtml(p1.name)}</div>
-        <div class="stream-percent ${pctClass(p1.percent)}${p1._hit ? ' hit' : ''}">${p1.percent}%</div>
-        <div class="stream-stocks">${stockDots(p1.stocks, p1.maxStocks)}</div>
-      </div>
-      <div class="stream-vs">VS</div>
-      <div class="stream-player">
-        <div class="stream-player-name">${escHtml(p2.name)}</div>
-        <div class="stream-percent ${pctClass(p2.percent)}${p2._hit ? ' hit' : ''}">${p2.percent}%</div>
-        <div class="stream-stocks">${stockDots(p2.stocks, p2.maxStocks)}</div>
-      </div>
+  const statsHtml = `
+    <div class="stream-player">
+      <div class="stream-player-name">${escHtml(p1.name)}</div>
+      <div class="stream-percent ${pctClass(p1.percent)}${p1._hit ? ' hit' : ''}">${p1.percent}%</div>
+      <div class="stream-stocks">${stockDots(p1.stocks, p1.maxStocks)}</div>
+    </div>
+    <div class="stream-vs">VS</div>
+    <div class="stream-player">
+      <div class="stream-player-name">${escHtml(p2.name)}</div>
+      <div class="stream-percent ${pctClass(p2.percent)}${p2._hit ? ' hit' : ''}">${p2.percent}%</div>
+      <div class="stream-stocks">${stockDots(p2.stocks, p2.maxStocks)}</div>
     </div>`;
+
+  // If SVG canvas is active, use overlay layout
+  if (svgInitialized && area.querySelector('.stream-canvas-wrap')) {
+    // Update or create overlay
+    let overlay = area.querySelector('.stream-stats-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'stream-stats-overlay';
+      area.querySelector('.stream-canvas-wrap').appendChild(overlay);
+    }
+    overlay.innerHTML = statsHtml;
+
+    // Update LIVE badge
+    let badge = area.querySelector('.stream-connected');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'stream-connected';
+      area.appendChild(badge);
+    }
+    badge.innerHTML = '● LIVE';
+  } else {
+    // Fallback: text-only layout (no SVG loaded)
+    area.innerHTML = `
+      <span class="stream-connected">● LIVE</span>
+      <div class="stream-stats">${statsHtml}</div>`;
+  }
 
   // Clear hit flags after render
   p1._hit = false;
@@ -1499,7 +1918,10 @@ function renderStreamStats() {
 
 function renderStreamIdle() {
   const area = document.getElementById('stream-area');
-  if (area) area.innerHTML = 'Waiting for match…';
+  if (area) {
+    resetAnim();
+    area.innerHTML = 'Waiting for match…';
+  }
 }
 
 // Called from applyData — connect/disconnect based on bracket state

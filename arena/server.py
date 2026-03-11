@@ -1707,8 +1707,8 @@ def get_pool_bets(pool_id: int) -> dict[str, Any]:
 
         w3, contract = get_prediction_pool_contract(rpc_url, pool_address)
         latest = w3.eth.block_number
-        # Scan last 2000 blocks (~13 min on Monad at 0.4s blocks)
-        from_block = max(0, latest - 2000)
+        # Scan last 5000 blocks (~33 min on Monad at 0.4s blocks)
+        from_block = max(0, latest - 5000)
 
         # Monad caps getLogs to 100 blocks per call — scan in chunks
         all_events = []
