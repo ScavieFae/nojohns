@@ -30,6 +30,7 @@ class Entry:
     connect_code: str  # Slippi connect code, e.g. "NOJN#001"
     wallet_address: str | None = None
     registrant: str | None = None  # Human registrant name (who signed up)
+    email: str | None = None  # Email used at registration (for Privy matching)
 
     def to_dict(self) -> dict:
         return {
@@ -39,6 +40,7 @@ class Entry:
             "connect_code": self.connect_code,
             "wallet_address": self.wallet_address,
             "registrant": self.registrant,
+            "email": self.email,
         }
 
     @classmethod
@@ -50,6 +52,7 @@ class Entry:
             connect_code=d["connect_code"],
             wallet_address=d.get("wallet_address"),
             registrant=d.get("registrant"),
+            email=d.get("email"),
         )
 
 

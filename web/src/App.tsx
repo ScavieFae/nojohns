@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import { Layout } from "./components/layout/Layout";
 import { LandingPage } from "./pages/LandingPage";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
@@ -8,8 +8,21 @@ import { LivePage } from "./pages/LivePage";
 import { ViewerDemo } from "./components/viewer/ViewerDemo";
 import { DemoPage } from "./pages/DemoPage";
 import { BetPage } from "./pages/BetPage";
+import { TournamentPage } from "./pages/TournamentPage";
 
 export default function App() {
+  const { pathname } = useLocation();
+
+  // Tournament routes render without the site chrome (header/footer/nav)
+  if (pathname.startsWith("/tournament/")) {
+    return (
+      <Routes>
+        <Route path="/tournament/login" element={<TournamentPage />} />
+        <Route path="/tournament/bet" element={<BetPage />} />
+      </Routes>
+    );
+  }
+
   return (
     <Layout>
       <Routes>

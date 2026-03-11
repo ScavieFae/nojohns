@@ -1760,10 +1760,11 @@ def get_pool_bets(pool_id: int) -> dict[str, Any]:
 # Faucet Endpoint
 # ======================================================================
 
-# 0.1 MON in wei
-_FAUCET_AMOUNT_WEI = int(0.1 * 10**18)
+# Faucet amount — configurable via FAUCET_AMOUNT env var (in MON, default 50 for Fight Night)
+_FAUCET_AMOUNT_MON = float(os.environ.get("FAUCET_AMOUNT", "50"))
+_FAUCET_AMOUNT_WEI = int(_FAUCET_AMOUNT_MON * 10**18)
 # Max number of wallets we'll fund (bounds operator exposure)
-_FAUCET_CAP = 50
+_FAUCET_CAP = int(os.environ.get("FAUCET_CAP", "50"))
 
 
 def _send_native(to_address: str, amount_wei: int, account, rpc_url: str, chain_id: int) -> str:
@@ -1839,7 +1840,7 @@ def faucet(req: FaucetRequest) -> dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"Transaction failed: {e}")
 
     db.record_funded_wallet(address, tx_hash)
-    logger.info(f"Faucet: funded {address} with 0.1 MON — tx={tx_hash} ({count + 1}/{_FAUCET_CAP})")
+    logger.info(f"Faucet: funded {address} with {_FAUCET_AMOUNT_MON} MON — tx={tx_hash} ({count + 1}/{_FAUCET_CAP})")
 
     return {
         "success": True,
@@ -1879,6 +1880,7 @@ class RegisterEntryRequest(BaseModel):
     name: str
     character: str
     registrant: str | None = None
+    email: str | None = None  # Email for Privy matching (Fight Night)
     strategy: str = "phillip"
     connect_code: str | None = None  # auto-generated if omitted
     wallet_address: str | None = None
@@ -1958,6 +1960,7 @@ def register_entry(
         connect_code=code,
         wallet_address=req.wallet_address,
         registrant=req.registrant,
+        email=req.email,
     )
 
     try:
@@ -1966,6 +1969,114 @@ def register_entry(
         raise HTTPException(status_code=400, detail=str(e))
 
     return t.to_dict()
+
+
+class SelfRegisterRequest(BaseModel):
+    """Public self-registration for Fight Night attendees."""
+    name: str
+    character: str
+    email: str  # Required — used for Privy matching + faucet
+    wallet_address: str | None = None
+
+
+@app.post("/tournaments/{tournament_id}/self-register")
+def self_register(
+    tournament_id: str,
+    req: SelfRegisterRequest,
+) -> dict[str, Any]:
+    """Public endpoint: register yourself for a tournament (no admin auth).
+
+    Stores email for Privy login matching. Duplicate emails are rejected.
+    """
+    from tournaments.models import Entry
+    from tournaments.tournament import get_tournament as _get, register_entry as _register
+
+    db = get_db()
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    if t.status != "registration":
+        raise HTTPException(status_code=400, detail="Registration is closed")
+
+    # Reject duplicate email
+    email_lower = req.email.strip().lower()
+    for e in t.entries:
+        if e.email and e.email.strip().lower() == email_lower:
+            raise HTTPException(status_code=409, detail="Email already registered")
+
+    code = f"NOJN#{len(t.entries) + 1:03d}"
+    entry = Entry(
+        name=req.name,
+        character=req.character,
+        strategy="phillip",
+        connect_code=code,
+        wallet_address=req.wallet_address,
+        registrant=req.name,
+        email=email_lower,
+    )
+
+    try:
+        t = _register(db, t, entry)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"success": True, "entry": entry.to_dict(), "tournament": t.to_dict()}
+
+
+@app.get("/tournaments/{tournament_id}/my-entry")
+def my_entry(
+    tournament_id: str,
+    email: str | None = None,
+    wallet: str | None = None,
+) -> dict[str, Any]:
+    """Look up a user's entry in a tournament by email or wallet address."""
+    from tournaments.tournament import get_tournament as _get
+
+    db = get_db()
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    if email:
+        email_lower = email.strip().lower()
+        for e in t.entries:
+            if e.email and e.email.strip().lower() == email_lower:
+                return {"found": True, "entry": e.to_dict()}
+
+    if wallet:
+        wallet_lower = wallet.strip().lower()
+        for e in t.entries:
+            if e.wallet_address and e.wallet_address.lower() == wallet_lower:
+                return {"found": True, "entry": e.to_dict()}
+
+    return {"found": False, "entry": None}
+
+
+@app.get("/tournaments/featured")
+def get_featured_tournament() -> dict[str, Any]:
+    """Return the current featured/active tournament (convenience for mobile app)."""
+    from tournaments.tournament import list_tournaments as _list
+
+    db = get_db()
+    tournaments = _list(db)
+
+    # Prefer active, then featured, then most recent
+    active = next((t for t in tournaments if t.status == "active"), None)
+    if active:
+        return active.to_dict()
+
+    featured = next((t for t in tournaments if t.featured), None)
+    if featured:
+        return featured.to_dict()
+
+    registration = next((t for t in tournaments if t.status == "registration"), None)
+    if registration:
+        return registration.to_dict()
+
+    if tournaments:
+        return tournaments[-1].to_dict()
+
+    raise HTTPException(status_code=404, detail="No tournaments found")
 
 
 @app.post("/tournaments/{tournament_id}/close-registration")
