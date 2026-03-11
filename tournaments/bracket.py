@@ -88,8 +88,11 @@ def _propagate_winners(rounds: list[list[Match]], rng: random.Random | None = No
     """
     Push resolved match winners forward into subsequent rounds.
 
+    Two-phase approach per iteration:
+      1. Place all winners into their next-round slots
+      2. Then check for byes/coinflips (only after all placements are done)
+
     Loops until no new advancement occurs (handles cascading byes).
-    Auto-resolves new byes/coinflips discovered during propagation.
     """
     if rng is None:
         rng = random.Random()
@@ -97,6 +100,8 @@ def _propagate_winners(rounds: list[list[Match]], rng: random.Random | None = No
     changed = True
     while changed:
         changed = False
+
+        # Phase 1: Place all winners into next-round slots
         for r_idx in range(len(rounds) - 1):
             current_round = rounds[r_idx]
             next_round = rounds[r_idx + 1]
@@ -105,7 +110,6 @@ def _propagate_winners(rounds: list[list[Match]], rng: random.Random | None = No
                     continue
                 next_slot = slot // 2
                 next_match = next_round[next_slot]
-                # Feed winner into the appropriate side of the next match
                 if slot % 2 == 0:
                     if next_match.entry_a is not match.winner:
                         next_match.entry_a = match.winner
@@ -115,21 +119,32 @@ def _propagate_winners(rounds: list[list[Match]], rng: random.Random | None = No
                         next_match.entry_b = match.winner
                         changed = True
 
-                # Resolve newly-populated next match if it's a bye or coinflip
-                if next_match.winner is None:
-                    a, b = next_match.entry_a, next_match.entry_b
-                    if a is None and b is not None:
-                        next_match.status = "bye"
-                        next_match.winner = b
-                        changed = True
-                    elif b is None and a is not None:
-                        next_match.status = "bye"
-                        next_match.winner = a
-                        changed = True
-                    elif a is not None and b is not None and _is_coinflip(a, b):
-                        next_match.status = "coinflip"
-                        next_match.winner = rng.choice([a, b])
-                        changed = True
+        # Phase 2: Resolve byes and coinflips (after all placements)
+        for r_idx in range(len(rounds) - 1):
+            current_round = rounds[r_idx]
+            next_round = rounds[r_idx + 1]
+            for next_slot, next_match in enumerate(next_round):
+                if next_match.winner is not None:
+                    continue
+                a, b = next_match.entry_a, next_match.entry_b
+                # Check if both feeder matches are resolved
+                feeder_a = current_round[next_slot * 2] if next_slot * 2 < len(current_round) else None
+                feeder_b = current_round[next_slot * 2 + 1] if next_slot * 2 + 1 < len(current_round) else None
+                a_resolved = feeder_a is not None and feeder_a.status in ("bye", "complete", "coinflip")
+                b_resolved = feeder_b is not None and feeder_b.status in ("bye", "complete", "coinflip")
+
+                if a is None and b is not None and b_resolved and a_resolved:
+                    next_match.status = "bye"
+                    next_match.winner = b
+                    changed = True
+                elif b is None and a is not None and a_resolved and b_resolved:
+                    next_match.status = "bye"
+                    next_match.winner = a
+                    changed = True
+                elif a is not None and b is not None and _is_coinflip(a, b):
+                    next_match.status = "coinflip"
+                    next_match.winner = rng.choice([a, b])
+                    changed = True
 
 
 def advance(
