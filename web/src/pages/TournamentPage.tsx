@@ -4,8 +4,12 @@ import {
   useFeaturedTournament,
   useMyEntry,
   usePlayingMatch,
+  useAllTournaments,
+  useTournamentById,
+  isAdmin,
   type TournamentEntry,
   type TournamentData,
+  type TournamentSummary,
 } from "../hooks/useTournament";
 import { ARENA_URL } from "../config";
 import { useQueryClient } from "@tanstack/react-query";
@@ -505,16 +509,71 @@ function StatusPill({ status }: { status: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tournament list (admin view)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TournamentList({
+  tournaments,
+  onSelect,
+}: {
+  tournaments: TournamentSummary[];
+  onSelect: (id: string) => void;
+}) {
+  const statusOrder: Record<string, number> = { active: 0, registration: 1, pending: 2, complete: 3 };
+  const sorted = [...tournaments].sort(
+    (a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
+  );
+
+  return (
+    <div className="space-y-2">
+      {sorted.map((t) => (
+        <button
+          key={t.id}
+          onClick={() => onSelect(t.id)}
+          className="w-full text-left bg-surface-800 border border-surface-600 rounded-xl px-4 py-3 hover:border-accent-green/30 transition-colors active:scale-[0.98]"
+        >
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-sm">{t.name}</span>
+            <StatusPill status={t.status} />
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            {t.entry_count} fighters · {t.id.slice(0, 8)}
+          </p>
+        </button>
+      ))}
+      {tournaments.length === 0 && (
+        <p className="text-gray-500 text-sm text-center py-4">No tournaments yet</p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main page
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function TournamentPage() {
-  const { ready, isAuthenticated, login, account, user, isEmbeddedWallet } = usePrivyWallet();
-  const { tournament, isLoading: tournLoading } = useFeaturedTournament();
+  const { ready, isAuthenticated, login, logout, account, user, isEmbeddedWallet } = usePrivyWallet();
   const queryClient = useQueryClient();
 
   // Extract email from Privy user
   const email = user?.email?.address ?? null;
+  const admin = isAdmin(email);
+
+  // State for admin tournament selection
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string | null>(null);
+
+  // Featured tournament (for non-admin users)
+  const { tournament: featuredTournament, isLoading: featuredLoading } = useFeaturedTournament();
+
+  // All tournaments (admin only)
+  const { tournaments: allTournaments, isLoading: listLoading } = useAllTournaments(admin && isAuthenticated);
+
+  // Selected tournament (admin picked one from list)
+  const { tournament: selectedTournament } = useTournamentById(selectedTournamentId);
+
+  // The active tournament: admin-selected > featured
+  const tournament = selectedTournament ?? featuredTournament;
 
   // Look up this user's entry
   const { entry: myEntry, refetch: refetchEntry } = useMyEntry(
@@ -551,18 +610,42 @@ export function TournamentPage() {
     return <SignInScreen onLogin={login} />;
   }
 
-  // Loading tournament
-  if (tournLoading) {
+  // Loading
+  if (featuredLoading || (admin && listLoading)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
         <div className="w-8 h-8 border-2 border-accent-green border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-gray-400 text-sm">Loading tournament...</p>
+        <p className="text-gray-400 text-sm">Loading tournaments...</p>
       </div>
     );
   }
 
-  // No tournament
+  // No tournament — admin sees full list, regular users see "no tournament"
   if (!tournament) {
+    if (admin) {
+      return (
+        <div className="min-h-screen flex flex-col">
+          <div className="border-b border-surface-600 px-4 py-3 flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-black" style={{ fontFamily: "'Orbitron', sans-serif" }}>
+                All Tournaments
+              </h1>
+              <p className="text-xs text-gray-500">Admin · {email}</p>
+            </div>
+            <button onClick={logout} className="text-xs text-gray-500 hover:text-white">
+              Sign out
+            </button>
+          </div>
+          <div className="flex-1 px-5 py-6 max-w-md mx-auto w-full">
+            <TournamentList
+              tournaments={allTournaments}
+              onSelect={setSelectedTournamentId}
+            />
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
         <h2 className="text-xl font-bold mb-2" style={{ fontFamily: "'Orbitron', sans-serif" }}>
@@ -574,15 +657,30 @@ export function TournamentPage() {
   }
 
   return (
-    <Dashboard
-      tournament={tournament}
-      myEntry={myEntry}
-      email={email}
-      walletAddress={account}
-      onRefetch={() => {
-        refetchEntry();
-        queryClient.invalidateQueries({ queryKey: ["featuredTournament"] });
-      }}
-    />
+    <div>
+      {/* Admin: back button + tournament list toggle */}
+      {admin && selectedTournamentId && (
+        <div className="bg-surface-800 border-b border-surface-600 px-4 py-2">
+          <button
+            onClick={() => setSelectedTournamentId(null)}
+            className="text-xs text-accent-green hover:underline"
+          >
+            ← All tournaments
+          </button>
+        </div>
+      )}
+      <Dashboard
+        tournament={tournament}
+        myEntry={myEntry}
+        email={email}
+        walletAddress={account}
+        onRefetch={() => {
+          refetchEntry();
+          queryClient.invalidateQueries({ queryKey: ["featuredTournament"] });
+          queryClient.invalidateQueries({ queryKey: ["allTournaments"] });
+          queryClient.invalidateQueries({ queryKey: ["tournament", selectedTournamentId] });
+        }}
+      />
+    </div>
   );
 }

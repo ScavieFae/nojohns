@@ -113,6 +113,72 @@ export function useMyEntry(
   };
 }
 
+/** Admin email — hardcoded for Fight Night. */
+export const ADMIN_EMAIL = "fairchild.mattie@gmail.com";
+
+export function isAdmin(email: string | null): boolean {
+  return !!email && email.toLowerCase() === ADMIN_EMAIL;
+}
+
+export interface TournamentSummary {
+  id: string;
+  name: string;
+  status: string;
+  entry_count: number;
+  featured: boolean;
+}
+
+async function fetchAllTournaments(): Promise<TournamentSummary[]> {
+  try {
+    const res = await fetch(`${ARENA_URL}/tournaments`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.tournaments ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function useAllTournaments(enabled: boolean) {
+  const query = useQuery({
+    queryKey: ["allTournaments"],
+    queryFn: fetchAllTournaments,
+    enabled,
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+  });
+
+  return {
+    tournaments: query.data ?? [],
+    isLoading: query.isLoading,
+  };
+}
+
+async function fetchTournamentById(id: string): Promise<TournamentData | null> {
+  try {
+    const res = await fetch(`${ARENA_URL}/tournaments/${id}/bracket`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export function useTournamentById(id: string | null) {
+  const query = useQuery({
+    queryKey: ["tournament", id],
+    queryFn: () => fetchTournamentById(id!),
+    enabled: !!id,
+    refetchInterval: 5_000,
+    staleTime: 3_000,
+  });
+
+  return {
+    tournament: query.data ?? null,
+    isLoading: query.isLoading,
+  };
+}
+
 /** Find the current "playing" match in a tournament. */
 export function usePlayingMatch(tournament: TournamentData | null) {
   if (!tournament?.bracket?.rounds) return null;
