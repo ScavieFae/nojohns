@@ -2034,13 +2034,29 @@ def queue_next(
             "champion": champion.to_dict() if champion else None,
         }
 
-    # Create prediction pool for tournament match (same as regular matchmaking)
+    # For tournament matches without fighter wallets, generate deterministic
+    # addresses and store them on the arena match so betters can identify sides.
     if match.arena_match_id and match.entry_a and match.entry_b:
+        p1_wallet = match.entry_a.wallet_address
+        p2_wallet = match.entry_b.wallet_address
+        if not p1_wallet or not p2_wallet:
+            try:
+                acct_a, acct_b = _match_keypairs(match.arena_match_id)
+                if not p1_wallet:
+                    p1_wallet = acct_a.address
+                    db.update_match_wallet(match.arena_match_id, "p1", p1_wallet)
+                if not p2_wallet:
+                    p2_wallet = acct_b.address
+                    db.update_match_wallet(match.arena_match_id, "p2", p2_wallet)
+            except Exception as e:
+                logger.debug(f"Could not set deterministic wallets: {e}")
+
+        # Create prediction pool for tournament match
         _background_chain((
             _try_create_pool,
             match.arena_match_id,
-            match.entry_a.wallet_address,
-            match.entry_b.wallet_address,
+            p1_wallet,
+            p2_wallet,
         ))
 
     return {

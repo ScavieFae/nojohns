@@ -301,6 +301,16 @@ class ArenaDB:
             )
             self._conn.commit()
 
+    def update_match_wallet(self, match_id: str, side: str, wallet: str) -> None:
+        """Set a wallet address on a match. side is 'p1' or 'p2'."""
+        col = "p1_wallet" if side == "p1" else "p2_wallet"
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE matches SET {col} = ? WHERE id = ?",
+                (wallet, match_id),
+            )
+            self._conn.commit()
+
     # ------------------------------------------------------------------
     # Matches
     # ------------------------------------------------------------------
