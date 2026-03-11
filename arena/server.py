@@ -1984,6 +1984,7 @@ def get_bracket(tournament_id: str) -> dict[str, Any]:
         "tournament_id": t.id,
         "name": t.name,
         "status": t.status,
+        "entries": [e.to_dict() for e in t.entries],
         "champion": champion.to_dict() if champion else None,
         "bracket": t.bracket.to_dict(),
     }

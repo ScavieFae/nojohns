@@ -673,6 +673,70 @@ body::after {
   padding: 40px;
 }
 
+/* ── Registrant List (pre-bracket) ───────────────────────── */
+
+.registrant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 0;
+  max-width: 500px;
+}
+
+.registrant-list-header {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #6a8a74;
+  margin-bottom: 8px;
+}
+
+.registrant-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(0, 255, 136, 0.03);
+  border: 1px solid rgba(0, 255, 136, 0.06);
+  border-radius: 6px;
+  animation: fadeIn 0.3s ease-out both;
+  animation-delay: calc(var(--i, 0) * 0.05s);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.registrant-num {
+  font-size: 11px;
+  color: #555;
+  min-width: 22px;
+  text-align: right;
+}
+
+.registrant-name {
+  font-size: 14px;
+  font-weight: 700;
+  flex: 1;
+}
+
+.registrant-char {
+  font-size: 11px;
+  color: #ff6b35;
+  background: rgba(255, 107, 53, 0.08);
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.registrant-by {
+  font-size: 11px;
+  color: #555;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(0, 255, 136, 0.3); }
   50% { opacity: 0.6; box-shadow: 0 0 16px rgba(0, 255, 136, 0.5); }
@@ -838,10 +902,31 @@ function renderMatch(m) {
   </div>`;
 }
 
+function renderRegistrants(entries) {
+  if (!entries || !entries.length) {
+    return '<div class="waiting">Registration open — no entries yet</div>';
+  }
+  const rows = entries.map((e, i) => `
+    <div class="registrant-row" style="--i:${i}">
+      <span class="registrant-num">${i + 1}</span>
+      <span class="registrant-name">${escHtml(e.name)}</span>
+      <span class="registrant-char">${charAbbrev(e.character)}</span>
+      ${e.registrant ? `<span class="registrant-by">by ${escHtml(e.registrant)}</span>` : ''}
+    </div>
+  `).join('');
+  return `<div class="registrant-list">
+    <div class="registrant-list-header">Registered Fighters — ${entries.length}</div>
+    ${rows}
+  </div>`;
+}
+
 function renderBracket(data) {
   const rounds = data.bracket?.rounds || [];
   const total  = rounds.length;
-  if (!total) return '<div class="waiting">No bracket yet</div>';
+  if (!total) {
+    if (data.status === 'registration') return renderRegistrants(data.entries);
+    return '<div class="waiting">No bracket yet</div>';
+  }
 
   let html = '';
   for (let r = 0; r < total; r++) {
