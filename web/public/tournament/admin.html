@@ -653,9 +653,12 @@ body::after {
 
     <!-- Register new fighter -->
     <div style="border: 1px solid rgba(0, 255, 136, 0.08); border-radius: 8px; padding: 12px; margin-bottom: 12px; background: rgba(0,255,136,0.02);">
-      <div class="form-group" style="margin-bottom:10px;">
-        <label>Registrant</label>
-        <input type="text" id="reg-registrant" placeholder="Who's signing up?">
+      <div style="display:flex; gap:8px; margin-bottom:10px; align-items:end;">
+        <div class="form-group" style="flex:1; margin-bottom:0;">
+          <label>Registrant</label>
+          <input type="text" id="reg-registrant" placeholder="Who's signing up?">
+        </div>
+        <button class="rand-btn" onclick="randomizeRegistrant()" title="Random name">🎲</button>
       </div>
       <div style="display:flex; gap:8px; margin-bottom:10px; align-items:end;">
         <div class="form-group" style="flex:1; margin-bottom:0;">
@@ -1025,11 +1028,40 @@ async function renderDistributeList(t) {
         <span style="color:#555; font-size:12px;">pool #${m.pool_id}</span>
       </div>
       <button class="btn btn-primary" style="padding:6px 14px; font-size:12px; width:auto;"
-        onclick="distributePool(${m.round}, ${m.slot})" id="dist-btn-${m.round}-${m.slot}">
+        onclick="distributePool(${m.round}, ${m.slot})" id="dist-btn-${m.round}-${m.slot}"
+        data-pool-id="${m.pool_id}">
         Distribute
       </button>
     </div>
   `).join('');
+
+  // Check onchain status for each pool — mark already-distributed
+  for (const m of eligible) {
+    checkPoolDistributed(m.pool_id, m.round, m.slot);
+  }
+}
+
+function markDistributed(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Distributed';
+  btn.style.background = '#333';
+  btn.style.borderColor = '#444';
+  btn.style.color = '#777';
+  btn.style.cursor = 'default';
+  btn.onclick = null;
+}
+
+async function checkPoolDistributed(poolId, round, slot) {
+  try {
+    const resp = await fetch(`${ARENA}/pools/${poolId}/odds`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    // status 1=Resolved, 2=Cancelled — both mean already distributed
+    if (data.status === 1 || data.status === 2) {
+      const btn = document.getElementById(`dist-btn-${round}-${slot}`);
+      if (btn) markDistributed(btn);
+    }
+  } catch (e) { /* silent — button stays active */ }
 }
 
 async function distributePool(round, slot) {
@@ -1045,9 +1077,7 @@ async function distributePool(round, slot) {
       body: JSON.stringify({ round, slot }),
     });
     toast(`Pool #${data.pool_id} distributed!`, 'ok');
-    btn.textContent = 'Done ✓';
-    btn.style.background = '#1a3d1a';
-    btn.style.borderColor = '#2a5a2a';
+    markDistributed(btn);
   } catch (e) {
     toast(`Distribute failed: ${e.message}`, 'err');
     btn.disabled = false;
@@ -1107,6 +1137,17 @@ function randomFighterName() {
 
 function randomizeFighterName() {
   document.getElementById('reg-fighter-name').value = randomFighterName();
+}
+
+const REGISTRANT_NAMES = [
+  'Alex','Jordan','Riley','Casey','Morgan','Quinn','Avery','Blake','Drew','Sage',
+  'Kai','Remy','Nico','Ash','River','Phoenix','Skyler','Dakota','Reese','Rowan',
+  'Taro','Jules','Harper','Ellis','Lane','Finley','Emery','Shay','Oakley','Wren',
+];
+
+function randomizeRegistrant() {
+  const name = REGISTRANT_NAMES[Math.floor(Math.random() * REGISTRANT_NAMES.length)];
+  document.getElementById('reg-registrant').value = name;
 }
 
 // ── Create tournament ─────────────────────────────────────────
