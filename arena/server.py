@@ -1703,38 +1703,50 @@ def get_pool_bets(pool_id: int) -> dict[str, Any]:
     rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
 
     try:
-        from nojohns.contract import get_prediction_pool_contract
+        from web3 import Web3
+        from eth_abi import decode as abi_decode
 
-        w3, contract = get_prediction_pool_contract(rpc_url, pool_address)
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
         latest = w3.eth.block_number
         # Scan last 5000 blocks (~33 min on Monad at 0.4s blocks)
-        from_block = max(0, latest - 5000)
+        scan_from = max(0, latest - 5000)
+
+        # Raw get_logs — contract event decoder has ABI compat issues with web3.py 7.x
+        bet_placed_topic = "0x" + w3.keccak(
+            text="BetPlaced(uint256,address,bool,uint256)"
+        ).hex()
+        pool_id_topic = "0x" + pool_id.to_bytes(32, "big").hex()
 
         # Monad caps getLogs to 100 blocks per call — scan in chunks
-        all_events = []
+        all_logs: list = []
         chunk_size = 100
-        block = from_block
+        block = scan_from
         while block <= latest:
             end = min(block + chunk_size - 1, latest)
             try:
-                events = contract.events.BetPlaced().get_logs(
-                    fromBlock=block,
-                    toBlock=end,
-                    argument_filters={"poolId": pool_id},
-                )
-                all_events.extend(events)
+                logs = w3.eth.get_logs({
+                    "address": w3.to_checksum_address(pool_address),
+                    "fromBlock": block,
+                    "toBlock": end,
+                    "topics": [bet_placed_topic, pool_id_topic],
+                })
+                all_logs.extend(logs)
             except Exception:
                 pass  # Skip failed chunks
             block = end + 1
 
         bets = []
-        for e in all_events:
+        for log in all_logs:
+            bettor = w3.to_checksum_address(
+                "0x" + log["topics"][2].hex()[-40:]
+            )
+            bet_on_a, amount = abi_decode(["bool", "uint256"], log["data"])
             bets.append({
-                "bettor": e.args.bettor,
-                "betOnA": e.args.betOnA,
-                "amount": str(e.args.amount),
-                "amount_mon": round(e.args.amount / 10**18, 4),
-                "block": e.blockNumber,
+                "bettor": bettor,
+                "betOnA": bet_on_a,
+                "amount": str(amount),
+                "amount_mon": round(amount / 10**18, 4),
+                "block": log["blockNumber"],
             })
 
         return {"pool_id": pool_id, "bets": bets}

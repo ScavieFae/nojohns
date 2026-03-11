@@ -394,7 +394,7 @@ body::after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-top: 1px solid rgba(0, 255, 136, 0.06);
+  border-top: 1px solid rgba(255, 107, 53, 0.15);
   color: #1a2a1f;
   font-family: 'Orbitron', sans-serif;
   font-size: 11px;
@@ -416,7 +416,7 @@ body::after {
   width: 100%;
   height: 100%;
   display: block;
-  background: #060610;
+  background: #100804;
 }
 
 .stream-stats-overlay {
@@ -428,7 +428,7 @@ body::after {
   align-items: flex-end;
   padding: 8px 16px;
   pointer-events: none;
-  background: linear-gradient(to top, rgba(6,6,16,0.85) 0%, transparent 100%);
+  background: linear-gradient(to top, rgba(16,8,4,0.9) 0%, transparent 100%);
 }
 
 .stream-stats {
@@ -446,9 +446,9 @@ body::after {
 }
 
 .stream-player-name {
-  font-size: 10px;
-  color: #6a8a74;
-  letter-spacing: 1.5px;
+  font-size: 12px;
+  color: #fff;
+  letter-spacing: 1px;
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -984,7 +984,7 @@ const STAGE_DATA = {
 const DEFAULT_STAGE = { name:"Stage", main:{x:0,y:0,w:150,h:6}, plats:[] };
 
 // Player colors (port-indexed, same as nojohns.gg/live)
-const PLAYER_COLORS = ["#22c55e", "#a855f7", "#3b82f6", "#f59e0b"];
+const PLAYER_COLORS = ["#22c55e", "#ff6b35", "#3b82f6", "#f59e0b"];
 
 // ── Animation Cache ─────────────────────────────────────────────
 
@@ -1394,6 +1394,7 @@ function updateCurrentMatch(data) {
   }
 
   if (!current || !current.entry_a || !current.entry_b) {
+    body.style.display = '';
     if (data.champion) {
       body.innerHTML = `<div style="text-align:center;">
         <div style="font-family:'Orbitron',sans-serif;font-size:12px;color:#aa8a30;letter-spacing:2px;margin-bottom:8px;">CHAMPION</div>
@@ -1414,8 +1415,9 @@ function updateCurrentMatch(data) {
   const isLive = current.status === 'playing';
   const totalRounds = rounds.length;
 
-  document.getElementById('cm-label').textContent = isLive ? '● Live' : 'Up Next';
-  document.getElementById('cm-label').style.color = isLive ? '#00ff88' : '#6a8a74';
+  document.getElementById('cm-label').textContent = isLive ? 'LIVESTREAM' : 'Up Next';
+  document.getElementById('cm-label').style.color = isLive ? '#ff6b35' : '#6a8a74';
+  body.style.display = isLive ? 'none' : '';
   round.textContent = `${roundLabel(current.round, totalRounds)} · Match ${current.slot + 1}`;
 
   body.innerHTML = `<div class="current-match-vs">
@@ -1723,8 +1725,10 @@ function connectMatchStream(arenaMatchId, entryA, entryB) {
   streamPlayers = {
     _nameA: entryA?.name,
     _nameB: entryB?.name,
-    1: { name: entryA?.name || 'P1', percent: 0, stocks: 4, maxStocks: 4 },
-    2: { name: entryB?.name || 'P2', percent: 0, stocks: 4, maxStocks: 4 },
+    _charA: entryA?.character,
+    _charB: entryB?.character,
+    1: { name: entryA?.name || 'P1', character: entryA?.character, percent: 0, stocks: 4, maxStocks: 4 },
+    2: { name: entryB?.name || 'P2', character: entryB?.character, percent: 0, stocks: 4, maxStocks: 4 },
   };
 
   try {
@@ -1781,7 +1785,11 @@ function handleStreamMessage(msg) {
     const ports = Object.keys(streamPlayers).filter(k => !k.startsWith('_')).sort();
     if (ports.length >= 2 && streamPlayers._nameA) {
       streamPlayers[ports[0]].name = streamPlayers._nameA;
-      if (streamPlayers._nameB) streamPlayers[ports[1]].name = streamPlayers._nameB;
+      streamPlayers[ports[0]].character = streamPlayers._charA;
+      if (streamPlayers._nameB) {
+        streamPlayers[ports[1]].name = streamPlayers._nameB;
+        streamPlayers[ports[1]].character = streamPlayers._charB;
+      }
     }
     // Initialize SVG animation
     onMatchStartAnim(msg);
@@ -1799,7 +1807,8 @@ function handleStreamMessage(msg) {
       for (let i = 0; i < sorted.length; i++) {
         const name = i === 0 ? (streamPlayers._nameA || `P${sorted[i].port}`)
                              : (streamPlayers._nameB || `P${sorted[i].port}`);
-        streamPlayers[sorted[i].port] = { name, percent: 0, stocks: 4, maxStocks: 4 };
+        const character = i === 0 ? streamPlayers._charA : streamPlayers._charB;
+        streamPlayers[sorted[i].port] = { name, character, percent: 0, stocks: 4, maxStocks: 4 };
       }
     }
     for (const p of players) {
@@ -1872,15 +1881,20 @@ function renderStreamStats() {
     return html;
   }
 
+  function nameWithChar(player) {
+    const charStr = player.character ? ` <span style="color:#6a8a74;font-weight:400;">| ${charAbbrev(player.character)}</span>` : '';
+    return `<strong>${escHtml(player.name)}</strong>${charStr}`;
+  }
+
   const statsHtml = `
     <div class="stream-player">
-      <div class="stream-player-name">${escHtml(p1.name)}</div>
+      <div class="stream-player-name">${nameWithChar(p1)}</div>
       <div class="stream-percent ${pctClass(p1.percent)}${p1._hit ? ' hit' : ''}">${p1.percent}%</div>
       <div class="stream-stocks">${stockDots(p1.stocks, p1.maxStocks)}</div>
     </div>
     <div class="stream-vs">VS</div>
     <div class="stream-player">
-      <div class="stream-player-name">${escHtml(p2.name)}</div>
+      <div class="stream-player-name">${nameWithChar(p2)}</div>
       <div class="stream-percent ${pctClass(p2.percent)}${p2._hit ? ' hit' : ''}">${p2.percent}%</div>
       <div class="stream-stocks">${stockDots(p2.stocks, p2.maxStocks)}</div>
     </div>`;
