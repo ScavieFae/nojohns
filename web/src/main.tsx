@@ -29,7 +29,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         embeddedWallets: {
           ethereum: { createOnLogin: "users-without-wallets" },
         },
-        loginMethods: ["email", "google", "wallet"],
+        loginMethods: ["email", "wallet"],
         appearance: {
           theme: "dark",
           accentColor: "#22c55e",
