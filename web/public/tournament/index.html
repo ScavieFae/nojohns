@@ -792,7 +792,7 @@ body::after {
     <span class="nav-title" id="tournament-name">Fight Night</span>
   </div>
   <div class="nav-right">
-    <a href="/login" class="nav-link">Login</a>
+    <a href="/tournament/login" class="nav-link">Login</a>
     <div id="tournament-status" class="status-pill pending">Loading</div>
   </div>
 </nav>
@@ -2107,8 +2107,8 @@ window.addEventListener('resize', () => {
 // ── QR Codes ──────────────────────────────────────────────────
 
 (function initQR() {
-  const betUrl   = params.get('bet_url') || (location.origin + '/bet');
-  const loginUrl = params.get('login_url') || (location.origin + '/login');
+  const betUrl   = params.get('bet_url') || (location.origin + '/tournament/bet');
+  const loginUrl = params.get('login_url') || (location.origin + '/tournament/login');
   const qrApi    = 'https://chart.googleapis.com/chart?cht=qr&chs=200x200&choe=UTF-8&chld=M|1&chl=';
 
   document.getElementById('market-qr-img').src = qrApi + encodeURIComponent(betUrl);
