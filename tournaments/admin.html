@@ -761,7 +761,7 @@ async function loadTournament() {
     const data = await apiFetch(`/tournaments/${id}`);
     currentTournament = data;
     renderTournamentState(data);
-    setBanner(`Loaded: ${data.name} — ${data.status}`, 'loaded');
+    setBanner(`Loaded: ${data.name} — ${data.status} (ID: ${data.id})`, 'loaded');
     startPolling(id);
   } catch (e) {
     setBanner(`Failed to load: ${e.message}`, 'error');

@@ -1054,6 +1054,24 @@ def cmd_serve_tournament(args):
     tournament_id = args.tournament_id
     poll_interval = args.poll or 3
 
+    # Auto-pick latest tournament if --latest
+    if getattr(args, "latest", False) and not tournament_id:
+        try:
+            data = _get("/tournaments")
+            tournaments = data.get("tournaments", [])
+            if not tournaments:
+                logger.error("No tournaments found on arena")
+                return 1
+            tournament_id = tournaments[0]["id"]
+            logger.info(f"Auto-selected latest tournament: {tournaments[0]['name']} ({tournament_id})")
+        except Exception as e:
+            logger.error(f"Failed to list tournaments: {e}")
+            return 1
+
+    if not tournament_id:
+        logger.error("--tournament-id or --latest is required")
+        return 1
+
     dolphin = DolphinConfig(dolphin_path=args.dolphin, iso_path=args.iso)
 
     logger.info("No Johns — Tournament Server")
@@ -3424,7 +3442,8 @@ def main():
         "serve-tournament",
         help="Poll arena for tournament matches and run them locally as admin starts them",
     )
-    serve_parser.add_argument("--tournament-id", required=True, help="Tournament ID to serve")
+    serve_parser.add_argument("--tournament-id", default=None, help="Tournament ID to serve (or use --latest)")
+    serve_parser.add_argument("--latest", action="store_true", help="Auto-pick the most recent tournament")
     serve_parser.add_argument("--server", default=None, help="Arena server URL")
     serve_parser.add_argument("--poll", type=int, default=3, help="Poll interval in seconds (default: 3)")
     serve_parser.add_argument("--games", type=int, default=1, help="Number of games per match (default: 1)")
