@@ -656,10 +656,11 @@ def _try_distribute_pool(
 def _expire_stale_matches(db: ArenaDB) -> list[str]:
     """Expire stale matches. Does NOT cancel prediction pools — that's an explicit admin action.
 
-    Timeout is controlled by MATCH_TIMEOUT env var (default 300s / 5 min).
+    Timeout is controlled by MATCH_TIMEOUT env var (default 1800s / 30 min).
+    Tournament matches can take 10+ minutes with setup time between rounds.
     Expired match IDs are returned so callers can take further action if needed.
     """
-    timeout_seconds = int(os.environ.get("MATCH_TIMEOUT", "300"))
+    timeout_seconds = int(os.environ.get("MATCH_TIMEOUT", "1800"))
     return db.expire_stale_matches(timeout_seconds)
 
 
