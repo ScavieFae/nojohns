@@ -342,11 +342,24 @@ body::after {
 
 .entry-row {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr auto 1fr auto;
   gap: 8px;
   margin-bottom: 8px;
   align-items: center;
 }
+
+.rand-btn {
+  background: rgba(0, 255, 136, 0.08);
+  border: 1px solid rgba(0, 255, 136, 0.15);
+  border-radius: 6px;
+  color: #00ff88;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.rand-btn:hover { background: rgba(0, 255, 136, 0.15); }
 
 .entry-row input,
 .entry-row select {
@@ -378,10 +391,29 @@ body::after {
 
 .entry-header {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr auto 1fr auto;
   gap: 8px;
   margin-bottom: 6px;
 }
+
+/* ── Registered fighters table ─────────────────────────────── */
+
+.registered-list { margin-bottom: 12px; }
+
+.registered-entry {
+  display: grid;
+  grid-template-columns: 30px 1fr 1fr 90px;
+  gap: 8px;
+  padding: 8px 10px;
+  align-items: center;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.05);
+  font-size: 13px;
+}
+.registered-entry:last-child { border-bottom: none; }
+.registered-num { color: #6a8a74; font-size: 11px; font-family: 'Orbitron', sans-serif; }
+.registered-name { color: #fff; font-weight: 700; }
+.registered-registrant { color: #6a8a74; font-size: 12px; }
+.registered-char { color: #00ff88; font-size: 12px; font-family: 'Orbitron', sans-serif; }
 
 .entry-header span {
   font-family: 'Orbitron', sans-serif;
@@ -577,7 +609,7 @@ body::after {
 </div>
 
 <!-- ── Create tournament ─────────────────────────────────────── -->
-<div class="section">
+<div class="section" id="create-section">
   <div class="section-header">
     <span class="section-title">Create Tournament</span>
   </div>
@@ -586,20 +618,47 @@ body::after {
       <label>Tournament Name</label>
       <input type="text" id="new-name" value="Fight Night — March 11" placeholder="Tournament name">
     </div>
-
-    <div class="entry-header">
-      <span>Name</span>
-      <span>Character</span>
-      <span></span>
-    </div>
-
-    <div class="entries-list" id="entries-list">
-      <!-- Entry rows injected here -->
-    </div>
-
-    <button class="btn btn-secondary" onclick="addEntryRow()" style="margin-bottom: 12px;">+ Add Fighter</button>
-
     <button class="btn btn-primary" onclick="createTournament()">Create Tournament</button>
+  </div>
+</div>
+
+<!-- ── Registration ────────────────────────────────────────── -->
+<div class="section" id="registration-section" style="display:none;">
+  <div class="section-header">
+    <span class="section-title">Registration</span>
+    <span class="match-status-badge badge-pending" id="reg-count">0 fighters</span>
+  </div>
+  <div class="section-body">
+
+    <!-- Registered fighters list -->
+    <div class="registered-list" id="registered-list">
+      <!-- Populated dynamically -->
+    </div>
+
+    <!-- Register new fighter -->
+    <div style="border: 1px solid rgba(0, 255, 136, 0.08); border-radius: 8px; padding: 12px; margin-bottom: 12px; background: rgba(0,255,136,0.02);">
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>Registrant</label>
+        <input type="text" id="reg-registrant" placeholder="Who's signing up?">
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom:10px; align-items:end;">
+        <div class="form-group" style="flex:1; margin-bottom:0;">
+          <label>Fighter Name</label>
+          <input type="text" id="reg-fighter-name" placeholder="Bot name">
+        </div>
+        <button class="rand-btn" onclick="randomizeFighterName()" title="Random name">🎲</button>
+      </div>
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>Character</label>
+        <select id="reg-character"></select>
+      </div>
+      <button class="btn btn-primary" onclick="registerFighter()">+ Register Fighter</button>
+    </div>
+
+    <!-- Close registration -->
+    <button class="btn btn-warning" onclick="closeRegistration()" id="btn-close-reg">
+      Lock Entries & Generate Bracket
+    </button>
   </div>
 </div>
 
@@ -719,12 +778,21 @@ function startPolling(id) {
 // ── Render tournament state ───────────────────────────────────
 
 function renderTournamentState(t) {
+  // Handle registration vs bracket mode
+  showRegistrationUI(t);
+
+  if (t.status === 'registration') {
+    document.getElementById('match-controls-section').style.display = 'none';
+    document.getElementById('force-section').style.display = 'none';
+    return;
+  }
+
   // Show controls
   document.getElementById('match-controls-section').style.display = '';
   document.getElementById('force-section').style.display = '';
 
   // Champion
-  const champ = t.bracket.rounds.at(-1)?.[0]?.winner;
+  const champ = t.bracket?.rounds?.at(-1)?.[0]?.winner;
   if (champ) {
     document.getElementById('champion-card').classList.add('show');
     document.getElementById('champion-name').textContent = champ.name;
@@ -735,6 +803,7 @@ function renderTournamentState(t) {
 
   // Find current/next match
   currentMatch = null;
+  if (!t.bracket?.rounds) { updateMatchCard(null); populateWinnerSelect(null); return; }
   for (const round of t.bracket.rounds) {
     for (const m of round) {
       if (m.status === 'playing') { currentMatch = m; break; }
@@ -894,63 +963,126 @@ async function forceAdvance() {
   }
 }
 
-// ── Create tournament ─────────────────────────────────────────
+// ── Random fighter names ──────────────────────────────────────
 
-function addEntryRow(name = '', character = 'FOX') {
-  const list = document.getElementById('entries-list');
-  const row = document.createElement('div');
-  row.className = 'entry-row';
+const FIGHTER_ADJECTIVES = [
+  'Shadow','Turbo','Hyper','Mega','Ultra','Cosmic','Phantom','Neon','Cyber','Astral',
+  'Blazing','Frozen','Thunder','Iron','Crystal','Quantum','Void','Apex','Rogue','Solar',
+  'Savage','Crimson','Silent','Dark','Golden','Primal','Sonic','Arcane','Titan','Feral',
+];
+const FIGHTER_NOUNS = [
+  'Fox','Hawk','Wolf','Viper','Falcon','Phoenix','Dragon','Mantis','Cobra','Panther',
+  'Raptor','Lynx','Jaguar','Raven','Serpent','Tiger','Shark','Hornet','Sphinx','Hydra',
+  'Blade','Fang','Storm','Bolt','Hammer','Arrow','Pulse','Flare','Drift','Crush',
+];
 
-  const charOpts = CHARACTERS.map(c =>
-    `<option value="${c}" ${c === character ? 'selected' : ''}>${c}</option>`
-  ).join('');
-
-  row.innerHTML = `
-    <input type="text" placeholder="Fighter name" value="${name}">
-    <select>${charOpts}</select>
-    <button class="remove-btn" onclick="this.closest('.entry-row').remove()">×</button>
-  `;
-
-  list.appendChild(row);
+function randomFighterName() {
+  const adj = FIGHTER_ADJECTIVES[Math.floor(Math.random() * FIGHTER_ADJECTIVES.length)];
+  const noun = FIGHTER_NOUNS[Math.floor(Math.random() * FIGHTER_NOUNS.length)];
+  return `${adj} ${noun}`;
 }
+
+function randomizeFighterName() {
+  document.getElementById('reg-fighter-name').value = randomFighterName();
+}
+
+// ── Create tournament ─────────────────────────────────────────
 
 async function createTournament() {
   const name = document.getElementById('new-name').value.trim();
   if (!name) return toast('Enter a tournament name', 'err');
 
-  const rows = document.querySelectorAll('#entries-list .entry-row');
-  if (rows.length < 2) return toast('Add at least 2 fighters', 'err');
-
-  const entries = [];
-  let idx = 1;
-  for (const row of rows) {
-    const inputs = row.querySelectorAll('input, select');
-    const entryName = inputs[0].value.trim();
-    const character = inputs[1].value;
-    if (!entryName) return toast(`Every fighter needs a name`, 'err');
-    entries.push({
-      name: entryName,
-      character,
-      strategy: 'phillip',
-      connect_code: `NOJN#${String(idx++).padStart(3, '0')}`,
-    });
-  }
-
-  if (!confirm(`Create "${name}" with ${entries.length} entries?`)) return;
-
   try {
     const t = await apiFetch('/tournaments', {
       method: 'POST',
-      body: JSON.stringify({ name, entries }),
+      body: JSON.stringify({ name }),
     });
-    toast(`Created: ${t.name} (${t.id})`, 'ok');
+    toast(`Created: ${t.name}`, 'ok');
     await refreshTournamentList();
-    // Auto-select the new tournament
     document.getElementById('tournament-select').value = t.id;
     currentTournament = t;
-    renderTournamentState(t);
-    setBanner(`Created and loaded: ${t.name}`, 'loaded');
+    showRegistrationUI(t);
+    setBanner(`Created: ${t.name} — add fighters below`, 'loaded');
     startPolling(t.id);
+  } catch (e) {
+    toast(`Failed: ${e.message}`, 'err');
+  }
+}
+
+// ── Registration ──────────────────────────────────────────────
+
+function showRegistrationUI(t) {
+  const section = document.getElementById('registration-section');
+  if (t.status === 'registration') {
+    section.style.display = '';
+    document.getElementById('create-section').style.display = 'none';
+    renderRegisteredList(t.entries || []);
+  } else {
+    section.style.display = 'none';
+  }
+}
+
+function renderRegisteredList(entries) {
+  const list = document.getElementById('registered-list');
+  const count = document.getElementById('reg-count');
+  count.textContent = `${entries.length} fighter${entries.length !== 1 ? 's' : ''}`;
+
+  if (entries.length === 0) {
+    list.innerHTML = '<div style="color:#6a8a74; font-size:13px; padding:8px 0;">No fighters registered yet.</div>';
+    return;
+  }
+  list.innerHTML = entries.map((e, i) => `
+    <div class="registered-entry">
+      <span class="registered-num">#${i + 1}</span>
+      <span class="registered-name">${e.name}</span>
+      <span class="registered-registrant">${e.registrant || '—'}</span>
+      <span class="registered-char">${e.character}</span>
+    </div>
+  `).join('');
+}
+
+async function registerFighter() {
+  if (!currentTournament) return toast('No tournament loaded', 'err');
+
+  const registrant = document.getElementById('reg-registrant').value.trim();
+  const name = document.getElementById('reg-fighter-name').value.trim();
+  const character = document.getElementById('reg-character').value;
+
+  if (!name) return toast('Enter a fighter name', 'err');
+
+  try {
+    const t = await apiFetch(`/tournaments/${currentTournament.id}/register`, {
+      method: 'POST',
+      body: JSON.stringify({ name, character, registrant: registrant || null }),
+    });
+    toast(`Registered: ${name}`, 'ok');
+    currentTournament = t;
+    renderRegisteredList(t.entries || []);
+    // Clear inputs for next entry
+    document.getElementById('reg-registrant').value = '';
+    document.getElementById('reg-fighter-name').value = '';
+    document.getElementById('reg-registrant').focus();
+  } catch (e) {
+    toast(`Failed: ${e.message}`, 'err');
+  }
+}
+
+async function closeRegistration() {
+  if (!currentTournament) return toast('No tournament loaded', 'err');
+  const n = (currentTournament.entries || []).length;
+  if (n < 2) return toast(`Need at least 2 fighters (have ${n})`, 'err');
+
+  if (!confirm(`Lock registration with ${n} fighters and generate bracket?`)) return;
+
+  try {
+    const t = await apiFetch(`/tournaments/${currentTournament.id}/close-registration`, {
+      method: 'POST',
+    });
+    toast(`Bracket generated! ${n} fighters locked.`, 'ok');
+    currentTournament = t;
+    document.getElementById('registration-section').style.display = 'none';
+    renderTournamentState(t);
+    setBanner(`${t.name} — bracket ready`, 'loaded');
   } catch (e) {
     toast(`Failed: ${e.message}`, 'err');
   }
@@ -958,8 +1090,12 @@ async function createTournament() {
 
 // ── Init ──────────────────────────────────────────────────────
 
-addEntryRow();
-addEntryRow();
+// Populate character dropdown
+(function() {
+  const sel = document.getElementById('reg-character');
+  sel.innerHTML = CHARACTERS.map(c => `<option value="${c}">${c}</option>`).join('');
+})();
+
 refreshTournamentList();
 </script>
 </body>
