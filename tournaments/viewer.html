@@ -1229,38 +1229,92 @@ function renderOddsBar(data) {
 
 // ── Activity Feed ────────────────────────────────────────────
 
-function updateActivity(data) {
-  const list = document.getElementById('activity-list');
-  const rounds = data.bracket?.rounds || [];
-  const results = [];
+// ── Activity feed: bets + match results ────────────────────
 
+let activityItems = [];  // { text, type, time }
+let lastBetCount = {};   // pool_id -> count of bets we've seen
+
+function addActivity(text, type) {
+  activityItems.unshift({ text, type, time: Date.now() });
+  if (activityItems.length > 10) activityItems.length = 10;
+  renderActivity();
+}
+
+function renderActivity() {
+  const list = document.getElementById('activity-list');
+  if (activityItems.length === 0) {
+    list.innerHTML = '<li>Waiting for bets...</li>';
+    return;
+  }
+  list.innerHTML = activityItems.map(a => {
+    const cls = a.type === 'bet' ? 'style="color:#ff6b35;"'
+              : a.type === 'win' ? 'style="color:#00ff88;"'
+              : '';
+    return `<li ${cls}>${a.text}</li>`;
+  }).join('');
+}
+
+function updateActivity(data) {
+  // Add match results
+  const rounds = data.bracket?.rounds || [];
   for (const r of rounds) {
     for (const m of r) {
       if ((m.status === 'complete' || m.status === 'coinflip') && m.winner) {
+        const key = `result-${m.round}-${m.slot}`;
+        if (activityItems.some(a => a._key === key)) continue;
         const loser = (m.entry_a && m.winner.name === m.entry_a.name) ? m.entry_b : m.entry_a;
         const label = m.status === 'coinflip' ? 'COIN' : 'WIN';
         const scoreStr = (m.score_a != null && m.score_b != null)
-          ? ` (${m.score_a}-${m.score_b})`
-          : '';
-        results.push({
+          ? ` (${m.score_a}-${m.score_b})` : '';
+        const item = {
           text: `${escHtml(m.winner.name)} ${label}${scoreStr} vs ${loser ? escHtml(loser.name) : 'BYE'}`,
-          round: m.round,
-          slot: m.slot,
-        });
+          type: 'win', time: Date.now(), _key: key,
+        };
+        activityItems.unshift(item);
       }
     }
   }
+  if (activityItems.length > 10) activityItems.length = 10;
+  renderActivity();
 
-  if (results.length === 0) {
-    list.innerHTML = '<li>No results yet</li>';
-    return;
+  // Poll for bet activity on current pool
+  pollBetActivity(data);
+}
+
+async function pollBetActivity(data) {
+  // Find current pool_id from playing match
+  const rounds = data.bracket?.rounds || [];
+  let poolId = null;
+  let entryA = null, entryB = null;
+  for (const r of rounds) {
+    for (const m of r) {
+      if (m.pool_id && (m.status === 'playing' || m.status === 'complete')) {
+        poolId = m.pool_id;
+        entryA = m.entry_a;
+        entryB = m.entry_b;
+      }
+    }
   }
+  if (!poolId) return;
 
-  // Show most recent first, limit to 6
-  results.reverse();
-  list.innerHTML = results.slice(0, 6).map(r =>
-    `<li>${r.text}</li>`
-  ).join('');
+  try {
+    const resp = await fetch(`${arenaBase}/pools/${poolId}/bets`);
+    if (!resp.ok) return;
+    const result = await resp.json();
+    const bets = result.bets || [];
+    const prev = lastBetCount[poolId] || 0;
+
+    if (bets.length > prev) {
+      // New bets since last poll
+      const newBets = bets.slice(prev);
+      for (const b of newBets) {
+        const side = b.betOnA ? (entryA?.name || 'Player A') : (entryB?.name || 'Player B');
+        const addr = b.bettor.slice(0, 6) + '...' + b.bettor.slice(-4);
+        addActivity(`${addr} bet ${b.amount_mon} MON on ${escHtml(side)}`, 'bet');
+      }
+    }
+    lastBetCount[poolId] = bets.length;
+  } catch (e) { /* silent */ }
 }
 
 // ── Live Match WebSocket Stream ───────────────────────────────

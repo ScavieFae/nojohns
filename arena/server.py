@@ -1693,6 +1693,57 @@ def get_pool_odds(pool_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/pools/{pool_id}/bets")
+def get_pool_bets(pool_id: int) -> dict[str, Any]:
+    """Read recent BetPlaced events for a pool from the PredictionPool contract."""
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        raise HTTPException(status_code=503, detail="PREDICTION_POOL not configured")
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    try:
+        from nojohns.contract import get_prediction_pool_contract
+
+        w3, contract = get_prediction_pool_contract(rpc_url, pool_address)
+        latest = w3.eth.block_number
+        # Scan last 2000 blocks (~13 min on Monad at 0.4s blocks)
+        from_block = max(0, latest - 2000)
+
+        # Monad caps getLogs to 100 blocks per call — scan in chunks
+        all_events = []
+        chunk_size = 100
+        block = from_block
+        while block <= latest:
+            end = min(block + chunk_size - 1, latest)
+            try:
+                events = contract.events.BetPlaced().get_logs(
+                    fromBlock=block,
+                    toBlock=end,
+                    argument_filters={"poolId": pool_id},
+                )
+                all_events.extend(events)
+            except Exception:
+                pass  # Skip failed chunks
+            block = end + 1
+
+        bets = []
+        for e in all_events:
+            bets.append({
+                "bettor": e.args.bettor,
+                "betOnA": e.args.betOnA,
+                "amount": str(e.args.amount),
+                "amount_mon": round(e.args.amount / 10**18, 4),
+                "block": e.blockNumber,
+            })
+
+        return {"pool_id": pool_id, "bets": bets}
+    except ImportError:
+        raise HTTPException(status_code=503, detail="web3 not installed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ======================================================================
 # Faucet Endpoint
 # ======================================================================

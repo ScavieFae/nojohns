@@ -347,6 +347,17 @@ PREDICTION_POOL_ABI = [
         "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "view",
     },
+    # --- Events ---
+    {
+        "type": "event",
+        "name": "BetPlaced",
+        "inputs": [
+            {"name": "poolId", "type": "uint256", "indexed": True},
+            {"name": "bettor", "type": "address", "indexed": True},
+            {"name": "betOnA", "type": "bool", "indexed": False},
+            {"name": "amount", "type": "uint256", "indexed": False},
+        ],
+    },
 ]
 
 
