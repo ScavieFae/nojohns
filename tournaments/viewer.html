@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=1920">
-<title>Fight Night — Bracket Viewer</title>
+<title>Fight Night — No Johns</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -36,70 +36,91 @@ body::after {
   );
 }
 
-/* ── Header ────────────────────────────────────────────────── */
+/* ── Nav Bar ──────────────────────────────────────────────── */
 
-.header {
+.nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 40px;
-  height: 68px;
+  padding: 0 32px;
+  height: 56px;
   border-bottom: 1px solid rgba(0, 255, 136, 0.08);
   flex-shrink: 0;
+  z-index: 10;
 }
 
-.header-left {
+.nav-left {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
 }
 
-.logo {
+.nav-logo {
   font-family: 'Orbitron', sans-serif;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 3px;
   text-transform: uppercase;
   color: #6a8a74;
 }
 
-.divider {
+.nav-divider {
   width: 1px;
   height: 20px;
   background: rgba(0, 255, 136, 0.15);
 }
 
-.tournament-name {
+.nav-title {
   font-family: 'Orbitron', sans-serif;
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 700;
-  letter-spacing: -0.3px;
 }
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.nav-link {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #6a8a74;
+  text-decoration: none;
+  padding: 6px 12px;
+  border: 1px solid rgba(0, 255, 136, 0.1);
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+.nav-link:hover { color: #00ff88; border-color: rgba(0, 255, 136, 0.3); }
 
 .status-pill {
   font-family: 'Orbitron', sans-serif;
   padding: 5px 14px;
   border-radius: 100px;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1.5px;
 }
+.status-pill.pending     { background: rgba(0, 255, 136, 0.08); color: #555; }
+.status-pill.registration { background: rgba(0, 255, 136, 0.08); color: #6a8a74; }
+.status-pill.active      { background: rgba(0, 255, 136, 0.08); color: #00ff88; border: 1px solid rgba(0, 255, 136, 0.25); }
+.status-pill.complete    { background: #1a1400; color: #fbbf24; border: 1px solid #6a5000; }
 
-.status-pill.pending  { background: rgba(0, 255, 136, 0.08); color: #555; }
-.status-pill.active   { background: rgba(0, 255, 136, 0.08); color: #00ff88; border: 1px solid rgba(0, 255, 136, 0.25); }
-.status-pill.complete { background: #1a1400; color: #fbbf24; border: 1px solid #6a5000; }
-
-/* ── Champion Banner ────────────────────────────────────────── */
+/* ── Champion Banner ──────────────────────────────────────── */
 
 .champion-banner {
   display: none;
   font-family: 'Orbitron', sans-serif;
-  background: linear-gradient(90deg, #1a1400, #1a1400, #1a1400);
+  background: linear-gradient(90deg, #1a1400, #1a1400);
   border-bottom: 1px solid #6a5000;
-  padding: 10px 40px;
+  padding: 10px 32px;
   text-align: center;
-  font-size: 26px;
+  font-size: 22px;
   color: #fbbf24;
   font-weight: 700;
   letter-spacing: 1px;
@@ -107,16 +128,22 @@ body::after {
 }
 .champion-banner.visible { display: block; }
 
-/* ── Bracket Layout ─────────────────────────────────────────── */
+/* ── Main Layout: two panels ──────────────────────────────── */
 
-.bracket-outer {
+.main {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 40px;
+  display: grid;
+  grid-template-columns: 55fr 45fr;
+  min-height: 0;
+}
+
+/* ── Left Panel: Bracket ──────────────────────────────────── */
+
+.panel-bracket {
   position: relative;
   overflow: auto;
+  border-right: 1px solid rgba(0, 255, 136, 0.06);
+  padding: 20px 24px 80px;
 }
 
 .bracket {
@@ -125,24 +152,25 @@ body::after {
   gap: 0;
   position: relative;
   z-index: 1;
-  height: 100%;
+  min-height: 100%;
 }
 
 .round-col {
   display: flex;
   flex-direction: column;
-  width: 240px;
+  min-width: 210px;
+  width: 210px;
 }
 
 .round-title {
   font-family: 'Orbitron', sans-serif;
   text-align: center;
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 2px;
   text-transform: uppercase;
   color: #6a8a74;
-  height: 36px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -156,19 +184,19 @@ body::after {
   justify-content: space-around;
 }
 
-/* ── Match Card ─────────────────────────────────────────────── */
+/* ── Match Card ───────────────────────────────────────────── */
 
 .match-slot {
   display: flex;
   align-items: center;
-  padding: 0 7px;
-  min-height: 100px;
+  padding: 0 6px;
+  min-height: 80px;
 }
 
 .match-card {
   width: 100%;
   border: 1px solid rgba(0, 255, 136, 0.08);
-  border-radius: 7px;
+  border-radius: 6px;
   overflow: hidden;
   background: #0e0e16;
   transition: border-color 0.4s, box-shadow 0.4s;
@@ -176,65 +204,43 @@ body::after {
 
 .match-card.playing {
   border-color: rgba(0, 255, 136, 0.25);
-  box-shadow: 0 0 24px rgba(0, 255, 136, 0.2), 0 0 48px rgba(0, 255, 136, 0.05);
+  box-shadow: 0 0 20px rgba(0, 255, 136, 0.15), 0 0 40px rgba(0, 255, 136, 0.04);
 }
-
-.match-card.complete {
-  border-color: rgba(0, 255, 136, 0.08);
-}
-
-.match-card.bye {
-  background: #0a0a0a;
-  border-color: #161616;
-}
-
-.match-card.coinflip {
-  border-color: rgba(170, 102, 255, 0.25);
-}
-
-.match-card.pending {
-  border-color: rgba(0, 255, 136, 0.08);
-}
-
-/* ── Match Badge ────────────────────────────────────────────── */
+.match-card.complete { border-color: rgba(0, 255, 136, 0.08); }
+.match-card.bye      { background: #0a0a0a; border-color: #161616; }
+.match-card.coinflip { border-color: rgba(170, 102, 255, 0.25); }
+.match-card.pending  { border-color: rgba(0, 255, 136, 0.08); }
 
 .match-badge {
   font-family: 'Orbitron', sans-serif;
-  padding: 3px 10px;
+  padding: 2px 8px;
   text-align: center;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 2.5px;
   text-transform: uppercase;
 }
-
 .match-badge.live      { background: #00ff88; color: #000; animation: pulse 1.8s ease-in-out infinite; }
 .match-badge.bye-label { background: rgba(0, 255, 136, 0.08); color: #6a8a74; }
 .match-badge.coinflip  { background: #2a1a3a; color: #aa66ff; }
 
-/* ── Entry Row ──────────────────────────────────────────────── */
-
 .entry-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  min-height: 48px;
+  gap: 6px;
+  padding: 8px 12px;
+  min-height: 36px;
 }
-
-.entry-row + .entry-row {
-  border-top: 1px solid rgba(0, 255, 136, 0.08);
-}
-
+.entry-row + .entry-row { border-top: 1px solid rgba(0, 255, 136, 0.08); }
 .entry-row.winner { background: rgba(0, 255, 136, 0.06); }
 .entry-row.loser  { opacity: 0.38; }
 
 .char-tag {
   font-family: 'Space Mono', monospace;
-  font-size: 13px;
+  font-size: 11px;
   color: #6a8a74;
   flex-shrink: 0;
-  width: 42px;
+  width: 38px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   white-space: nowrap;
@@ -244,7 +250,7 @@ body::after {
 .entry-name {
   font-family: 'Space Mono', monospace;
   flex: 1;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -252,7 +258,7 @@ body::after {
 }
 
 .entry-score {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   color: #00ff88;
   flex-shrink: 0;
@@ -260,13 +266,11 @@ body::after {
 
 .tbd-row {
   color: rgba(0, 255, 136, 0.15);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
 }
-
-/* ── SVG Connectors ─────────────────────────────────────────── */
 
 .connectors {
   position: absolute;
@@ -278,14 +282,241 @@ body::after {
   z-index: 0;
 }
 
-/* ── Error / Status ─────────────────────────────────────────── */
+/* ── Right Panel ──────────────────────────────────────────── */
 
-.waiting {
+.panel-right {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 24px;
+  gap: 16px;
+  min-height: 0;
+}
+
+/* Current match */
+.current-match {
+  border: 1px solid rgba(0, 255, 136, 0.1);
+  border-radius: 10px;
+  background: #0e0e16;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.current-match-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.06);
+}
+
+.current-match-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #00ff88;
+}
+
+.current-match-round {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
   color: #6a8a74;
-  font-size: 24px;
-  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.current-match-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  min-height: 0;
+}
+
+.current-match-vs {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  width: 100%;
+  justify-content: center;
+}
+
+.current-fighter {
+  text-align: center;
+  flex: 1;
+  max-width: 200px;
+}
+
+.current-fighter-char {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  color: #6a8a74;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.current-fighter-name {
+  font-family: 'Space Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.current-vs-sep {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: #3a5a44;
+  letter-spacing: 2px;
+}
+
+.current-match-waiting {
+  color: #3a5a44;
+  font-size: 14px;
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 1px;
+}
+
+/* Stream placeholder */
+.stream-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid rgba(0, 255, 136, 0.06);
+  color: #1a2a1f;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  min-height: 120px;
+}
+
+/* Prediction market */
+.prediction-section {
+  border: 1px solid rgba(0, 255, 136, 0.1);
+  border-radius: 10px;
+  background: #0e0e16;
+  padding: 16px;
+  flex-shrink: 0;
+}
+
+.prediction-header {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #00ff88;
+  margin-bottom: 12px;
+}
+
+.prediction-placeholder {
+  color: #1a2a1f;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* Bottom row: activity + QR */
+.bottom-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.activity-section {
+  border: 1px solid rgba(0, 255, 136, 0.08);
+  border-radius: 10px;
+  background: #0e0e16;
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.activity-header {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #6a8a74;
+  margin-bottom: 10px;
+}
+
+.activity-list {
+  list-style: none;
+}
+.activity-list li {
+  font-size: 12px;
+  color: #4a6a54;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(0, 255, 136, 0.03);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.activity-list li:last-child { border-bottom: none; }
+
+/* QR codes */
+.qr-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: #0e0e16;
+  border: 1px solid rgba(0, 255, 136, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  width: 140px;
+}
+
+.qr-img {
+  width: 100px;
+  height: 100px;
+  display: block;
+  border-radius: 4px;
+  background: #fff;
+  padding: 4px;
+}
+
+.qr-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #00ff88;
   text-align: center;
 }
+
+.qr-url {
+  font-size: 9px;
+  color: #3a5a44;
+  font-family: monospace;
+  text-align: center;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Bottom-left fighter login QR */
+.fighter-qr {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 50;
+}
+
+/* ── Error ─────────────────────────────────────────────────── */
 
 .error-toast {
   display: none;
@@ -295,62 +526,20 @@ body::after {
   background: #1e0000;
   border: 1px solid #5a1a1a;
   color: #ff4466;
-  padding: 10px 18px;
+  padding: 8px 14px;
   border-radius: 6px;
-  font-size: 15px;
+  font-size: 13px;
   z-index: 100;
 }
 .error-toast.visible { display: block; }
 
-/* ── Bet QR Panel ────────────────────────────────────────────── */
-
-.bet-qr {
-  position: fixed;
-  bottom: 28px;
-  left: 28px;
-  background: #14141f;
-  border: 1px solid rgba(0, 255, 136, 0.15);
-  border-radius: 12px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  z-index: 50;
-  box-shadow: 0 0 16px rgba(0, 255, 136, 0.05);
-}
-
-.bet-qr-img {
-  width: 160px;
-  height: 160px;
-  display: block;
-  border-radius: 6px;
-  background: #fff;
-  padding: 6px;
-}
-
-.bet-qr-label {
-  font-family: 'Orbitron', sans-serif;
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 2.5px;
-  text-transform: uppercase;
-  color: #00ff88;
-  text-align: center;
-}
-
-.bet-qr-url {
-  font-size: 11px;
+.waiting {
   color: #6a8a74;
-  font-family: monospace;
+  font-size: 18px;
+  font-weight: 600;
   text-align: center;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 40px;
 }
-
-/* ── Animations ─────────────────────────────────────────────── */
 
 @keyframes pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(0, 255, 136, 0.3); }
@@ -360,31 +549,85 @@ body::after {
 </head>
 <body>
 
-<div class="header">
-  <div class="header-left">
-    <span class="logo">No Johns</span>
-    <div class="divider"></div>
-    <span class="tournament-name" id="tournament-name">Fight Night</span>
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-left">
+    <span class="nav-logo">No Johns</span>
+    <div class="nav-divider"></div>
+    <span class="nav-title" id="tournament-name">Fight Night</span>
   </div>
-  <div id="tournament-status" class="status-pill pending">Loading</div>
-</div>
+  <div class="nav-right">
+    <a href="/login" class="nav-link">Login</a>
+    <div id="tournament-status" class="status-pill pending">Loading</div>
+  </div>
+</nav>
 
 <div id="champion-banner" class="champion-banner"></div>
 
-<div class="bracket-outer" id="bracket-outer">
-  <div class="bracket" id="bracket">
-    <div class="waiting">Waiting for tournament data…</div>
+<!-- Main two-panel layout -->
+<div class="main">
+
+  <!-- Left: Bracket -->
+  <div class="panel-bracket" id="bracket-outer">
+    <div class="bracket" id="bracket">
+      <div class="waiting">Waiting for tournament data…</div>
+    </div>
+    <svg class="connectors" id="connectors"></svg>
   </div>
-  <svg class="connectors" id="connectors"></svg>
+
+  <!-- Right: Match + Prediction -->
+  <div class="panel-right">
+
+    <!-- Current Match -->
+    <div class="current-match">
+      <div class="current-match-header">
+        <span class="current-match-label" id="cm-label">Current Match</span>
+        <span class="current-match-round" id="cm-round"></span>
+      </div>
+      <div class="current-match-body" id="cm-body">
+        <div class="current-match-waiting">Waiting for match...</div>
+      </div>
+      <div class="stream-area" id="stream-area">
+        Websocket stream
+      </div>
+    </div>
+
+    <!-- Prediction Market -->
+    <div class="prediction-section">
+      <div class="prediction-header">Prediction Market</div>
+      <div class="prediction-placeholder" id="prediction-area">
+        Market opens when match starts
+      </div>
+    </div>
+
+    <!-- Bottom: Activity + QR -->
+    <div class="bottom-row">
+      <div class="activity-section">
+        <div class="activity-header">Recent Activity</div>
+        <ul class="activity-list" id="activity-list">
+          <li>Waiting for bets...</li>
+        </ul>
+      </div>
+      <div class="qr-panel">
+        <img class="qr-img" id="market-qr-img" alt="QR — prediction market" />
+        <div class="qr-label">Scan to Bet</div>
+        <div class="qr-url" id="market-qr-url"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Fighter login QR — bottom left -->
+<div class="fighter-qr">
+  <div class="qr-panel">
+    <img class="qr-img" id="login-qr-img" alt="QR — fighter login" />
+    <div class="qr-label">Fighter Login</div>
+    <div class="qr-url" id="login-qr-url"></div>
+  </div>
 </div>
 
 <div class="error-toast" id="error-toast">Connection lost — retrying…</div>
-
-<div class="bet-qr" id="bet-qr">
-  <img class="bet-qr-img" id="bet-qr-img" alt="QR code — scan to bet" />
-  <div class="bet-qr-label">Scan to Bet</div>
-  <div class="bet-qr-url" id="bet-qr-url"></div>
-</div>
 
 <script>
 // ── Config ────────────────────────────────────────────────────
@@ -399,12 +642,13 @@ const POLL_MS  = 3000;
 const CHAR = {
   FOX: 'Fox', FALCO: 'Falco', MARTH: 'Marth', SHEIK: 'Sheik',
   JIGGLYPUFF: 'Puff', PEACH: 'Peach', ICECLIMBERS: 'ICs', POPO: 'ICs',
-  CAPTAINFALCON: 'Falcon', PIKACHU: 'Pika', SAMUS: 'Samus',
-  DR_MARIO: 'Doc', LINK: 'Link', YOUNGLINK: 'Y.Link',
+  CAPTAINFALCON: 'Falcon', CPTFALCON: 'Falcon', PIKACHU: 'Pika', SAMUS: 'Samus',
+  DRMARIO: 'Doc', DR_MARIO: 'Doc', LINK: 'Link', YOUNGLINK: 'Y.Link',
   MEWTWO: 'Mewtwo', ROY: 'Roy', GANONDORF: 'Ganon',
   LUIGI: 'Luigi', MARIO: 'Mario', YOSHI: 'Yoshi',
   DONKEYKONG: 'DK', NESS: 'Ness', PICHU: 'Pichu',
-  MRGAMEANDWATCH: 'G&W', KIRBY: 'Kirby', BOWSER: 'Bowser', ZELDA: 'Zelda',
+  MRGAMEANDWATCH: 'G&W', GAMEANDWATCH: 'G&W', KIRBY: 'Kirby',
+  BOWSER: 'Bowser', ZELDA: 'Zelda', RANDOM: 'Random',
 };
 
 function charAbbrev(c) {
@@ -441,8 +685,6 @@ function entryRow(entry, cls, score) {
 function renderMatch(m) {
   const status = m.status || 'pending';
   const winner = m.winner;
-
-  // Determine winner/loser classes
   const aWon = winner && m.entry_a && winner.name === m.entry_a.name;
   const bWon = winner && m.entry_b && winner.name === m.entry_b.name;
   const done = status === 'complete' || status === 'coinflip';
@@ -465,8 +707,9 @@ function renderMatch(m) {
 }
 
 function renderBracket(data) {
-  const rounds = data.bracket.rounds;
+  const rounds = data.bracket?.rounds || [];
   const total  = rounds.length;
+  if (!total) return '<div class="waiting">No bracket yet</div>';
 
   let html = '';
   for (let r = 0; r < total; r++) {
@@ -486,12 +729,16 @@ function renderBracket(data) {
 // ── Connector drawing ─────────────────────────────────────────
 
 function drawConnectors(data) {
-  const svg    = document.getElementById('connectors');
-  const outer  = document.getElementById('bracket-outer');
-  const oRect  = outer.getBoundingClientRect();
+  const svg   = document.getElementById('connectors');
+  const outer = document.getElementById('bracket-outer');
+  const oRect = outer.getBoundingClientRect();
   svg.innerHTML = '';
 
-  const rounds = data.bracket.rounds;
+  // Size SVG to bracket scroll area
+  svg.style.width  = outer.scrollWidth + 'px';
+  svg.style.height = outer.scrollHeight + 'px';
+
+  const rounds = data.bracket?.rounds || [];
 
   for (let r = 0; r < rounds.length - 1; r++) {
     const nPerRound = rounds[r].length;
@@ -501,25 +748,27 @@ function drawConnectors(data) {
       const parentEl = document.querySelector(`[data-round="${r + 1}"][data-slot="${Math.floor(s / 2)}"]`);
       if (!topEl || !parentEl) continue;
 
+      const scrollX = outer.scrollLeft;
+      const scrollY = outer.scrollTop;
       const tr = topEl.getBoundingClientRect();
       const pr = parentEl.getBoundingClientRect();
 
-      const x1  = tr.right  - oRect.left;
-      const y1  = tr.top    + tr.height / 2 - oRect.top;
-      const x2  = pr.left   - oRect.left;
-      const y2  = pr.top    + pr.height / 2 - oRect.top;
+      const x1  = tr.right  - oRect.left + scrollX;
+      const y1  = tr.top    + tr.height / 2 - oRect.top + scrollY;
+      const x2  = pr.left   - oRect.left + scrollX;
+      const y2  = pr.top    + pr.height / 2 - oRect.top + scrollY;
       const midX = x1 + (x2 - x1) / 2;
 
-      const paths = [`M ${x1} ${y1} L ${midX} ${y1}`]; // top child → mid
+      const paths = [`M ${x1} ${y1} L ${midX} ${y1}`];
 
       if (botEl) {
         const br   = botEl.getBoundingClientRect();
-        const yBot = br.top + br.height / 2 - oRect.top;
-        paths.push(`M ${x1} ${yBot} L ${midX} ${yBot}`);  // bottom child → mid
-        paths.push(`M ${midX} ${y1} L ${midX} ${yBot}`);  // vertical connector
+        const yBot = br.top + br.height / 2 - oRect.top + scrollY;
+        paths.push(`M ${x1} ${yBot} L ${midX} ${yBot}`);
+        paths.push(`M ${midX} ${y1} L ${midX} ${yBot}`);
       }
 
-      paths.push(`M ${midX} ${y2} L ${x2} ${y2}`); // mid → parent
+      paths.push(`M ${midX} ${y2} L ${x2} ${y2}`);
 
       for (const d of paths) {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -534,6 +783,69 @@ function drawConnectors(data) {
   }
 }
 
+// ── Current Match Panel ───────────────────────────────────────
+
+function updateCurrentMatch(data) {
+  const body  = document.getElementById('cm-body');
+  const round = document.getElementById('cm-round');
+
+  const rounds = data.bracket?.rounds || [];
+  let current = null;
+
+  // Find playing match first, then next pending
+  for (const r of rounds) {
+    for (const m of r) {
+      if (m.status === 'playing') { current = m; break; }
+    }
+    if (current) break;
+  }
+  if (!current) {
+    for (const r of rounds) {
+      for (const m of r) {
+        if (m.status === 'pending' && m.entry_a && m.entry_b) { current = m; break; }
+      }
+      if (current) break;
+    }
+  }
+
+  if (!current || !current.entry_a || !current.entry_b) {
+    if (data.champion) {
+      body.innerHTML = `<div style="text-align:center;">
+        <div style="font-family:'Orbitron',sans-serif;font-size:12px;color:#aa8a30;letter-spacing:2px;margin-bottom:8px;">CHAMPION</div>
+        <div style="font-family:'Orbitron',sans-serif;font-size:28px;font-weight:700;color:#fbbf24;">${escHtml(data.champion.name)}</div>
+        <div style="font-size:13px;color:#997a30;margin-top:4px;">${charAbbrev(data.champion.character)}</div>
+      </div>`;
+      round.textContent = '';
+    } else {
+      body.innerHTML = '<div class="current-match-waiting">Waiting for match...</div>';
+      round.textContent = '';
+    }
+    document.getElementById('cm-label').textContent = data.champion ? 'Tournament Complete' : 'Current Match';
+    return;
+  }
+
+  const a = current.entry_a;
+  const b = current.entry_b;
+  const isLive = current.status === 'playing';
+  const totalRounds = rounds.length;
+
+  document.getElementById('cm-label').textContent = isLive ? '● Live' : 'Up Next';
+  document.getElementById('cm-label').style.color = isLive ? '#00ff88' : '#6a8a74';
+  round.textContent = `${roundLabel(current.round, totalRounds)} · Match ${current.slot + 1}`;
+
+  body.innerHTML = `<div class="current-match-vs">
+    <div class="current-fighter">
+      <div class="current-fighter-char">${charAbbrev(a.character)}</div>
+      <div class="current-fighter-name">${escHtml(a.name)}</div>
+    </div>
+    <div class="current-vs-sep">VS</div>
+    <div class="current-fighter">
+      <div class="current-fighter-char">${charAbbrev(b.character)}</div>
+      <div class="current-fighter-name">${escHtml(b.name)}</div>
+    </div>
+  </div>`;
+}
+
 // ── DOM update ────────────────────────────────────────────────
 
 function applyData(data) {
@@ -543,12 +855,12 @@ function applyData(data) {
   pill.className = `status-pill ${data.status || 'pending'}`;
   pill.textContent = data.status === 'active' ? 'In Progress'
                    : data.status === 'complete' ? 'Complete'
+                   : data.status === 'registration' ? 'Registration'
                    : 'Upcoming';
 
   const banner = document.getElementById('champion-banner');
   if (data.champion) {
-    const ch = data.champion;
-    banner.textContent = `Champion — ${ch.name}  ·  ${charAbbrev(ch.character)}`;
+    banner.textContent = `Champion — ${data.champion.name}  ·  ${charAbbrev(data.champion.character)}`;
     banner.classList.add('visible');
   } else {
     banner.classList.remove('visible');
@@ -557,29 +869,35 @@ function applyData(data) {
   const bracket = document.getElementById('bracket');
   bracket.innerHTML = renderBracket(data);
 
-  // Redraw connectors after layout settles
+  updateCurrentMatch(data);
+
   requestAnimationFrame(() => requestAnimationFrame(() => drawConnectors(data)));
+
+  // Auto-scroll bracket to show the active match
+  const liveEl = document.querySelector('.match-card.playing');
+  if (liveEl) {
+    liveEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }
 }
 
 // ── Fetch & poll ──────────────────────────────────────────────
 
-let lastEtag = null;
 let pollTimer = null;
 
 async function fetchBracket() {
   if (!tournId) {
-    // Auto-discover first active/pending tournament
     try {
       const res = await fetch(`${arenaBase}/tournaments`);
       if (!res.ok) throw new Error(res.status);
       const list = await res.json();
-      const tourn = (list.tournaments || []).find(t => t.status === 'active')
+      const tourn = (list.tournaments || []).find(t => t.featured)
+                 || (list.tournaments || []).find(t => t.status === 'active')
                  || (list.tournaments || [])[0];
       if (tourn) {
         tournId = tourn.id;
       } else {
         document.getElementById('bracket').innerHTML =
-          `<div class="waiting">No tournaments yet. Create one from the admin panel.</div>`;
+          '<div class="waiting">No tournaments yet.</div>';
         return;
       }
     } catch (e) {
@@ -594,7 +912,7 @@ async function fetchBracket() {
     if (!res.ok) {
       if (res.status === 404) {
         document.getElementById('bracket').innerHTML =
-          `<div class="waiting">Tournament "${tournId}" not found.</div>`;
+          `<div class="waiting">Tournament not found.</div>`;
       }
       return;
     }
@@ -624,28 +942,21 @@ function poll() {
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    const bracket = document.getElementById('bracket');
-    const existing = bracket.querySelector('[data-round]');
-    if (existing) {
-      // Re-read last data from DOM (round count / slot count)
-      // Just re-fetch — simpler than caching
-      fetchBracket();
-    }
-  }, 200);
+  resizeTimer = setTimeout(() => fetchBracket(), 200);
 });
 
-// ── Bet QR Code ───────────────────────────────────────────────
+// ── QR Codes ──────────────────────────────────────────────────
 
-(function initBetQr() {
-  const betUrl = params.get('bet_url') || (location.origin + '/bet');
-  const qrImg  = document.getElementById('bet-qr-img');
-  const qrUrl  = document.getElementById('bet-qr-url');
+(function initQR() {
+  const betUrl   = params.get('bet_url') || (location.origin + '/bet');
+  const loginUrl = params.get('login_url') || (location.origin + '/login');
+  const qrApi    = 'https://chart.googleapis.com/chart?cht=qr&chs=200x200&choe=UTF-8&chld=M|1&chl=';
 
-  qrImg.src = 'https://chart.googleapis.com/chart?cht=qr&chs=320x320&chl='
-    + encodeURIComponent(betUrl) + '&choe=UTF-8&chld=M|1';
-  qrUrl.textContent = betUrl;
-  qrUrl.title = betUrl;
+  document.getElementById('market-qr-img').src = qrApi + encodeURIComponent(betUrl);
+  document.getElementById('market-qr-url').textContent = betUrl;
+
+  document.getElementById('login-qr-img').src = qrApi + encodeURIComponent(loginUrl);
+  document.getElementById('login-qr-url').textContent = loginUrl;
 })();
 
 // Start polling
