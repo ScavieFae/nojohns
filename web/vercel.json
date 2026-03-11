@@ -1,7 +1,7 @@
 {
   "rewrites": [
     { "source": "/tournament/admin", "destination": "/tournament/admin.html" },
-    { "source": "/tournament/login", "destination": "/index.html" },
+    { "source": "/tournament/play", "destination": "/index.html" },
     { "source": "/tournament/bet", "destination": "/index.html" },
     { "source": "/tournament", "destination": "/tournament/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
