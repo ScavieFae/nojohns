@@ -60,14 +60,30 @@ _RANDOM_POOL = [
 ]
 
 
+_CHAR_ALIASES = {
+    "DONKEYKONG": "DK",
+    "DONKEY_KONG": "DK",
+    "CAPTAINFALCON": "CPTFALCON",
+    "CAPTAIN_FALCON": "CPTFALCON",
+    "DR_MARIO": "DRMARIO",
+    "YOUNG_LINK": "YOUNGLINK",
+    "ICE_CLIMBERS": "NANA",
+    "ICECLIMBERS": "NANA",
+    "GAME_AND_WATCH": "GAMEANDWATCH",
+    "MR_GAME_AND_WATCH": "GAMEANDWATCH",
+}
+
+
 def _resolve_character(char_name: str, Character):
-    """Resolve a character name, with support for 'RANDOM'."""
+    """Resolve a character name, with support for 'RANDOM' and aliases."""
     import random
-    if char_name.upper() == "RANDOM":
+    name = char_name.upper()
+    if name == "RANDOM":
         picked = random.choice(_RANDOM_POOL)
         logger.info(f"Random character: {picked}")
         return Character[picked]
-    return Character[char_name.upper()]
+    name = _CHAR_ALIASES.get(name, name)
+    return Character[name]
 
 
 def _resolve_args(args, game_cfg: GameConfig | None, nj_cfg: NojohnsConfig):
