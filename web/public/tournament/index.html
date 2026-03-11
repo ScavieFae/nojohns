@@ -291,16 +291,16 @@ body::after {
   display: flex;
   flex-direction: column;
   padding: 20px 24px;
-  gap: 16px;
+  gap: 12px;
   min-height: 0;
 }
 
-/* Current match */
+/* Current match — takes ~2/3 of right panel */
 .current-match {
   border: 1px solid rgba(0, 255, 136, 0.1);
   border-radius: 10px;
   background: #0e0e16;
-  flex: 1;
+  flex: 2;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -446,10 +446,10 @@ body::after {
 }
 
 .stream-player-name {
-  font-size: 12px;
+  font-size: 14px;
   color: #fff;
   letter-spacing: 1px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -457,7 +457,7 @@ body::after {
 
 .stream-percent {
   font-family: 'Orbitron', sans-serif;
-  font-size: 32px;
+  font-size: 48px;
   font-weight: 700;
   color: #fff;
   line-height: 1;
@@ -477,8 +477,8 @@ body::after {
 }
 
 .stream-stock-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #00ff88;
   transition: opacity 0.3s;
@@ -562,12 +562,12 @@ body::after {
   margin-top: 4px;
 }
 
-/* Prediction market */
+/* Prediction market — compact */
 .prediction-section {
   border: 1px solid rgba(0, 255, 136, 0.1);
   border-radius: 10px;
   background: #0e0e16;
-  padding: 16px;
+  padding: 12px 16px;
   flex-shrink: 0;
 }
 
@@ -600,9 +600,13 @@ body::after {
   border: 1px solid rgba(0, 255, 136, 0.08);
   border-radius: 10px;
   background: #0e0e16;
-  padding: 14px 16px;
+  padding: 10px 16px;
   min-width: 0;
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
+.activity-section::-webkit-scrollbar { display: none; }
 
 .activity-header {
   font-family: 'Orbitron', sans-serif;
@@ -814,9 +818,7 @@ body::after {
       <div class="current-match-body" id="cm-body">
         <div class="current-match-waiting">Waiting for match...</div>
       </div>
-      <div class="stream-area" id="stream-area">
-        Websocket stream
-      </div>
+      <div class="stream-area" id="stream-area"></div>
     </div>
 
     <!-- Prediction Market -->
@@ -1935,7 +1937,6 @@ function renderStreamStats() {
       <div class="stream-percent ${pctClass(p1.percent)}${p1._hit ? ' hit' : ''}">${p1.percent}%</div>
       <div class="stream-stocks">${stockDots(p1.stocks, p1.maxStocks)}</div>
     </div>
-    <div class="stream-vs">VS</div>
     <div class="stream-player">
       <div class="stream-player-name">${nameWithChar(p2)}</div>
       <div class="stream-percent ${pctClass(p2.percent)}${p2._hit ? ' hit' : ''}">${p2.percent}%</div>
@@ -1972,7 +1973,7 @@ function renderStreamIdle() {
   const area = document.getElementById('stream-area');
   if (area) {
     resetAnim();
-    area.innerHTML = 'Waiting for match…';
+    area.innerHTML = '';
   }
 }
 
