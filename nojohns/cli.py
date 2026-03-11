@@ -1146,6 +1146,8 @@ def cmd_serve_tournament(args):
         p2_char_str = entry_b.get("character", "RANDOM")
         p1_strategy = entry_a.get("strategy", "phillip")
         p2_strategy = entry_b.get("strategy", "phillip")
+        p1_code = entry_a.get("connect_code", "")
+        p2_code = entry_b.get("connect_code", "")
 
         logger.info(f">>> MATCH STARTING: {p1_name} ({p1_char_str}) vs {p2_name} ({p2_char_str})")
         logger.info(f"    Round {match_round + 1}, Match {match_slot + 1}")
@@ -1186,8 +1188,17 @@ def cmd_serve_tournament(args):
             try:
                 streamer = MatchStreamer(server, arena_match_id)
                 streamer.start()
+                # Send match_start so spectator bots can map ports to pool sides
+                streamer.send_match_start(stage.value, [
+                    {"port": 1, "connect_code": p1_code, "display_name": p1_name,
+                     "character_id": p1_character.value},
+                    {"port": 2, "connect_code": p2_code, "display_name": p2_name,
+                     "character_id": p2_character.value},
+                ])
             except Exception:
                 pass
+
+        game_number = [0]  # mutable counter for closure
 
         def on_frame(state):
             if streamer and state.players:
@@ -1198,8 +1209,11 @@ def cmd_serve_tournament(args):
                 streamer.send_frame(int(state.frame), players)
 
         def on_game_end(game):
+            game_number[0] += 1
             logger.info(f"    Game over! P{game.winner_port} wins "
                         f"({game.p1_stocks}-{game.p2_stocks} stocks)")
+            if streamer:
+                streamer.send_game_end(game_number[0], game.winner_port, "stocks")
 
         runner = MatchRunner(dolphin)
         try:
@@ -1210,6 +1224,11 @@ def cmd_serve_tournament(args):
             )
 
             winner_port = result.winner_port
+            if streamer:
+                streamer.send_match_end(winner_port, [
+                    int(result.games[-1].p1_stocks),
+                    int(result.games[-1].p2_stocks),
+                ])
             winner_name = p1_name if winner_port == 1 else p2_name
             loser_name = p2_name if winner_port == 1 else p1_name
             winner_stocks = int(result.games[-1].p1_stocks if winner_port == 1 else result.games[-1].p2_stocks)
