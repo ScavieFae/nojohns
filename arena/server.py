@@ -1749,6 +1749,29 @@ def close_registration(
     return t.to_dict()
 
 
+@app.post("/tournaments/{tournament_id}/feature")
+def toggle_featured(
+    tournament_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Toggle the 'featured on homepage' flag for a tournament."""
+    _require_admin(authorization)
+
+    from tournaments.tournament import get_tournament as _get
+
+    db = get_db()
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    t.featured = not t.featured
+
+    from tournaments.tournament import _save
+    _save(db, t)
+
+    return t.to_dict()
+
+
 @app.get("/tournaments")
 def list_all_tournaments() -> dict[str, Any]:
     """List all tournaments (summary — no bracket data)."""
