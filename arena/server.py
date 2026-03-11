@@ -1633,9 +1633,18 @@ class EntryRequest(BaseModel):
     wallet_address: str | None = None
 
 
+class RegisterEntryRequest(BaseModel):
+    name: str
+    character: str
+    registrant: str | None = None
+    strategy: str = "phillip"
+    connect_code: str | None = None  # auto-generated if omitted
+    wallet_address: str | None = None
+
+
 class CreateTournamentRequest(BaseModel):
     name: str
-    entries: list[EntryRequest]
+    entries: list[EntryRequest] | None = None  # optional — omit for registration mode
 
 
 class AdvanceRequest(BaseModel):
@@ -1657,25 +1666,87 @@ def create_tournament(
     req: CreateTournamentRequest,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Create a new tournament. Requires admin token if ADMIN_TOKEN is set."""
+    """Create a new tournament. Omit entries for registration mode."""
     _require_admin(authorization)
 
     from tournaments.models import Entry
     from tournaments.tournament import create_tournament as _create
 
     db = get_db()
-    entries = [
-        Entry(
-            name=e.name,
-            character=e.character,
-            strategy=e.strategy,  # type: ignore[arg-type]
-            connect_code=e.connect_code,
-            wallet_address=e.wallet_address,
-        )
-        for e in req.entries
-    ]
+    entries = None
+    if req.entries:
+        entries = [
+            Entry(
+                name=e.name,
+                character=e.character,
+                strategy=e.strategy,  # type: ignore[arg-type]
+                connect_code=e.connect_code,
+                wallet_address=e.wallet_address,
+            )
+            for e in req.entries
+        ]
     tournament = _create(db, req.name, entries)
     return tournament.to_dict()
+
+
+@app.post("/tournaments/{tournament_id}/register")
+def register_entry(
+    tournament_id: str,
+    req: RegisterEntryRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Register a fighter in a tournament that's in registration status."""
+    _require_admin(authorization)
+
+    from tournaments.models import Entry
+    from tournaments.tournament import get_tournament as _get, register_entry as _register
+
+    db = get_db()
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    # Auto-generate connect code if not provided
+    code = req.connect_code or f"NOJN#{len(t.entries) + 1:03d}"
+
+    entry = Entry(
+        name=req.name,
+        character=req.character,
+        strategy=req.strategy,  # type: ignore[arg-type]
+        connect_code=code,
+        wallet_address=req.wallet_address,
+        registrant=req.registrant,
+    )
+
+    try:
+        t = _register(db, t, entry)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return t.to_dict()
+
+
+@app.post("/tournaments/{tournament_id}/close-registration")
+def close_registration(
+    tournament_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Lock entries and generate bracket. Requires at least 2 entries."""
+    _require_admin(authorization)
+
+    from tournaments.tournament import get_tournament as _get, close_registration as _close
+
+    db = get_db()
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        t = _close(db, t)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return t.to_dict()
 
 
 @app.get("/tournaments")

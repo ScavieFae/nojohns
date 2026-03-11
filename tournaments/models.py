@@ -29,6 +29,7 @@ class Entry:
     strategy: Strategy
     connect_code: str  # Slippi connect code, e.g. "NOJN#001"
     wallet_address: str | None = None
+    registrant: str | None = None  # Human registrant name (who signed up)
 
     def to_dict(self) -> dict:
         return {
@@ -37,6 +38,7 @@ class Entry:
             "strategy": self.strategy,
             "connect_code": self.connect_code,
             "wallet_address": self.wallet_address,
+            "registrant": self.registrant,
         }
 
     @classmethod
@@ -47,6 +49,7 @@ class Entry:
             strategy=d["strategy"],
             connect_code=d["connect_code"],
             wallet_address=d.get("wallet_address"),
+            registrant=d.get("registrant"),
         )
 
 
@@ -161,7 +164,7 @@ class Tournament:
     name: str
     bracket: Bracket
     entries: list[Entry] = field(default_factory=list)
-    status: Literal["pending", "active", "complete"] = "pending"
+    status: Literal["registration", "pending", "active", "complete"] = "registration"
     current_round: int = 0
     current_slot: int = 0  # next match to play
 

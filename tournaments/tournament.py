@@ -60,22 +60,71 @@ def _load(db: "ArenaDB", tournament_id: str) -> Tournament | None:
 # ---------------------------------------------------------------------------
 
 
-def create_tournament(db: "ArenaDB", name: str, entries: list[Entry]) -> Tournament:
+def create_tournament(
+    db: "ArenaDB", name: str, entries: list[Entry] | None = None
+) -> Tournament:
     """
-    Create a new tournament with a randomly seeded bracket.
+    Create a new tournament.
 
-    Byes and do-nothing vs do-nothing coinflips are auto-resolved at creation.
-    Persists to the arena DB before returning.
+    If entries are provided, generates a bracket immediately (status="pending").
+    If no entries, creates an empty tournament in "registration" status so
+    fighters can be added one at a time via register_entry().
     """
     tournament_id = str(uuid.uuid4())[:8]
-    bracket = generate_bracket(entries)
+
+    if entries:
+        bracket = generate_bracket(entries)
+        status = "pending"
+    else:
+        from .models import Bracket
+
+        bracket = Bracket()
+        entries = []
+        status = "registration"
+
     tournament = Tournament(
         id=tournament_id,
         name=name,
         bracket=bracket,
         entries=list(entries),
-        status="pending",
+        status=status,
     )
+    _save(db, tournament)
+    return tournament
+
+
+def register_entry(db: "ArenaDB", tournament: Tournament, entry: Entry) -> Tournament:
+    """
+    Add a fighter to a tournament that's in registration.
+
+    Raises ValueError if tournament is not in registration status or
+    if the fighter name is already taken.
+    """
+    if tournament.status != "registration":
+        raise ValueError(f"Tournament is '{tournament.status}', not accepting registrations")
+
+    if any(e.name == entry.name for e in tournament.entries):
+        raise ValueError(f"Fighter name '{entry.name}' is already registered")
+
+    tournament.entries.append(entry)
+    _save(db, tournament)
+    return tournament
+
+
+def close_registration(db: "ArenaDB", tournament: Tournament) -> Tournament:
+    """
+    Lock entries and generate the bracket.
+
+    Requires at least 2 entries. Sets status to "pending" (ready to play).
+    """
+    if tournament.status != "registration":
+        raise ValueError(f"Tournament is '{tournament.status}', can't close registration")
+
+    if len(tournament.entries) < 2:
+        raise ValueError(f"Need at least 2 entries (have {len(tournament.entries)})")
+
+    tournament.bracket = generate_bracket(tournament.entries)
+    tournament.status = "pending"
     _save(db, tournament)
     return tournament
 
