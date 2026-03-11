@@ -1659,6 +1659,39 @@ def list_pools() -> dict[str, Any]:
     }
 
 
+@app.get("/pools/{pool_id}/odds")
+def get_pool_odds(pool_id: int) -> dict[str, Any]:
+    """Read pool odds from the PredictionPool contract. Returns totalA/totalB/status."""
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        raise HTTPException(status_code=503, detail="PREDICTION_POOL not configured")
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    try:
+        from nojohns.contract import get_prediction_pool_contract
+
+        _, contract = get_prediction_pool_contract(rpc_url, pool_address)
+        result = contract.functions.getPool(pool_id).call()
+        # result: (matchId, playerA, playerB, totalA, totalB, status, winner, createdAt)
+        total_a = result[3]
+        total_b = result[4]
+        total = total_a + total_b
+        return {
+            "pool_id": pool_id,
+            "total_a": str(total_a),
+            "total_b": str(total_b),
+            "total": str(total),
+            "pct_a": round(total_a * 100 / total) if total > 0 else 50,
+            "pct_b": round(total_b * 100 / total) if total > 0 else 50,
+            "status": result[5],  # 0=Open, 1=Resolved, 2=Cancelled
+        }
+    except ImportError:
+        raise HTTPException(status_code=503, detail="web3 not installed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ======================================================================
 # Faucet Endpoint
 # ======================================================================

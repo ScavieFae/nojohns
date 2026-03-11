@@ -484,6 +484,53 @@ body::after {
   animation: hitflash 0.3s ease-out;
 }
 
+/* Odds bar */
+.odds-bar-wrap {
+  margin: 10px 0 6px;
+}
+
+.odds-bar {
+  display: flex;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+}
+
+.odds-bar-a {
+  background: rgba(0, 255, 136, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'Space Mono', monospace;
+  color: #fff;
+  transition: width 0.6s ease;
+  min-width: 24px;
+}
+
+.odds-bar-b {
+  background: rgba(168, 85, 247, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'Space Mono', monospace;
+  color: #fff;
+  transition: width 0.6s ease;
+  min-width: 24px;
+}
+
+.odds-pool-total {
+  text-align: center;
+  font-size: 10px;
+  color: #3a5a44;
+  font-family: 'Space Mono', monospace;
+  margin-top: 4px;
+}
+
 /* Prediction market */
 .prediction-section {
   border: 1px solid rgba(0, 255, 136, 0.1);
@@ -1002,19 +1049,27 @@ function updatePrediction(data) {
 
   if (poolId != null) {
     area.innerHTML = `<div style="text-align:center;padding:8px 0;">
-      <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:10px;">BETTING OPEN</div>
-      <div style="display:flex;justify-content:center;gap:16px;">
-        <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px 20px;cursor:pointer;">
+      <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:6px;">BETTING OPEN</div>
+      <div style="display:flex;justify-content:center;gap:16px;margin-bottom:2px;">
+        <div style="flex:1;text-align:center;">
           <div style="font-size:12px;color:#6a8a74;">${charAbbrev(a.character)}</div>
           <div style="font-size:14px;font-weight:600;">${escHtml(a.name)}</div>
         </div>
-        <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px 20px;cursor:pointer;">
+        <div style="font-family:'Orbitron',sans-serif;font-size:10px;color:#3a5a44;align-self:center;">VS</div>
+        <div style="flex:1;text-align:center;">
           <div style="font-size:12px;color:#6a8a74;">${charAbbrev(b.character)}</div>
           <div style="font-size:14px;font-weight:600;">${escHtml(b.name)}</div>
         </div>
       </div>
-      <div style="color:#3a5a44;font-size:10px;margin-top:8px;font-family:'Space Mono',monospace;">Pool #${poolId} · Scan QR to bet</div>
+      <div class="odds-bar-wrap">
+        <div class="odds-bar" id="odds-bar">
+          <div class="odds-bar-a" id="odds-a" style="width:50%;">—</div>
+          <div class="odds-bar-b" id="odds-b" style="width:50%;">—</div>
+        </div>
+        <div class="odds-pool-total" id="odds-total">Pool: loading…</div>
+      </div>
     </div>`;
+    startOddsPolling(poolId);
   } else {
     area.innerHTML = `<div style="text-align:center;padding:8px 0;">
       <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:10px;">NOW PLAYING</div>
@@ -1029,9 +1084,58 @@ function updatePrediction(data) {
           <div style="font-size:14px;font-weight:600;">${escHtml(b.name)}</div>
         </div>
       </div>
-      <div style="color:#3a5a44;font-size:10px;margin-top:8px;font-family:'Space Mono',monospace;">Prediction market coming soon</div>
     </div>`;
+    stopOddsPolling();
   }
+}
+
+// ── Odds Polling ─────────────────────────────────────────────
+
+let oddsTimer = null;
+let oddsPoolId = null;
+
+function startOddsPolling(poolId) {
+  if (oddsPoolId === poolId && oddsTimer) return;
+  stopOddsPolling();
+  oddsPoolId = poolId;
+  fetchOdds();
+  oddsTimer = setInterval(fetchOdds, 5000);
+}
+
+function stopOddsPolling() {
+  if (oddsTimer) clearInterval(oddsTimer);
+  oddsTimer = null;
+  oddsPoolId = null;
+}
+
+async function fetchOdds() {
+  if (oddsPoolId == null) return;
+  try {
+    const res = await fetch(`${arenaBase}/pools/${oddsPoolId}/odds`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderOddsBar(data);
+  } catch (e) {}
+}
+
+function renderOddsBar(data) {
+  const barA = document.getElementById('odds-a');
+  const barB = document.getElementById('odds-b');
+  const total = document.getElementById('odds-total');
+  if (!barA || !barB || !total) return;
+
+  const pctA = data.pct_a || 50;
+  const pctB = data.pct_b || 50;
+  const totalWei = BigInt(data.total || '0');
+  const totalMon = Number(totalWei) / 1e18;
+
+  barA.style.width = `${Math.max(pctA, 8)}%`;
+  barB.style.width = `${Math.max(pctB, 8)}%`;
+  barA.textContent = totalWei > 0n ? `${pctA}%` : '—';
+  barB.textContent = totalWei > 0n ? `${pctB}%` : '—';
+  total.textContent = totalWei > 0n
+    ? `Pool: ${totalMon.toFixed(2)} MON`
+    : 'Pool: 0 MON · Scan QR to bet';
 }
 
 // ── Activity Feed ────────────────────────────────────────────
