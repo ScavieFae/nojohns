@@ -870,6 +870,8 @@ function applyData(data) {
   bracket.innerHTML = renderBracket(data);
 
   updateCurrentMatch(data);
+  updatePrediction(data);
+  updateActivity(data);
 
   requestAnimationFrame(() => requestAnimationFrame(() => drawConnectors(data)));
 
@@ -878,6 +880,108 @@ function applyData(data) {
   if (liveEl) {
     liveEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
   }
+}
+
+// ── Prediction Market Panel ──────────────────────────────────
+
+function updatePrediction(data) {
+  const area = document.getElementById('prediction-area');
+  const rounds = data.bracket?.rounds || [];
+
+  // Find the currently playing match
+  let current = null;
+  for (const r of rounds) {
+    for (const m of r) {
+      if (m.status === 'playing') { current = m; break; }
+    }
+    if (current) break;
+  }
+
+  if (data.champion) {
+    area.innerHTML = `<div style="text-align:center;padding:12px 0;">
+      <div style="color:#fbbf24;font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:2px;margin-bottom:6px;">TOURNAMENT COMPLETE</div>
+      <div style="color:#6a8a74;font-size:12px;">Markets closed</div>
+    </div>`;
+    return;
+  }
+
+  if (!current || !current.entry_a || !current.entry_b) {
+    area.innerHTML = '<div style="color:#1a2a1f;text-align:center;padding:20px 0;">Market opens when match starts</div>';
+    return;
+  }
+
+  const a = current.entry_a;
+  const b = current.entry_b;
+  const poolId = current.pool_id;
+
+  if (poolId != null) {
+    area.innerHTML = `<div style="text-align:center;padding:8px 0;">
+      <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:10px;">BETTING OPEN</div>
+      <div style="display:flex;justify-content:center;gap:16px;">
+        <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px 20px;cursor:pointer;">
+          <div style="font-size:12px;color:#6a8a74;">${charAbbrev(a.character)}</div>
+          <div style="font-size:14px;font-weight:600;">${escHtml(a.name)}</div>
+        </div>
+        <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px 20px;cursor:pointer;">
+          <div style="font-size:12px;color:#6a8a74;">${charAbbrev(b.character)}</div>
+          <div style="font-size:14px;font-weight:600;">${escHtml(b.name)}</div>
+        </div>
+      </div>
+      <div style="color:#3a5a44;font-size:10px;margin-top:8px;font-family:'Space Mono',monospace;">Pool #${poolId} · Scan QR to bet</div>
+    </div>`;
+  } else {
+    area.innerHTML = `<div style="text-align:center;padding:8px 0;">
+      <div style="color:#00ff88;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;margin-bottom:10px;">NOW PLAYING</div>
+      <div style="display:flex;justify-content:center;gap:16px;">
+        <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px 20px;">
+          <div style="font-size:12px;color:#6a8a74;">${charAbbrev(a.character)}</div>
+          <div style="font-size:14px;font-weight:600;">${escHtml(a.name)}</div>
+        </div>
+        <div style="font-family:'Orbitron',sans-serif;font-size:12px;color:#3a5a44;align-self:center;">VS</div>
+        <div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px 20px;">
+          <div style="font-size:12px;color:#6a8a74;">${charAbbrev(b.character)}</div>
+          <div style="font-size:14px;font-weight:600;">${escHtml(b.name)}</div>
+        </div>
+      </div>
+      <div style="color:#3a5a44;font-size:10px;margin-top:8px;font-family:'Space Mono',monospace;">Prediction market coming soon</div>
+    </div>`;
+  }
+}
+
+// ── Activity Feed ────────────────────────────────────────────
+
+function updateActivity(data) {
+  const list = document.getElementById('activity-list');
+  const rounds = data.bracket?.rounds || [];
+  const results = [];
+
+  for (const r of rounds) {
+    for (const m of r) {
+      if ((m.status === 'complete' || m.status === 'coinflip') && m.winner) {
+        const loser = (m.entry_a && m.winner.name === m.entry_a.name) ? m.entry_b : m.entry_a;
+        const label = m.status === 'coinflip' ? 'COIN' : 'WIN';
+        const scoreStr = (m.score_a != null && m.score_b != null)
+          ? ` (${m.score_a}-${m.score_b})`
+          : '';
+        results.push({
+          text: `${escHtml(m.winner.name)} ${label}${scoreStr} vs ${loser ? escHtml(loser.name) : 'BYE'}`,
+          round: m.round,
+          slot: m.slot,
+        });
+      }
+    }
+  }
+
+  if (results.length === 0) {
+    list.innerHTML = '<li>No results yet</li>';
+    return;
+  }
+
+  // Show most recent first, limit to 6
+  results.reverse();
+  list.innerHTML = results.slice(0, 6).map(r =>
+    `<li>${r.text}</li>`
+  ).join('');
 }
 
 // ── Fetch & poll ──────────────────────────────────────────────

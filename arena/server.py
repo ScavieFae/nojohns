@@ -1856,6 +1856,15 @@ def queue_next(
             "champion": champion.to_dict() if champion else None,
         }
 
+    # Create prediction pool for tournament match (same as regular matchmaking)
+    if match.arena_match_id and match.entry_a and match.entry_b:
+        _background_chain((
+            _try_create_pool,
+            match.arena_match_id,
+            match.entry_a.wallet_address,
+            match.entry_b.wallet_address,
+        ))
+
     return {
         "queued": True,
         "match": match.to_dict(),
