@@ -23,6 +23,7 @@ Tournaments:
     POST   /tournaments/{id}/advance           Report match result + advance bracket
     POST   /tournaments/{id}/next              Queue next match into arena (admin)
     POST   /admin/tournaments/{id}/force-advance  Force-advance a match (admin)
+    POST   /admin/tournaments/{id}/distribute      Distribute prediction pool (admin)
 
 Faucet:
     POST   /faucet                             Fund a new Privy wallet with 0.1 MON (capped at 50)
@@ -335,6 +336,21 @@ def _try_record_match(match_id: str):
 # =============================================================================
 
 
+def _match_keypairs(match_id: str):
+    """Generate deterministic keypairs for a match.
+
+    Used when fighters lack wallets (e.g. tournament entries). The private keys
+    are derived from sha256(match_id + ":p1") and ":p2". This gives us real
+    Ethereum accounts we can later use to sign MatchProof EIP-712 messages,
+    enabling pool resolution without actual fighter wallets.
+    """
+    from eth_account import Account
+
+    key_p1 = hashlib.sha256(f"{match_id}:p1".encode()).digest()
+    key_p2 = hashlib.sha256(f"{match_id}:p2".encode()).digest()
+    return Account.from_key(key_p1), Account.from_key(key_p2)
+
+
 def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None):
     """Create a prediction pool onchain when a match is created.
 
@@ -356,12 +372,20 @@ def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None
         )
         return
 
+    # If fighters don't have wallets (e.g. tournament entries), generate
+    # deterministic keypair-derived addresses from the match ID. These are
+    # real Ethereum accounts whose private keys we can regenerate later to
+    # sign MatchProof and resolve the pool.
     if not p1_wallet or not p2_wallet:
-        logger.warning(
-            f"Pool creation skipped for {match_id}: missing wallets "
-            f"(p1={p1_wallet}, p2={p2_wallet})"
-        )
-        return
+        try:
+            acct_a, acct_b = _match_keypairs(match_id)
+            if not p1_wallet:
+                p1_wallet = acct_a.address
+            if not p2_wallet:
+                p2_wallet = acct_b.address
+        except ImportError:
+            logger.debug("eth_account not installed — skipping pool creation")
+            return
 
     rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
 
@@ -378,14 +402,46 @@ def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None
         )
         logger.info(f"Prediction pool created for match {match_id}: poolId={pool_id}")
 
-        # Store pool_id in DB
+        # Store pool_id in arena DB
         db = get_db()
         db.set_pool_id(match_id, pool_id)
+
+        # Also propagate pool_id to tournament bracket (if this is a tournament match)
+        _propagate_pool_id_to_tournament(db, match_id, pool_id)
+
         _log_wallet_balance(account, rpc_url, f"create_pool(match={match_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool creation")
     except Exception as e:
         logger.warning(f"Failed to create prediction pool: {e}")
+
+
+def _propagate_pool_id_to_tournament(db: ArenaDB, match_id: str, pool_id: int):
+    """Write pool_id back into the tournament bracket match that owns this arena match.
+
+    The tournament bracket stores Match objects as JSON. When a pool is created
+    asynchronously, this finds the tournament match by arena_match_id and updates
+    the pool_id field so the viewer/admin can display it.
+    """
+    try:
+        import json
+        from tournaments.tournament import get_tournament as _get
+
+        # Check all tournaments for one with this arena_match_id
+        rows = db.list_tournaments()
+        for row in rows:
+            t = _get(db, row["id"])
+            if t is None:
+                continue
+            for round_ in t.bracket.rounds:
+                for m in round_:
+                    if m.arena_match_id == match_id:
+                        m.pool_id = pool_id
+                        db.save_tournament(t.id, t.name, t.status, json.dumps(t.to_dict()))
+                        logger.debug(f"Propagated pool_id={pool_id} to tournament {t.id} match r{m.round}s{m.slot}")
+                        return
+    except Exception as e:
+        logger.debug(f"Could not propagate pool_id to tournament: {e}")
 
 
 def _try_cancel_pool(match_id: str):
@@ -506,6 +562,95 @@ def _try_resolve_pool(match_id: str):
     except Exception as e:
         # Pool may already be resolved by client — that's fine
         logger.warning(f"Failed to resolve prediction pool {pool_id}: {e}")
+
+
+def _try_distribute_pool(
+    match_id: str,
+    winner_is_a: bool,
+    winner_score: int = 0,
+    loser_score: int = 0,
+):
+    """Record match on MatchProof with deterministic keypairs, then resolve pool.
+
+    This is the tournament pool distribution flow. Since tournament fighters
+    don't have real wallets, we:
+    1. Regenerate the same deterministic keypairs used at pool creation
+    2. Sign the MatchProof EIP-712 message with both keys
+    3. Call recordMatch() so the match is recorded onchain
+    4. Call resolve(poolId) so winning bettors can claim
+
+    Args:
+        match_id: Arena match ID (UUID string).
+        winner_is_a: True if entry_a (p1) won, False if entry_b (p2) won.
+        winner_score: Stocks remaining for winner.
+        loser_score: Stocks remaining for loser.
+    """
+    account = _get_arena_account()
+    if account is None:
+        raise RuntimeError("Arena wallet not configured")
+
+    match_proof_addr = os.environ.get("MATCH_PROOF")
+    if not match_proof_addr:
+        raise RuntimeError("MATCH_PROOF env var not set")
+
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        raise RuntimeError("PREDICTION_POOL env var not set")
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+
+    # Regenerate the same deterministic keypairs used for pool creation
+    acct_a, acct_b = _match_keypairs(match_id)
+
+    winner_acct = acct_a if winner_is_a else acct_b
+    loser_acct = acct_b if winner_is_a else acct_a
+
+    # Build MatchResult — matchId must use same hash as pool creation
+    match_id_bytes = hashlib.sha256(match_id.encode()).digest()
+    match_result = {
+        "matchId": match_id_bytes,
+        "winner": winner_acct.address,
+        "loser": loser_acct.address,
+        "gameId": "melee",
+        "winnerScore": winner_score,
+        "loserScore": loser_score,
+        "replayHash": b"\x00" * 32,
+        "timestamp": int(time.time()),
+    }
+
+    from nojohns.contract import record_match, is_recorded, resolve_pool
+    from nojohns.wallet import sign_match_result
+    from web3 import Web3
+
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    chain_id = w3.eth.chain_id
+
+    # Step 1: Record match on MatchProof (if not already recorded)
+    if not is_recorded(match_id_bytes, rpc_url=rpc_url, contract_address=match_proof_addr):
+        # Sign EIP-712 with both deterministic keys
+        sig_a = sign_match_result(acct_a, match_result, chain_id, match_proof_addr)
+        sig_b = sign_match_result(acct_b, match_result, chain_id, match_proof_addr)
+
+        tx_hash = record_match(
+            match_result, sig_a, sig_b,
+            account, rpc_url=rpc_url, contract_address=match_proof_addr,
+        )
+        logger.info(f"Tournament match {match_id} recorded onchain: tx={tx_hash}")
+    else:
+        logger.info(f"Tournament match {match_id} already recorded onchain")
+
+    # Step 2: Resolve the prediction pool
+    db = get_db()
+    match = db.get_match(match_id)
+    pool_id = match.get("pool_id") if match else None
+    if pool_id is None:
+        raise RuntimeError(f"No pool_id found for match {match_id}")
+
+    tx_hash = resolve_pool(pool_id, account, rpc_url, pool_address)
+    logger.info(f"Tournament pool {pool_id} resolved: tx={tx_hash}")
+    _log_wallet_balance(account, rpc_url, f"distribute(pool={pool_id})")
+
+    return pool_id
 
 
 def _expire_stale_matches(db: ArenaDB) -> list[str]:
@@ -1892,3 +2037,95 @@ def force_advance_match(
         raise HTTPException(status_code=400, detail=str(e))
 
     return t.to_dict()
+
+
+class DistributeRequest(BaseModel):
+    round: int
+    slot: int
+
+
+@app.post("/admin/tournaments/{tournament_id}/distribute")
+def distribute_pool(
+    tournament_id: str,
+    req: DistributeRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Record match on MatchProof + resolve prediction pool for a tournament match.
+
+    Uses deterministic keypairs derived from the arena match ID to sign the
+    MatchProof EIP-712 message. This lets the arena be the source of truth
+    for tournament matches while maintaining the onchain resolution flow.
+    """
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    match = t.bracket.get_match(req.round, req.slot)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    if match.status != "complete":
+        raise HTTPException(status_code=400, detail="Match not complete")
+
+    if match.winner is None:
+        raise HTTPException(status_code=400, detail="No winner recorded")
+
+    if not match.arena_match_id:
+        raise HTTPException(status_code=400, detail="No arena match ID (bye/coinflip?)")
+
+    # Look up pool_id from arena DB (not bracket — bracket doesn't store pool_id reliably)
+    arena_match = db.get_match(match.arena_match_id)
+    pool_id = arena_match.get("pool_id") if arena_match else None
+    if pool_id is None:
+        raise HTTPException(status_code=400, detail="No prediction pool for this match")
+
+    # Determine if winner is entry_a (p1) or entry_b (p2)
+    winner_is_a = match.winner.name == match.entry_a.name if match.entry_a else False
+
+    try:
+        pool_id = _try_distribute_pool(
+            match_id=match.arena_match_id,
+            winner_is_a=winner_is_a,
+            winner_score=match.score_a if winner_is_a else (match.score_b or 0),
+            loser_score=match.score_b if winner_is_a else (match.score_a or 0),
+        )
+        return {"distributed": True, "pool_id": pool_id}
+    except Exception as e:
+        logger.warning(f"Distribute failed for {tournament_id} r{req.round}s{req.slot}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/tournaments/{tournament_id}/pools")
+def get_tournament_pools(
+    tournament_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Get pool info for all matches in a tournament (keyed by arena_match_id)."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    pools = {}
+    for round_ in t.bracket.rounds:
+        for m in round_:
+            if m.arena_match_id:
+                arena_match = db.get_match(m.arena_match_id)
+                pool_id = arena_match.get("pool_id") if arena_match else None
+                if pool_id is not None:
+                    pools[f"{m.round}:{m.slot}"] = {
+                        "pool_id": pool_id,
+                        "round": m.round,
+                        "slot": m.slot,
+                        "status": m.status,
+                        "winner": m.winner.name if m.winner else None,
+                    }
+
+    return {"pools": pools}

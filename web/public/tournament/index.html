@@ -384,7 +384,7 @@ body::after {
   letter-spacing: 1px;
 }
 
-/* Stream placeholder */
+/* Stream area — live match stats */
 .stream-area {
   flex: 1;
   display: flex;
@@ -397,6 +397,91 @@ body::after {
   letter-spacing: 2px;
   text-transform: uppercase;
   min-height: 120px;
+  position: relative;
+  overflow: hidden;
+}
+
+.stream-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 12px 20px;
+  gap: 12px;
+}
+
+.stream-player {
+  flex: 1;
+  text-align: center;
+}
+
+.stream-player-name {
+  font-size: 10px;
+  color: #6a8a74;
+  letter-spacing: 1.5px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stream-percent {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.stream-percent.low    { color: #fff; }
+.stream-percent.mid    { color: #fbbf24; }
+.stream-percent.high   { color: #ff6b35; }
+.stream-percent.danger { color: #ff2222; }
+
+.stream-stocks {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.stream-stock-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00ff88;
+  transition: opacity 0.3s;
+}
+
+.stream-stock-dot.lost {
+  opacity: 0.15;
+}
+
+.stream-vs {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  color: #2a4a34;
+  flex-shrink: 0;
+}
+
+.stream-connected {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: #00ff88;
+  opacity: 0.6;
+}
+
+@keyframes hitflash {
+  0% { color: #ff4444; }
+  100% { color: inherit; }
+}
+
+.stream-percent.hit {
+  animation: hitflash 0.3s ease-out;
 }
 
 /* Prediction market */
@@ -872,6 +957,7 @@ function applyData(data) {
   updateCurrentMatch(data);
   updatePrediction(data);
   updateActivity(data);
+  updateMatchStream(data);
 
   requestAnimationFrame(() => requestAnimationFrame(() => drawConnectors(data)));
 
@@ -982,6 +1068,188 @@ function updateActivity(data) {
   list.innerHTML = results.slice(0, 6).map(r =>
     `<li>${r.text}</li>`
   ).join('');
+}
+
+// ── Live Match WebSocket Stream ───────────────────────────────
+
+let matchWs = null;
+let matchWsId = null; // arena_match_id currently connected to
+let streamPlayers = {}; // port -> { name, percent, stocks, maxStocks }
+
+function wsUrl(arenaMatchId) {
+  const base = arenaBase.replace(/^http/, 'ws');
+  return `${base}/ws/match/${arenaMatchId}`;
+}
+
+function connectMatchStream(arenaMatchId, entryA, entryB) {
+  if (matchWsId === arenaMatchId && matchWs && matchWs.readyState <= 1) return;
+  disconnectMatchStream();
+
+  matchWsId = arenaMatchId;
+  streamPlayers = {};
+
+  // Pre-populate player names from bracket data (ports assigned on match_start)
+  if (entryA) streamPlayers._nameA = entryA.name;
+  if (entryB) streamPlayers._nameB = entryB.name;
+
+  try {
+    matchWs = new WebSocket(wsUrl(arenaMatchId));
+  } catch (e) {
+    return;
+  }
+
+  matchWs.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      handleStreamMessage(msg);
+    } catch (e) {}
+  };
+
+  matchWs.onclose = () => {
+    // Reconnect if we still expect this match
+    if (matchWsId === arenaMatchId) {
+      setTimeout(() => {
+        if (matchWsId === arenaMatchId) connectMatchStream(arenaMatchId, entryA, entryB);
+      }, 2000);
+    }
+  };
+
+  matchWs.onerror = () => {};
+}
+
+function disconnectMatchStream() {
+  if (matchWs) {
+    matchWsId = null;
+    try { matchWs.close(); } catch (e) {}
+    matchWs = null;
+  }
+  streamPlayers = {};
+  renderStreamIdle();
+}
+
+function handleStreamMessage(msg) {
+  const area = document.getElementById('stream-area');
+  if (!area) return;
+
+  if (msg.type === 'match_start') {
+    // Initialize player tracking with port info
+    const players = msg.players || [];
+    for (const p of players) {
+      streamPlayers[p.port] = {
+        name: p.displayName || p.connectCode || `P${p.port}`,
+        percent: 0,
+        stocks: 4,
+        maxStocks: 4,
+      };
+    }
+    // Try to match ports to entry names from bracket data
+    const ports = Object.keys(streamPlayers).filter(k => !k.startsWith('_')).sort();
+    if (ports.length >= 2 && streamPlayers._nameA) {
+      streamPlayers[ports[0]].name = streamPlayers._nameA;
+      if (streamPlayers._nameB) streamPlayers[ports[1]].name = streamPlayers._nameB;
+    }
+    renderStreamStats();
+    return;
+  }
+
+  if (msg.type === 'frame') {
+    const players = msg.players || [];
+    for (const p of players) {
+      if (!streamPlayers[p.port]) {
+        streamPlayers[p.port] = { name: `P${p.port}`, percent: 0, stocks: 4, maxStocks: 4 };
+      }
+      const prev = streamPlayers[p.port];
+      const prevPercent = prev.percent;
+      prev.percent = Math.round(p.percent || 0);
+      prev.stocks = p.stocks ?? prev.stocks;
+      prev._hit = (prev.percent > prevPercent && prevPercent >= 0);
+    }
+    renderStreamStats();
+    return;
+  }
+
+  if (msg.type === 'game_end') {
+    // Flash the winner briefly — stream will reset on next match_start
+    renderStreamStats();
+    return;
+  }
+
+  if (msg.type === 'match_end') {
+    // Match over — stream will disconnect on next bracket poll
+    return;
+  }
+}
+
+function renderStreamStats() {
+  const area = document.getElementById('stream-area');
+  if (!area) return;
+
+  const ports = Object.keys(streamPlayers).filter(k => !k.startsWith('_')).sort();
+  if (ports.length < 2) {
+    area.innerHTML = '<span class="stream-connected">CONNECTING</span><span>Waiting for game data…</span>';
+    return;
+  }
+
+  const p1 = streamPlayers[ports[0]];
+  const p2 = streamPlayers[ports[1]];
+
+  function pctClass(pct) {
+    if (pct >= 150) return 'danger';
+    if (pct >= 100) return 'high';
+    if (pct >= 50) return 'mid';
+    return 'low';
+  }
+
+  function stockDots(stocks, max) {
+    let html = '';
+    for (let i = 0; i < max; i++) {
+      html += `<div class="stream-stock-dot${i >= stocks ? ' lost' : ''}"></div>`;
+    }
+    return html;
+  }
+
+  area.innerHTML = `
+    <span class="stream-connected">● LIVE</span>
+    <div class="stream-stats">
+      <div class="stream-player">
+        <div class="stream-player-name">${escHtml(p1.name)}</div>
+        <div class="stream-percent ${pctClass(p1.percent)}${p1._hit ? ' hit' : ''}">${p1.percent}%</div>
+        <div class="stream-stocks">${stockDots(p1.stocks, p1.maxStocks)}</div>
+      </div>
+      <div class="stream-vs">VS</div>
+      <div class="stream-player">
+        <div class="stream-player-name">${escHtml(p2.name)}</div>
+        <div class="stream-percent ${pctClass(p2.percent)}${p2._hit ? ' hit' : ''}">${p2.percent}%</div>
+        <div class="stream-stocks">${stockDots(p2.stocks, p2.maxStocks)}</div>
+      </div>
+    </div>`;
+
+  // Clear hit flags after render
+  p1._hit = false;
+  p2._hit = false;
+}
+
+function renderStreamIdle() {
+  const area = document.getElementById('stream-area');
+  if (area) area.innerHTML = 'Waiting for match…';
+}
+
+// Called from applyData — connect/disconnect based on bracket state
+function updateMatchStream(data) {
+  const rounds = data.bracket?.rounds || [];
+  let playing = null;
+  for (const r of rounds) {
+    for (const m of r) {
+      if (m.status === 'playing' && m.arena_match_id) { playing = m; break; }
+    }
+    if (playing) break;
+  }
+
+  if (playing) {
+    connectMatchStream(playing.arena_match_id, playing.entry_a, playing.entry_b);
+  } else {
+    disconnectMatchStream();
+  }
 }
 
 // ── Fetch & poll ──────────────────────────────────────────────

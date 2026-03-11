@@ -611,6 +611,19 @@ body::after {
   </div>
 </div>
 
+<!-- ── Distribute pools ──────────────────────────────────────── -->
+<div class="section" id="distribute-section" style="display:none;">
+  <div class="section-header">
+    <span class="section-title">Distribute Pools</span>
+  </div>
+  <div class="section-body">
+    <p style="font-size:13px; color:#6a8a74; margin-bottom:12px;">Record match onchain + resolve prediction pool. Winners can claim payouts after distribution.</p>
+    <div id="distribute-list">
+      <p style="color:#555;">No completed matches with pools</p>
+    </div>
+  </div>
+</div>
+
 <!-- ── Create tournament ─────────────────────────────────────── -->
 <div class="section" id="create-section">
   <div class="section-header">
@@ -797,6 +810,8 @@ function renderTournamentState(t) {
   // Show controls
   document.getElementById('match-controls-section').style.display = '';
   document.getElementById('force-section').style.display = '';
+  document.getElementById('distribute-section').style.display = '';
+  renderDistributeList(t);
 
   // Champion
   const champ = t.bracket?.rounds?.at(-1)?.[0]?.winner;
@@ -967,6 +982,76 @@ async function forceAdvance() {
     renderTournamentState(t);
   } catch (e) {
     toast(`Failed: ${e.message}`, 'err');
+  }
+}
+
+// ── Distribute pools ──────────────────────────────────────────
+
+async function renderDistributeList(t) {
+  const container = document.getElementById('distribute-list');
+  if (!t.bracket?.rounds) {
+    container.innerHTML = '<p style="color:#555;">No bracket</p>';
+    return;
+  }
+
+  // Fetch pool info from arena DB
+  let poolData = {};
+  try {
+    const resp = await apiFetch(`/admin/tournaments/${t.id}/pools`);
+    poolData = resp.pools || {};
+  } catch (e) {
+    container.innerHTML = '<p style="color:#555;">Could not fetch pool info</p>';
+    return;
+  }
+
+  // Find completed matches with pools
+  const eligible = [];
+  for (const [key, info] of Object.entries(poolData)) {
+    if (info.status === 'complete' && info.winner) {
+      eligible.push(info);
+    }
+  }
+
+  if (eligible.length === 0) {
+    container.innerHTML = '<p style="color:#555;">No completed matches with pools</p>';
+    return;
+  }
+
+  container.innerHTML = eligible.map(m => `
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05);">
+      <div>
+        <span style="color:#6a8a74; font-size:12px;">R${m.round+1}M${m.slot+1}</span>
+        <span style="margin-left:8px;">${m.winner}</span>
+        <span style="color:#555; font-size:12px;">pool #${m.pool_id}</span>
+      </div>
+      <button class="btn btn-primary" style="padding:6px 14px; font-size:12px; width:auto;"
+        onclick="distributePool(${m.round}, ${m.slot})" id="dist-btn-${m.round}-${m.slot}">
+        Distribute
+      </button>
+    </div>
+  `).join('');
+}
+
+async function distributePool(round, slot) {
+  if (!currentTournament) return toast('No tournament loaded', 'err');
+  const btn = document.getElementById(`dist-btn-${round}-${slot}`);
+  if (!btn) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const data = await apiFetch(`/admin/tournaments/${currentTournament.id}/distribute`, {
+      method: 'POST',
+      body: JSON.stringify({ round, slot }),
+    });
+    toast(`Pool #${data.pool_id} distributed!`, 'ok');
+    btn.textContent = 'Done ✓';
+    btn.style.background = '#1a3d1a';
+    btn.style.borderColor = '#2a5a2a';
+  } catch (e) {
+    toast(`Distribute failed: ${e.message}`, 'err');
+    btn.disabled = false;
+    btn.textContent = 'Distribute';
   }
 }
 
