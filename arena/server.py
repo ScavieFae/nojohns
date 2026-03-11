@@ -1846,7 +1846,7 @@ def faucet(req: FaucetRequest) -> dict[str, Any]:
         "success": True,
         "funded": True,
         "tx_hash": tx_hash,
-        "amount_mon": 0.1,
+        "amount_mon": _FAUCET_AMOUNT_MON,
         "wallets_funded": count + 1,
         "cap": _FAUCET_CAP,
     }
@@ -1997,6 +1997,8 @@ def self_register(
         raise HTTPException(status_code=404, detail="Tournament not found")
     if t.status != "registration":
         raise HTTPException(status_code=400, detail="Registration is closed")
+    if len(t.entries) >= 32:
+        raise HTTPException(status_code=400, detail="Tournament is full (32 max)")
 
     # Reject duplicate email
     email_lower = req.email.strip().lower()
@@ -2020,7 +2022,7 @@ def self_register(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {"success": True, "entry": entry.to_dict(), "tournament": t.to_dict()}
+    return {"success": True, "entry": entry.to_dict(include_email=True), "tournament": t.to_dict()}
 
 
 @app.get("/tournaments/{tournament_id}/my-entry")
@@ -2041,13 +2043,13 @@ def my_entry(
         email_lower = email.strip().lower()
         for e in t.entries:
             if e.email and e.email.strip().lower() == email_lower:
-                return {"found": True, "entry": e.to_dict()}
+                return {"found": True, "entry": e.to_dict(include_email=True)}
 
     if wallet:
         wallet_lower = wallet.strip().lower()
         for e in t.entries:
             if e.wallet_address and e.wallet_address.lower() == wallet_lower:
-                return {"found": True, "entry": e.to_dict()}
+                return {"found": True, "entry": e.to_dict(include_email=True)}
 
     return {"found": False, "entry": None}
 

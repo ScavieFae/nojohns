@@ -32,16 +32,18 @@ class Entry:
     registrant: str | None = None  # Human registrant name (who signed up)
     email: str | None = None  # Email used at registration (for Privy matching)
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, include_email: bool = False) -> dict:
+        d = {
             "name": self.name,
             "character": self.character,
             "strategy": self.strategy,
             "connect_code": self.connect_code,
             "wallet_address": self.wallet_address,
             "registrant": self.registrant,
-            "email": self.email,
         }
+        if include_email:
+            d["email"] = self.email
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Entry":
