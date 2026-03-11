@@ -1037,6 +1037,196 @@ def cmd_local(args):
         return 1
 
 
+def cmd_serve_tournament(args):
+    """Poll the arena for tournament matches and run them locally as they're queued."""
+    import time as _time
+    from games.melee import DolphinConfig, MatchRunner, MatchSettings
+    from games.melee.netplay import MatchStreamer, extract_player_frame
+    from melee import Character, Stage
+
+    server = args.server
+    if not server:
+        logger.error("--server is required")
+        return 1
+    server = server.rstrip("/")
+    _post, _get, _delete = _make_arena_helpers(server)
+
+    tournament_id = args.tournament_id
+    poll_interval = args.poll or 3
+
+    dolphin = DolphinConfig(dolphin_path=args.dolphin, iso_path=args.iso)
+
+    logger.info("No Johns — Tournament Server")
+    logger.info(f"   Arena: {server}")
+    logger.info(f"   Tournament: {tournament_id}")
+    logger.info(f"   Polling every {poll_interval}s")
+    logger.info(f"   Waiting for admin to start matches...")
+    logger.info("")
+
+    last_match_id = None
+
+    while True:
+        try:
+            tourn = _get(f"/tournaments/{tournament_id}")
+        except Exception as e:
+            logger.warning(f"Cannot reach arena: {e}")
+            _time.sleep(poll_interval)
+            continue
+
+        if tourn.get("status") == "complete":
+            champion = tourn.get("bracket", {}).get("rounds", [[]])[-1]
+            champ_name = champion[0].get("winner", {}).get("name", "?") if champion else "?"
+            logger.info(f"Tournament complete! Champion: {champ_name}")
+            return 0
+
+        if tourn.get("status") == "registration":
+            _time.sleep(poll_interval)
+            continue
+
+        # Find a match with status "playing" — that means admin hit "Start Next"
+        playing_match = None
+        for round_matches in tourn.get("bracket", {}).get("rounds", []):
+            for m in round_matches:
+                if m.get("status") == "playing":
+                    playing_match = m
+                    break
+            if playing_match:
+                break
+
+        if not playing_match or playing_match.get("arena_match_id") == last_match_id:
+            _time.sleep(poll_interval)
+            continue
+
+        # Found a new match to run!
+        entry_a = playing_match.get("entry_a", {})
+        entry_b = playing_match.get("entry_b", {})
+        arena_match_id = playing_match.get("arena_match_id")
+        match_round = playing_match.get("round", 0)
+        match_slot = playing_match.get("slot", 0)
+
+        p1_name = entry_a.get("name", "?")
+        p2_name = entry_b.get("name", "?")
+        p1_char_str = entry_a.get("character", "RANDOM")
+        p2_char_str = entry_b.get("character", "RANDOM")
+        p1_strategy = entry_a.get("strategy", "phillip")
+        p2_strategy = entry_b.get("strategy", "phillip")
+
+        logger.info(f">>> MATCH STARTING: {p1_name} ({p1_char_str}) vs {p2_name} ({p2_char_str})")
+        logger.info(f"    Round {match_round + 1}, Match {match_slot + 1}")
+
+        # Load fighters
+        fighter1 = load_fighter(p1_strategy)
+        fighter2 = load_fighter(p2_strategy)
+        if fighter1 is None or fighter2 is None:
+            logger.error(f"Could not load fighters: {p1_strategy}, {p2_strategy}")
+            last_match_id = arena_match_id
+            continue
+
+        p1_character = _resolve_character(p1_char_str.upper(), Character)
+        p2_character = _resolve_character(p2_char_str.upper(), Character)
+
+        # Random stage from tournament legals
+        import random
+        stages = [
+            "FINAL_DESTINATION", "BATTLEFIELD", "YOSHIS_STORY",
+            "DREAMLAND", "FOUNTAIN_OF_DREAMS", "POKEMON_STADIUM",
+        ]
+        stage_name = random.choice(stages)
+        logger.info(f"    Stage: {stage_name}")
+        stage = Stage[stage_name]
+
+        settings = MatchSettings(
+            games=args.games,
+            stocks=args.stocks,
+            time_minutes=args.time,
+            stage=stage,
+            p1_character=p1_character,
+            p2_character=p2_character,
+        )
+
+        # Start frame streamer if we have an arena match ID
+        streamer = None
+        if arena_match_id:
+            try:
+                streamer = MatchStreamer(server, arena_match_id)
+                streamer.start()
+            except Exception:
+                pass
+
+        def on_frame(state):
+            if streamer and state.players:
+                players = []
+                for port, player in state.players.items():
+                    if player:
+                        players.append(extract_player_frame(player, port))
+                streamer.send_frame(int(state.frame), players)
+
+        def on_game_end(game):
+            logger.info(f"    Game over! P{game.winner_port} wins "
+                        f"({game.p1_stocks}-{game.p2_stocks} stocks)")
+
+        runner = MatchRunner(dolphin)
+        try:
+            result = runner.run_match(
+                fighter1, fighter2, settings,
+                on_frame=on_frame,
+                on_game_end=on_game_end,
+            )
+
+            winner_port = result.winner_port
+            winner_name = p1_name if winner_port == 1 else p2_name
+            loser_name = p2_name if winner_port == 1 else p1_name
+            winner_stocks = int(result.games[-1].p1_stocks if winner_port == 1 else result.games[-1].p2_stocks)
+            loser_stocks = int(result.games[-1].p2_stocks if winner_port == 1 else result.games[-1].p1_stocks)
+
+            logger.info(f">>> MATCH COMPLETE: {winner_name} wins! ({winner_stocks}-{loser_stocks} stocks)")
+
+            # Report result to arena — advance bracket
+            try:
+                _post(f"/tournaments/{tournament_id}/advance", {
+                    "round": match_round,
+                    "slot": match_slot,
+                    "winner_name": winner_name,
+                    "score_a": int(result.games[-1].p1_stocks),
+                    "score_b": int(result.games[-1].p2_stocks),
+                })
+                logger.info(f"    Bracket advanced: {winner_name}")
+            except Exception as e:
+                logger.error(f"    Failed to report result: {e}")
+                logger.error(f"    Manually advance: Round {match_round}, Slot {match_slot}, Winner: {winner_name}")
+
+            # Also report to arena match endpoint if we have queue IDs
+            if arena_match_id:
+                try:
+                    match_data = _get(f"/matches/{arena_match_id}")
+                    winner_qid = match_data.get("p1_queue_id" if winner_port == 1 else "p2_queue_id", "")
+                    if winner_qid:
+                        _post(f"/matches/{arena_match_id}/result", {
+                            "queue_id": winner_qid,
+                            "outcome": "COMPLETED",
+                            "duration_seconds": 0,
+                            "stocks_remaining": winner_stocks,
+                            "opponent_stocks": loser_stocks,
+                        })
+                except Exception:
+                    pass
+
+        except KeyboardInterrupt:
+            logger.info("\nShutting down tournament server.")
+            return 130
+        except Exception as e:
+            logger.error(f"    Match error: {e}")
+            logger.error(f"    Use Force Advance in admin panel to continue.")
+        finally:
+            if streamer:
+                streamer.stop()
+
+        last_match_id = arena_match_id
+        logger.info("")
+        logger.info("Waiting for next match...")
+        logger.info("")
+
+
 def cmd_tournament(args):
     """Run a tournament match — fetches config from arena, streams frames, reports results."""
     from games.melee import DolphinConfig, MatchRunner, MatchSettings
@@ -3229,6 +3419,21 @@ def main():
     local_parser.add_argument("-i", "--iso", default=None, help="Melee ISO path")
     local_parser.set_defaults(func=cmd_local)
 
+    # serve-tournament — poll arena, run matches as admin starts them
+    serve_parser = subparsers.add_parser(
+        "serve-tournament",
+        help="Poll arena for tournament matches and run them locally as admin starts them",
+    )
+    serve_parser.add_argument("--tournament-id", required=True, help="Tournament ID to serve")
+    serve_parser.add_argument("--server", default=None, help="Arena server URL")
+    serve_parser.add_argument("--poll", type=int, default=3, help="Poll interval in seconds (default: 3)")
+    serve_parser.add_argument("--games", type=int, default=1, help="Number of games per match (default: 1)")
+    serve_parser.add_argument("--stocks", type=int, default=4, help="Stocks per game (default: 4)")
+    serve_parser.add_argument("--time", type=int, default=8, help="Time limit in minutes (default: 8)")
+    serve_parser.add_argument("-d", "--dolphin", default=None, help="Dolphin path")
+    serve_parser.add_argument("-i", "--iso", default=None, help="Melee ISO path")
+    serve_parser.set_defaults(func=cmd_serve_tournament)
+
     # tournament command — runs a match from arena, streams frames, reports results
     tourn_parser = subparsers.add_parser(
         "tournament",
@@ -3253,7 +3458,7 @@ def main():
     args = parser.parse_args()
 
     # Load config and resolve args for game commands
-    game_commands = {"fight", "netplay", "netplay-test", "matchmake", "auto", "tournament", "local"}
+    game_commands = {"fight", "netplay", "netplay-test", "matchmake", "auto", "tournament", "local", "serve-tournament"}
     if args.command in game_commands:
         nj_cfg = load_config()
         game_cfg = nj_cfg.games.get("melee")
