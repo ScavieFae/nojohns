@@ -497,3 +497,101 @@ class TestSignatures:
         sigs = client.get(f"/matches/{match_id}/signatures").json()["signatures"]
         assert len(sigs) == 1
         assert sigs[0]["signature"] == "0xsig_v2"
+
+
+# ======================================================================
+# Admin Endpoints
+# ======================================================================
+
+
+class TestAdminEndpoints:
+    """Tests for admin recovery endpoints."""
+
+    def _make_match(self, client):
+        r1 = client.post("/queue/join", json={"connect_code": "A#001"})
+        r2 = client.post("/queue/join", json={"connect_code": "B#002"})
+        return r1.json()["queue_id"], r2.json()["queue_id"], r2.json()["match_id"]
+
+    def test_expire_match_requires_auth(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        _, _, match_id = self._make_match(client)
+        resp = client.post(f"/admin/matches/{match_id}/expire")
+        assert resp.status_code == 401
+
+    def test_expire_match_with_auth(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        _, _, match_id = self._make_match(client)
+        resp = client.post(
+            f"/admin/matches/{match_id}/expire",
+            headers={"Authorization": "Bearer secret"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "expired"
+        assert data["changed"] is True
+
+        # Match is now expired in DB
+        match = client.get(f"/matches/{match_id}").json()
+        assert match["status"] == "expired"
+
+    def test_expire_already_expired_match(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        _, _, match_id = self._make_match(client)
+        headers = {"Authorization": "Bearer secret"}
+        client.post(f"/admin/matches/{match_id}/expire", headers=headers)
+        resp = client.post(f"/admin/matches/{match_id}/expire", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["changed"] is False
+
+    def test_expire_nonexistent_match(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        resp = client.post(
+            "/admin/matches/not-real/expire",
+            headers={"Authorization": "Bearer secret"},
+        )
+        assert resp.status_code == 404
+
+    def test_rematch_requires_auth(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        _, _, match_id = self._make_match(client)
+        resp = client.post(f"/admin/matches/{match_id}/rematch")
+        assert resp.status_code == 401
+
+    def test_rematch_creates_new_match(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        _, _, match_id = self._make_match(client)
+        resp = client.post(
+            f"/admin/matches/{match_id}/rematch",
+            headers={"Authorization": "Bearer secret"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "new_match_id" in data
+        assert data["new_match_id"] != match_id
+        assert data["p1_connect_code"] == "A#001"
+        assert data["p2_connect_code"] == "B#002"
+
+        # New match exists and is playing
+        new_match = client.get(f"/matches/{data['new_match_id']}").json()
+        assert new_match["status"] == "playing"
+
+    def test_cancel_pool_requires_auth(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        resp = client.post("/admin/pools/1/cancel")
+        assert resp.status_code == 401
+
+    def test_wallet_requires_auth(self, client, monkeypatch):
+        monkeypatch.setenv("ADMIN_TOKEN", "secret")
+        resp = client.get("/admin/wallet")
+        assert resp.status_code == 401
+
+    def test_wallet_no_arena_key(self, client, monkeypatch):
+        """Returns 503 when arena wallet is not configured."""
+        import arena.server as srv
+        monkeypatch.setattr(srv, "_arena_account", None)
+        monkeypatch.delenv("ARENA_PRIVATE_KEY", raising=False)
+        resp = client.get(
+            "/admin/wallet",
+            headers={"Authorization": "Bearer whatever"},
+        )
+        assert resp.status_code == 503

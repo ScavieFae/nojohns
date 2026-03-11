@@ -14,6 +14,18 @@ Live streaming:
     WS     /ws/stream/{id}      WebSocket for frame upload (client -> arena)
     POST   /matches/{id}/frame  Post frame data (client -> arena, legacy)
     POST   /matches/{id}/start  Signal match start with player info (legacy)
+
+Tournaments:
+    POST   /tournaments                        Create tournament (admin)
+    GET    /tournaments                        List all tournaments
+    GET    /tournaments/{id}                   Full tournament state
+    GET    /tournaments/{id}/bracket           Bracket JSON (viewer polls this)
+    POST   /tournaments/{id}/advance           Report match result + advance bracket
+    POST   /tournaments/{id}/next              Queue next match into arena (admin)
+    POST   /admin/tournaments/{id}/force-advance  Force-advance a match (admin)
+
+Faucet:
+    POST   /faucet                             Fund a new Privy wallet with 0.1 MON (capped at 50)
 """
 
 import asyncio
@@ -25,7 +37,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .db import ArenaDB
@@ -101,6 +113,44 @@ def _get_arena_account():
     except Exception as e:
         logger.warning(f"Failed to load arena wallet: {e}")
         return None
+
+
+LOW_BALANCE_THRESHOLD_MON = 0.05
+
+
+def _log_wallet_balance(account, rpc_url: str, context: str):
+    """Fetch and log wallet balance. Emits WARNING if below LOW_BALANCE_THRESHOLD_MON."""
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        balance_wei = w3.eth.get_balance(account.address)
+        balance_mon = float(Web3.from_wei(balance_wei, "ether"))
+        if balance_mon < LOW_BALANCE_THRESHOLD_MON:
+            logger.warning(
+                f"Arena wallet LOW BALANCE after {context}: {balance_mon:.4f} MON "
+                f"(threshold: {LOW_BALANCE_THRESHOLD_MON} MON)"
+            )
+        else:
+            logger.info(f"Arena wallet balance after {context}: {balance_mon:.4f} MON")
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"Balance check failed after {context}: {e}")
+
+
+def require_admin(authorization: str | None = Header(default=None)):
+    """FastAPI dependency: validate ADMIN_TOKEN bearer auth on admin endpoints.
+
+    If ADMIN_TOKEN env var is set, requests must include `Authorization: Bearer <token>`.
+    If ADMIN_TOKEN is not set (dev mode), requests are allowed with a warning.
+    """
+    token = os.environ.get("ADMIN_TOKEN")
+    if not token:
+        logger.warning("ADMIN_TOKEN not configured — admin endpoints are unprotected")
+        return
+    if not authorization or authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _post_elo_updates(match: dict):
@@ -331,6 +381,7 @@ def _try_create_pool(match_id: str, p1_wallet: str | None, p2_wallet: str | None
         # Store pool_id in DB
         db = get_db()
         db.set_pool_id(match_id, pool_id)
+        _log_wallet_balance(account, rpc_url, f"create_pool(match={match_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool creation")
     except Exception as e:
@@ -366,6 +417,7 @@ def _try_cancel_pool(match_id: str):
 
         cancel_pool(pool_id, account, rpc_url, pool_address)
         logger.info(f"Prediction pool {pool_id} cancelled for expired match {match_id}")
+        _log_wallet_balance(account, rpc_url, f"cancel_pool(pool={pool_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool cancellation")
     except Exception as e:
@@ -448,6 +500,7 @@ def _try_resolve_pool(match_id: str):
 
         tx_hash = resolve_pool(pool_id, account, rpc_url, pool_address)
         logger.info(f"Prediction pool {pool_id} resolved for match {match_id}: tx={tx_hash}")
+        _log_wallet_balance(account, rpc_url, f"resolve_pool(pool={pool_id})")
     except ImportError:
         logger.debug("web3 not installed — skipping pool resolution")
     except Exception as e:
@@ -455,15 +508,14 @@ def _try_resolve_pool(match_id: str):
         logger.warning(f"Failed to resolve prediction pool {pool_id}: {e}")
 
 
-def _expire_matches_and_cancel_pools(db: ArenaDB, timeout_seconds: int = 1800):
-    """Expire stale matches, cancel their prediction pools, and void stuck wagers."""
-    expired_ids = db.expire_stale_matches(timeout_seconds)
-    if expired_ids:
-        steps = []
-        for mid in expired_ids:
-            steps.append((_try_cancel_pool, mid))
-            steps.append((_try_void_wager, mid))
-        _background_chain(*steps)
+def _expire_stale_matches(db: ArenaDB) -> list[str]:
+    """Expire stale matches. Does NOT cancel prediction pools — that's an explicit admin action.
+
+    Timeout is controlled by MATCH_TIMEOUT env var (default 300s / 5 min).
+    Expired match IDs are returned so callers can take further action if needed.
+    """
+    timeout_seconds = int(os.environ.get("MATCH_TIMEOUT", "300"))
+    return db.expire_stale_matches(timeout_seconds)
 
 
 # Global DB instance — set during lifespan
@@ -505,6 +557,24 @@ def _log_startup_config():
         account = _get_arena_account()
         if account:
             logger.info(f"  Arena wallet: {account.address}")
+            # Log starting balance so operator can verify before match night
+            try:
+                from web3 import Web3
+
+                w3 = Web3(Web3.HTTPProvider(rpc_url))
+                balance_wei = w3.eth.get_balance(account.address)
+                balance_mon = float(Web3.from_wei(balance_wei, "ether"))
+                if balance_mon < LOW_BALANCE_THRESHOLD_MON:
+                    logger.warning(
+                        f"  Arena wallet STARTING BALANCE LOW: {balance_mon:.4f} MON "
+                        f"(threshold: {LOW_BALANCE_THRESHOLD_MON} MON) — top up before match night!"
+                    )
+                else:
+                    logger.info(f"  Arena wallet balance: {balance_mon:.4f} MON")
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.debug(f"  Balance check failed: {e}")
         else:
             logger.warning("  Arena wallet: key set but failed to load!")
     else:
@@ -651,7 +721,7 @@ def join_queue(req: JoinRequest) -> dict[str, Any]:
 
     # Sweep stale entries on each queue operation
     db.expire_stale_entries()
-    _expire_matches_and_cancel_pools(db)
+    _expire_stale_matches(db)
 
     queue_id = db.add_to_queue(req.connect_code, req.fighter_name, req.wallet_address, req.agent_id)
     logger.info(f"Joined queue: {req.connect_code} ({req.fighter_name}) agent_id={req.agent_id} -> {queue_id}")
@@ -832,7 +902,7 @@ def get_signatures(match_id: str) -> dict[str, Any]:
 
 
 @app.post("/admin/cleanup")
-def admin_cleanup() -> dict[str, Any]:
+def admin_cleanup(_: None = Depends(require_admin)) -> dict[str, Any]:
     """Force-expire stale queue entries and matches. For debugging."""
     db = get_db()
     expired_queue = db.expire_stale_entries(timeout_seconds=0)
@@ -849,13 +919,103 @@ def admin_cleanup() -> dict[str, Any]:
     }
 
 
+@app.post("/admin/matches/{match_id}/expire")
+def admin_expire_match(match_id: str, _: None = Depends(require_admin)) -> dict[str, Any]:
+    """Expire a single stuck match. Does NOT cancel its prediction pool."""
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if match["status"] != "playing":
+        return {"match_id": match_id, "status": match["status"], "changed": False}
+    db.expire_match(match_id)
+    logger.info(f"Admin expired match {match_id}")
+    return {"match_id": match_id, "status": "expired", "changed": True}
+
+
+@app.post("/admin/pools/{pool_id}/cancel")
+def admin_cancel_pool(pool_id: int, _: None = Depends(require_admin)) -> dict[str, Any]:
+    """Cancel a prediction pool onchain, enabling refunds."""
+    account = _get_arena_account()
+    if account is None:
+        raise HTTPException(status_code=503, detail="Arena wallet not configured")
+    pool_address = os.environ.get("PREDICTION_POOL")
+    if not pool_address:
+        raise HTTPException(status_code=503, detail="PREDICTION_POOL not configured")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    try:
+        from nojohns.contract import cancel_pool
+
+        cancel_pool(pool_id, account, rpc_url, pool_address)
+        logger.info(f"Admin cancelled pool {pool_id}")
+        return {"pool_id": pool_id, "cancelled": True}
+    except ImportError:
+        raise HTTPException(status_code=503, detail="web3 not installed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/matches/{match_id}/rematch")
+def admin_rematch(match_id: str, _: None = Depends(require_admin)) -> dict[str, Any]:
+    """Re-queue the same two players from an expired match. Creates a new match."""
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    p1_code = match["p1_connect_code"]
+    p2_code = match["p2_connect_code"]
+    p1_wallet = match.get("p1_wallet")
+    p2_wallet = match.get("p2_wallet")
+    p1_agent_id = match.get("p1_agent_id")
+    p2_agent_id = match.get("p2_agent_id")
+
+    # Create fresh queue entries for both players and immediately match them
+    p1_queue_id = db.add_to_queue(p1_code, None, p1_wallet, p1_agent_id)
+    p2_queue_id = db.add_to_queue(p2_code, None, p2_wallet, p2_agent_id)
+    p1_entry = db.get_queue_entry(p1_queue_id)
+    p2_entry = db.get_queue_entry(p2_queue_id)
+    new_match_id = db.create_match(p1_entry, p2_entry)
+    logger.info(f"Admin rematch: {p1_code} vs {p2_code} -> {new_match_id} (from {match_id})")
+
+    # Create prediction pool for the new match
+    _background_chain((_try_create_pool, new_match_id, p1_wallet, p2_wallet))
+
+    return {
+        "new_match_id": new_match_id,
+        "p1_connect_code": p1_code,
+        "p2_connect_code": p2_code,
+    }
+
+
+@app.get("/admin/wallet")
+def admin_wallet(_: None = Depends(require_admin)) -> dict[str, Any]:
+    """Return arena wallet address and MON balance."""
+    account = _get_arena_account()
+    if account is None:
+        raise HTTPException(status_code=503, detail="Arena wallet not configured")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    balance_mon = None
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        balance_wei = w3.eth.get_balance(account.address)
+        balance_mon = float(Web3.from_wei(balance_wei, "ether"))
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"Failed to fetch wallet balance: {e}")
+    return {"address": account.address, "balance_mon": balance_mon}
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, Any]:
     """Server health check. Returns live match IDs for spectator discovery."""
     _manager.sweep_stale()
     db = get_db()
     db.expire_stale_entries()
-    _expire_matches_and_cancel_pools(db)
+    _expire_stale_matches(db)
     # Prefer in-memory manager (has frame data for viewers), fall back to DB
     # after restarts when manager state is lost but DB still has playing matches
     live_ids = list(_manager.match_info.keys())
@@ -1352,3 +1512,280 @@ def list_pools() -> dict[str, Any]:
         "pools": pools,
         "count": len(pools),
     }
+
+
+# ======================================================================
+# Faucet Endpoint
+# ======================================================================
+
+# 0.1 MON in wei
+_FAUCET_AMOUNT_WEI = int(0.1 * 10**18)
+# Max number of wallets we'll fund (bounds operator exposure)
+_FAUCET_CAP = 50
+
+
+def _send_native(to_address: str, amount_wei: int, account, rpc_url: str, chain_id: int) -> str:
+    """Send native MON to an address. Returns tx hash hex string."""
+    from web3 import Web3
+
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    nonce = w3.eth.get_transaction_count(account.address)
+    tx = {
+        "to": Web3.to_checksum_address(to_address),
+        "value": amount_wei,
+        "gas": 21000,
+        "gasPrice": w3.eth.gas_price,
+        "nonce": nonce,
+        "chainId": chain_id,
+    }
+    signed = account.sign_transaction(tx)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    return tx_hash.hex()
+
+
+class FaucetRequest(BaseModel):
+    address: str  # Privy embedded wallet address
+
+
+@app.post("/faucet")
+def faucet(req: FaucetRequest) -> dict[str, Any]:
+    """Fund a new spectator wallet with 0.1 MON for betting.
+
+    Called by the /bet page after Privy creates an embedded wallet.
+    Idempotent — calling twice for the same address returns success without
+    sending a second transaction. Capped at FAUCET_CAP wallets total.
+
+    Requires ARENA_PRIVATE_KEY (arena wallet must hold MON).
+    """
+    address = req.address.strip()
+    if not address.startswith("0x") or len(address) != 42:
+        raise HTTPException(status_code=400, detail="Invalid address")
+
+    account = _get_arena_account()
+    if account is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Faucet not configured (ARENA_PRIVATE_KEY missing)",
+        )
+
+    db = get_db()
+
+    # Idempotent: already funded
+    if db.is_wallet_funded(address):
+        return {"success": True, "funded": False, "reason": "already_funded"}
+
+    # Cap check
+    count = db.funded_wallet_count()
+    if count >= _FAUCET_CAP:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Faucet cap reached ({_FAUCET_CAP} wallets funded)",
+        )
+
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    chain_id = int(os.environ.get("MONAD_CHAIN_ID", "143"))
+
+    try:
+        from web3 import Web3  # noqa: F401 — confirm web3 is installed before DB write
+    except ImportError:
+        raise HTTPException(status_code=503, detail="web3 not installed on server")
+
+    try:
+        tx_hash = _send_native(address, _FAUCET_AMOUNT_WEI, account, rpc_url, chain_id)
+    except Exception as e:
+        logger.warning(f"Faucet send failed for {address}: {e}")
+        raise HTTPException(status_code=502, detail=f"Transaction failed: {e}")
+
+    db.record_funded_wallet(address, tx_hash)
+    logger.info(f"Faucet: funded {address} with 0.1 MON — tx={tx_hash} ({count + 1}/{_FAUCET_CAP})")
+
+    return {
+        "success": True,
+        "funded": True,
+        "tx_hash": tx_hash,
+        "amount_mon": 0.1,
+        "wallets_funded": count + 1,
+        "cap": _FAUCET_CAP,
+    }
+
+
+# ======================================================================
+# Tournament Endpoints
+# ======================================================================
+
+
+def _require_admin(authorization: str | None) -> None:
+    """Validate ADMIN_TOKEN bearer auth. Raises 401 if invalid."""
+    token = os.environ.get("ADMIN_TOKEN")
+    if not token:
+        return  # No token configured — skip auth (dev mode)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if authorization[len("Bearer "):] != token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+
+class EntryRequest(BaseModel):
+    name: str
+    character: str
+    strategy: str
+    connect_code: str
+    wallet_address: str | None = None
+
+
+class CreateTournamentRequest(BaseModel):
+    name: str
+    entries: list[EntryRequest]
+
+
+class AdvanceRequest(BaseModel):
+    round: int
+    slot: int
+    winner_name: str
+    score_a: int | None = None
+    score_b: int | None = None
+
+
+class ForceAdvanceRequest(BaseModel):
+    round: int
+    slot: int
+    winner_name: str
+
+
+@app.post("/tournaments")
+def create_tournament(
+    req: CreateTournamentRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Create a new tournament. Requires admin token if ADMIN_TOKEN is set."""
+    _require_admin(authorization)
+
+    from tournaments.models import Entry
+    from tournaments.tournament import create_tournament as _create
+
+    db = get_db()
+    entries = [
+        Entry(
+            name=e.name,
+            character=e.character,
+            strategy=e.strategy,  # type: ignore[arg-type]
+            connect_code=e.connect_code,
+            wallet_address=e.wallet_address,
+        )
+        for e in req.entries
+    ]
+    tournament = _create(db, req.name, entries)
+    return tournament.to_dict()
+
+
+@app.get("/tournaments")
+def list_all_tournaments() -> dict[str, Any]:
+    """List all tournaments (summary — no bracket data)."""
+    db = get_db()
+    from tournaments.tournament import list_tournaments
+    rows = list_tournaments(db)
+    return {"tournaments": rows, "count": len(rows)}
+
+
+@app.get("/tournaments/{tournament_id}")
+def get_tournament(tournament_id: str) -> dict[str, Any]:
+    """Full tournament state including bracket."""
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    return t.to_dict()
+
+
+@app.get("/tournaments/{tournament_id}/bracket")
+def get_bracket(tournament_id: str) -> dict[str, Any]:
+    """Bracket JSON — the viewer polls this every 3s."""
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    champion = t.bracket.champion()
+    return {
+        "tournament_id": t.id,
+        "name": t.name,
+        "status": t.status,
+        "champion": champion.to_dict() if champion else None,
+        "bracket": t.bracket.to_dict(),
+    }
+
+
+@app.post("/tournaments/{tournament_id}/advance")
+def advance_tournament(
+    tournament_id: str,
+    req: AdvanceRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Report a match result and advance the bracket."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get, report_result
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        t = report_result(db, t, req.round, req.slot, req.winner_name, req.score_a, req.score_b)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return t.to_dict()
+
+
+@app.post("/tournaments/{tournament_id}/next")
+def queue_next(
+    tournament_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Queue the next match into the arena. Operator taps this when ready."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get, queue_next_match
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    match = queue_next_match(db, t)
+    if match is None:
+        champion = t.bracket.champion()
+        return {
+            "queued": False,
+            "message": "No matches remaining" if champion else "No playable matches",
+            "champion": champion.to_dict() if champion else None,
+        }
+
+    return {
+        "queued": True,
+        "match": match.to_dict(),
+    }
+
+
+@app.post("/admin/tournaments/{tournament_id}/force-advance")
+def force_advance_match(
+    tournament_id: str,
+    req: ForceAdvanceRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Force-advance a match regardless of status. Admin override."""
+    _require_admin(authorization)
+
+    db = get_db()
+    from tournaments.tournament import get_tournament as _get, force_advance
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    try:
+        t = force_advance(db, t, req.round, req.slot, req.winner_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return t.to_dict()

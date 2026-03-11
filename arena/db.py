@@ -74,6 +74,15 @@ class ArenaDB:
                 created_at TEXT,
                 UNIQUE(match_id, address)
             );
+
+            CREATE TABLE IF NOT EXISTS tournaments (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                data TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
             """
         )
 
@@ -114,6 +123,18 @@ class ArenaDB:
                 self._conn.execute(f"ALTER TABLE matches ADD COLUMN {col} INTEGER")
             except sqlite3.OperationalError:
                 pass
+
+        # Faucet tracking — persists funded wallet addresses
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faucet_wallets (
+                address TEXT PRIMARY KEY,
+                tx_hash TEXT,
+                funded_at TEXT
+            )
+            """
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Queue
@@ -260,6 +281,16 @@ class ArenaDB:
                 logging.getLogger(__name__).info(f"Expired {len(expired_ids)} stale matches")
 
             return expired_ids
+
+    def expire_match(self, match_id: str) -> bool:
+        """Expire a single match by ID. Returns True if it was playing and is now expired."""
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE matches SET status = 'expired' WHERE id = ? AND status = 'playing'",
+                (match_id,),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     def set_pool_id(self, match_id: str, pool_id: int) -> None:
         """Store the onchain prediction pool ID for a match."""
@@ -515,6 +546,36 @@ class ArenaDB:
             return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Faucet
+    # ------------------------------------------------------------------
+
+    def is_wallet_funded(self, address: str) -> bool:
+        """Return True if this wallet has already been funded by the faucet."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM faucet_wallets WHERE address = ? COLLATE NOCASE",
+                (address,),
+            ).fetchone()
+            return row is not None
+
+    def funded_wallet_count(self) -> int:
+        """Return total number of wallets funded by the faucet."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM faucet_wallets"
+            ).fetchone()[0]
+
+    def record_funded_wallet(self, address: str, tx_hash: str) -> None:
+        """Record a wallet as funded. Upserts by address."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO faucet_wallets (address, tx_hash, funded_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(address) DO NOTHING",
+                (address.lower(), tx_hash, _now()),
+            )
+            self._conn.commit()
+
+    # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 
@@ -539,6 +600,40 @@ class ArenaDB:
                 "SELECT id FROM matches WHERE status = 'playing'"
             ).fetchall()
             return [r[0] for r in rows]
+
+
+    # ------------------------------------------------------------------
+    # Tournaments
+    # ------------------------------------------------------------------
+
+    def save_tournament(self, tournament_id: str, name: str, status: str, data: str) -> None:
+        """Upsert a tournament record. data is JSON string of full bracket state."""
+        with self._lock:
+            now = _now()
+            self._conn.execute(
+                "INSERT INTO tournaments (id, name, status, data, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET name=?, status=?, data=?, updated_at=?",
+                (tournament_id, name, status, data, now, now, name, status, data, now),
+            )
+            self._conn.commit()
+
+    def load_tournament(self, tournament_id: str) -> dict[str, Any] | None:
+        """Load a tournament record. Returns dict with id/name/status/data or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, name, status, data FROM tournaments WHERE id = ?",
+                (tournament_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_tournaments(self) -> list[dict[str, Any]]:
+        """List all tournaments, newest first. Returns id/name/status (no bracket data)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, name, status, created_at FROM tournaments ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
 
 def _now() -> str:
