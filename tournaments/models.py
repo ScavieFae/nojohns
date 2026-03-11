@@ -167,6 +167,7 @@ class Tournament:
     status: Literal["registration", "pending", "active", "complete"] = "registration"
     current_round: int = 0
     current_slot: int = 0  # next match to play
+    featured: bool = False  # Show on homepage
 
     def to_dict(self) -> dict:
         return {
@@ -175,6 +176,7 @@ class Tournament:
             "status": self.status,
             "current_round": self.current_round,
             "current_slot": self.current_slot,
+            "featured": self.featured,
             "entries": [e.to_dict() for e in self.entries],
             "bracket": self.bracket.to_dict(),
         }
@@ -187,6 +189,7 @@ class Tournament:
             bracket=Bracket.from_dict(d["bracket"]),
             entries=[Entry.from_dict(e) for e in d.get("entries", [])],
             status=d.get("status", "pending"),
+            featured=d.get("featured", False),
             current_round=d.get("current_round", 0),
             current_slot=d.get("current_slot", 0),
         )

@@ -528,6 +528,9 @@ body::after {
       </select>
       <button class="btn btn-secondary" style="width:auto;padding:10px 14px;font-size:14px;" onclick="loadTournament()">Load</button>
     </div>
+    <button class="btn btn-secondary" id="btn-feature" style="display:none; width:auto; margin-top:10px; padding:8px 14px; font-size:13px;" onclick="toggleFeatured()">
+      ☆ Feature on Homepage
+    </button>
   </div>
 </div>
 
@@ -779,6 +782,9 @@ function startPolling(id) {
 // ── Render tournament state ───────────────────────────────────
 
 function renderTournamentState(t) {
+  // Feature button
+  updateFeatureButton(t);
+
   // Handle registration vs bracket mode
   showRegistrationUI(t);
 
@@ -959,6 +965,37 @@ async function forceAdvance() {
     const t = await apiFetch(`/tournaments/${currentTournament.id}`);
     currentTournament = t;
     renderTournamentState(t);
+  } catch (e) {
+    toast(`Failed: ${e.message}`, 'err');
+  }
+}
+
+// ── Feature toggle ────────────────────────────────────────────
+
+function updateFeatureButton(t) {
+  const btn = document.getElementById('btn-feature');
+  if (!t) { btn.style.display = 'none'; return; }
+  btn.style.display = '';
+  if (t.featured) {
+    btn.textContent = '★ Featured on Homepage';
+    btn.style.background = 'rgba(251, 191, 36, 0.15)';
+    btn.style.borderColor = 'rgba(251, 191, 36, 0.3)';
+    btn.style.color = '#fbbf24';
+  } else {
+    btn.textContent = '☆ Feature on Homepage';
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+  }
+}
+
+async function toggleFeatured() {
+  if (!currentTournament) return;
+  try {
+    const t = await apiFetch(`/tournaments/${currentTournament.id}/feature`, { method: 'POST' });
+    currentTournament = t;
+    updateFeatureButton(t);
+    toast(t.featured ? 'Featured on homepage' : 'Removed from homepage', 'ok');
   } catch (e) {
     toast(`Failed: ${e.message}`, 'err');
   }
