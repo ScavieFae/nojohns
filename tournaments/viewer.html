@@ -998,6 +998,13 @@ const EXT_TO_CHAR = {
   21:"YOUNGLINK", 22:"DRMARIO", 23:"ROY", 24:"PICHU", 25:"GANONDORF",
 };
 
+// Reverse lookup: character name → internal character ID (for reconnect-and-resume)
+const CHAR_NAME_TO_INT = {};
+for (const [intId, extId] of Object.entries(EXT_ID_BY_INT)) {
+  const name = EXT_TO_CHAR[extId];
+  if (name && !(name in CHAR_NAME_TO_INT)) CHAR_NAME_TO_INT[name] = parseInt(intId);
+}
+
 // Player colors (port-indexed)
 const PLAYER_COLORS = ["#44ff88", "#ff6b35", "#3b82f6", "#f59e0b"];
 
@@ -1235,7 +1242,40 @@ function onMatchStartAnim(msg) {
 }
 
 function onFrameAnim(msg) {
-  if (!svgInitialized) return;
+  // Reconnect-and-resume: if we get frames without match_start (mid-match reconnect),
+  // derive character IDs from bracket data and initialize SVG anyway.
+  if (!svgInitialized) {
+    const players = msg.players || [];
+    if (players.length < 2) return;
+    // Try to derive character IDs from streamPlayers bracket data
+    const ports = players.map(p => p.port).sort((a, b) => a - b);
+    const charA = streamPlayers._charA;
+    const charB = streamPlayers._charB;
+    if (!charA && !charB) return; // No bracket data, can't init
+
+    svgCharIds = {};
+    if (charA) {
+      const intId = CHAR_NAME_TO_INT[charA.toUpperCase()];
+      if (intId != null) svgCharIds[ports[0]] = intId;
+    }
+    if (charB) {
+      const intId = CHAR_NAME_TO_INT[charB.toUpperCase()];
+      if (intId != null) svgCharIds[ports[1]] = intId;
+    }
+
+    if (Object.keys(svgCharIds).length === 0) return; // Couldn't resolve any chars
+
+    console.log('[anim] Reconnect-and-resume: synthesizing SVG init from bracket data');
+    initSvgCanvas();
+    renderStage(svgStageId); // null stageId → DEFAULT_STAGE, which is fine
+
+    // Preload character animations
+    for (const intId of Object.values(svgCharIds)) {
+      const extId = EXT_ID_BY_INT[intId];
+      if (extId != null) fetchCharAnims(extId);
+    }
+  }
+
   svgFrameData = msg;
   renderFighters(msg.players || []);
 }

@@ -2,6 +2,8 @@
 
 This file helps Claude Code understand and contribute to No Johns effectively.
 
+**Do NOT use the `visual-explainer` skill in this project.** No HTML review pages, no diagram generation, no proactive table rendering. Plain text in the terminal is fine.
+
 ## What Is This Project?
 
 No Johns is agent competition infrastructure. Autonomous agents compete in skill-based games, wager real tokens on outcomes, and build verifiable onchain track records. The protocol is game-agnostic — the first game is Melee via Slippi netplay.
@@ -21,6 +23,11 @@ No Johns is agent competition infrastructure. Autonomous agents compete in skill
 - `dev` exists but is not used during the sprint
 
 After Fight Night, we can restore the dev→main discipline.
+
+### Deploy
+
+- **`main` → Vercel** (viewer HTML, web frontend). Push freely.
+- **`dev` → Railway** (arena server, Python). Pushing to `dev` **kills active WebSocket connections**, disrupting any live match stream. Only push to `dev` when arena Python code (`arena/`, `nojohns/`, `games/`) has changed. Viewer-only changes (`tournaments/`, `web/`) only need `main`.
 
 ### Go-Live Checklist
 
