@@ -1084,7 +1084,11 @@ function applyData(data) {
   }
 
   const bracket = document.getElementById('bracket');
-  bracket.innerHTML = renderBracket(data);
+  const newHtml = renderBracket(data);
+  if (bracket._lastHtml !== newHtml) {
+    bracket.innerHTML = newHtml;
+    bracket._lastHtml = newHtml;
+  }
 
   updateCurrentMatch(data);
   updatePrediction(data);
