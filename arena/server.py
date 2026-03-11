@@ -2178,3 +2178,25 @@ def get_tournament_pools(
                     }
 
     return {"pools": pools}
+
+
+@app.post("/admin/matches/{match_id}/backfill-wallets")
+def backfill_match_wallets(
+    match_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Backfill deterministic wallet addresses on a tournament match."""
+    _require_admin(authorization)
+
+    db = get_db()
+    match = db.get_match(match_id)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    try:
+        acct_a, acct_b = _match_keypairs(match_id)
+        db.update_match_wallet(match_id, "p1", acct_a.address)
+        db.update_match_wallet(match_id, "p2", acct_b.address)
+        return {"p1_wallet": acct_a.address, "p2_wallet": acct_b.address}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
