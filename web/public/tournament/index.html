@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/lib/browser.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -793,7 +793,7 @@ body::after {
     <span class="nav-title" id="tournament-name">Fight Night</span>
   </div>
   <div class="nav-right">
-    <a href="/tournament/login" class="nav-link">Login</a>
+    <a href="/tournament/play" class="nav-link">Login</a>
     <div id="tournament-status" class="status-pill pending">Loading</div>
   </div>
 </nav>
@@ -2111,7 +2111,7 @@ window.addEventListener('resize', () => {
 function renderQRCodes(tournamentId) {
   const base = params.get('site_url') || location.origin;
   const betUrl   = params.get('bet_url') || (base + '/tournament/bet');
-  const loginUrl = params.get('login_url') || (base + '/tournament/login');
+  const loginUrl = params.get('login_url') || (base + '/tournament/play');
 
   const qrOpts = { width: 200, margin: 1, color: { dark: '#000', light: '#fff' } };
 
