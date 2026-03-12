@@ -864,7 +864,7 @@ body::after {
 <div class="fighter-qr">
   <div class="qr-panel">
     <div class="qr-img" id="login-qr-canvas"></div>
-    <div class="qr-label">Fighter Login</div>
+    <div class="qr-label">Bet Now</div>
     <div class="qr-url" id="login-qr-url"></div>
   </div>
 </div>
@@ -2126,7 +2126,7 @@ function makeQR(text) {
 function renderQRCodes(tournamentId) {
   const base = params.get('site_url') || location.origin;
   const betUrl   = params.get('bet_url') || (base + '/tournament/bet');
-  const loginUrl = params.get('login_url') || (base + '/tournament/play');
+  const loginUrl = params.get('login_url') || (base + '/tournament/bet');
 
   try {
     document.getElementById('market-qr-canvas').innerHTML = makeQR(betUrl);
