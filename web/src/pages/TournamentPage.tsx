@@ -132,7 +132,7 @@ function TournamentList({ tournaments }: { tournaments: TournamentSummary[] }) {
             <StatusPill status={t.status} />
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            {t.entry_count} fighters
+            {t.entry_count ? `${t.entry_count} fighters` : t.id.slice(0, 8)}
           </p>
         </a>
       ))}
@@ -144,49 +144,6 @@ function TournamentList({ tournaments }: { tournaments: TournamentSummary[] }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Luma check
-// ─────────────────────────────────────────────────────────────────────────────
-
-function useLumaCheck(email: string | null) {
-  const [found, setFound] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!email) {
-      setFound(null);
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-
-    async function check() {
-      try {
-        const params = new URLSearchParams({ email: email! });
-        const res = await window.fetch(`${ARENA_URL}/luma-check?${params}`);
-        if (!res.ok) {
-          // If endpoint doesn't exist, assume found (don't block users)
-          if (!cancelled) setFound(true);
-          return;
-        }
-        const data = await res.json();
-        if (!cancelled) setFound(data.found ?? true);
-      } catch {
-        // On error, don't block — assume found
-        if (!cancelled) setFound(true);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    check();
-    return () => { cancelled = true; };
-  }, [email]);
-
-  return { found, loading };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main page
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -195,7 +152,6 @@ export function TournamentPage() {
 
   const email = user?.email?.address ?? null;
   const balance = useMonBalance(account);
-  const { found: lumaFound, loading: lumaLoading } = useLumaCheck(email);
   const { tournaments, isLoading: listLoading } = useAllTournaments(isAuthenticated);
 
   // Faucet on first embedded wallet (50 MON for fight night)
@@ -226,35 +182,12 @@ export function TournamentPage() {
     return <SignInScreen onLogin={login} />;
   }
 
-  // Loading Luma check or tournament list
-  if (lumaLoading || listLoading) {
+  // Loading tournament list
+  if (listLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
         <div className="w-8 h-8 border-2 border-accent-green border-t-transparent rounded-full animate-spin mb-4" />
         <p className="text-gray-400 text-sm">Loading...</p>
-      </div>
-    );
-  }
-
-  // Not on Luma
-  if (lumaFound === false) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
-        <h2
-          className="text-xl font-bold mb-2"
-          style={{ fontFamily: "'Orbitron', sans-serif" }}
-        >
-          Not Found on Luma
-        </h2>
-        <p className="text-gray-400 text-sm mb-6">
-          We couldn't find <span className="text-white">{email}</span> on the event guest list.
-        </p>
-        <button
-          onClick={logout}
-          className="text-xs text-gray-500 hover:text-white transition-colors"
-        >
-          Sign out and try another email
-        </button>
       </div>
     );
   }
