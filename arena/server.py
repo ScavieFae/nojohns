@@ -1852,6 +1852,60 @@ def faucet(req: FaucetRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/admin/faucet/topup")
+def faucet_topup(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Top up ALL funded wallets to the current faucet amount (50 MON).
+
+    Checks each wallet's onchain balance, sends the difference if below target.
+    """
+    _require_admin(authorization)
+
+    key = os.environ.get("ARENA_PRIVATE_KEY")
+    rpc_url = os.environ.get("MONAD_RPC_URL", "https://rpc.monad.xyz")
+    chain_id = int(os.environ.get("MONAD_CHAIN_ID", "143"))
+    if not key:
+        raise HTTPException(status_code=503, detail="No ARENA_PRIVATE_KEY")
+
+    try:
+        from web3 import Web3, Account as W3Account
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        account = W3Account.from_key(key)
+    except Exception:
+        raise HTTPException(status_code=503, detail="web3 not available")
+
+    db = get_db()
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT address FROM faucet_wallets"
+        ).fetchall()
+
+    target_wei = _FAUCET_AMOUNT_WEI
+    results = []
+
+    for (addr,) in rows:
+        try:
+            balance = w3.eth.get_balance(Web3.to_checksum_address(addr))
+            if balance >= target_wei:
+                results.append({"address": addr, "status": "ok", "balance_mon": balance / 10**18})
+                continue
+
+            deficit = target_wei - balance
+            tx_hash = _send_native(addr, deficit, account, rpc_url, chain_id)
+            results.append({
+                "address": addr,
+                "status": "topped_up",
+                "sent_mon": deficit / 10**18,
+                "tx_hash": tx_hash,
+            })
+        except Exception as e:
+            results.append({"address": addr, "status": "error", "error": str(e)})
+
+    topped = sum(1 for r in results if r["status"] == "topped_up")
+    return {"wallets": len(rows), "topped_up": topped, "details": results}
+
+
 # ======================================================================
 # Tournament Endpoints
 # ======================================================================
