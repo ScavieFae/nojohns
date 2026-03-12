@@ -37,9 +37,9 @@ async function fetchCurrentMatch(): Promise<CurrentMatch | null> {
   if (!bracketRes.ok) return null;
   const data = await bracketRes.json();
 
-  const rounds: { matches: Record<string, unknown>[] }[] = data.bracket?.rounds ?? [];
+  const rounds: Record<string, unknown>[][] = data.bracket?.rounds ?? [];
   for (const round of rounds) {
-    for (const match of round.matches) {
+    for (const match of round) {
       if (
         match.status === "playing" &&
         match.entry_a &&
