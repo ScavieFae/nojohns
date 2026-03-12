@@ -38,7 +38,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .db import ArenaDB
@@ -2122,6 +2122,32 @@ def toggle_featured(
     t.featured = not t.featured
 
     from tournaments.tournament import _save
+    _save(db, t)
+
+    return t.to_dict()
+
+
+@app.post("/admin/tournaments/{tournament_id}/set-status")
+def set_tournament_status(
+    tournament_id: str,
+    req: dict[str, Any] = Body(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Admin: force-set tournament status (active, complete, pending, registration)."""
+    _require_admin(authorization)
+
+    from tournaments.tournament import get_tournament as _get, _save
+
+    status = req.get("status")
+    if status not in ("registration", "pending", "active", "complete"):
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+
+    db = get_db()
+    t = _get(db, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    t.status = status
     _save(db, t)
 
     return t.to_dict()
