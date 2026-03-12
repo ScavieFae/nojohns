@@ -157,7 +157,7 @@ export function TournamentPage() {
   // Faucet on first embedded wallet (50 MON for fight night)
   const faucetCalled = useRef(false);
   useEffect(() => {
-    if (!isAuthenticated || !account || !isEmbeddedWallet || faucetCalled.current) return;
+    if (!isAuthenticated || !account || faucetCalled.current) return;
     faucetCalled.current = true;
     fetch(`${ARENA_URL}/faucet`, {
       method: "POST",
@@ -166,7 +166,7 @@ export function TournamentPage() {
     }).catch(() => {
       faucetCalled.current = false;
     });
-  }, [isAuthenticated, account, isEmbeddedWallet]);
+  }, [isAuthenticated, account]);
 
   // Loading Privy
   if (!ready) {

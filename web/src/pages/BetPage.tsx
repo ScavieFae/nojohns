@@ -175,7 +175,7 @@ export function BetPage() {
   // Faucet: fund new embedded wallets once on sign-in
   const faucetCalled = useRef(false);
   useEffect(() => {
-    if (!isAuthenticated || !account || !isEmbeddedWallet || faucetCalled.current) return;
+    if (!isAuthenticated || !account || faucetCalled.current) return;
     faucetCalled.current = true;
     fetch(`${ARENA_URL}/faucet`, {
       method: "POST",
