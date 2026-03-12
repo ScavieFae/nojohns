@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/lib/browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -653,10 +653,18 @@ body::after {
 .qr-img {
   width: 100px;
   height: 100px;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 4px;
   background: #fff;
   padding: 4px;
+  overflow: hidden;
+}
+.qr-img img {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
 }
 
 .qr-label {
@@ -843,7 +851,7 @@ body::after {
         </ul>
       </div>
       <div class="qr-panel">
-        <canvas class="qr-img" id="market-qr-canvas"></canvas>
+        <div class="qr-img" id="market-qr-canvas"></div>
         <div class="qr-label">Scan to Bet</div>
         <div class="qr-url" id="market-qr-url"></div>
       </div>
@@ -855,7 +863,7 @@ body::after {
 <!-- Fighter login QR — bottom left -->
 <div class="fighter-qr">
   <div class="qr-panel">
-    <canvas class="qr-img" id="login-qr-canvas"></canvas>
+    <div class="qr-img" id="login-qr-canvas"></div>
     <div class="qr-label">Fighter Login</div>
     <div class="qr-url" id="login-qr-url"></div>
   </div>
@@ -2107,22 +2115,26 @@ window.addEventListener('resize', () => {
 
 // ── QR Codes ──────────────────────────────────────────────────
 
-// QR codes — generated client-side, updated when tournament ID is known
+// QR codes — generated client-side via qrcode-generator
+function makeQR(text) {
+  var qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  return qr.createImgTag(3, 0);  // cellSize=3, margin=0
+}
+
 function renderQRCodes(tournamentId) {
   const base = params.get('site_url') || location.origin;
   const betUrl   = params.get('bet_url') || (base + '/tournament/bet');
   const loginUrl = params.get('login_url') || (base + '/tournament/play');
 
-  const qrOpts = { width: 200, margin: 1, color: { dark: '#000', light: '#fff' } };
-
-  QRCode.toCanvas(document.getElementById('market-qr-canvas'), betUrl, qrOpts, function(err) {
-    if (err) console.warn('[qr] bet QR failed:', err);
-  });
+  try {
+    document.getElementById('market-qr-canvas').innerHTML = makeQR(betUrl);
+    document.getElementById('login-qr-canvas').innerHTML = makeQR(loginUrl);
+  } catch(e) {
+    console.warn('[qr] QR generation failed:', e);
+  }
   document.getElementById('market-qr-url').textContent = betUrl;
-
-  QRCode.toCanvas(document.getElementById('login-qr-canvas'), loginUrl, qrOpts, function(err) {
-    if (err) console.warn('[qr] login QR failed:', err);
-  });
   document.getElementById('login-qr-url').textContent = loginUrl;
 }
 renderQRCodes(null);
