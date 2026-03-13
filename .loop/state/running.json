@@ -1,13 +1,14 @@
 {
-  "active": [
+  "active": [],
+  "completed_pending_eval": [
     {
       "brief": "008-hardening",
       "branch": "008-hardening",
       "brief_file": ".loop/briefs/008-hardening.md",
-      "dispatched_at": "2026-03-10T00:14:29Z"
+      "dispatched_at": "2026-03-10T00:14:29Z",
+      "completed_at": "2026-03-13T06:32:24Z"
     }
   ],
-  "completed_pending_eval": [],
   "history": [
     {
       "brief": "001-bracket-system",
