@@ -1,25 +1,25 @@
 {
   "brief": "008-hardening",
   "brief_file": ".loop/briefs/008-hardening.md",
-  "iteration": 5,
-  "status": "running",
+  "iteration": 7,
+  "status": "complete",
   "tasks_completed": [
     "Task 7: Fix character list typos/duplicates — YOUNKLINK→YLINK, DRMARIO→DOC, ICECLIMBERS→POPO, remove dup MEWTWO, add DK in admin.html; align viewer.html to same libmelee enum names",
     "Task 1: Rematch button in admin.html — shows in Force Advance section when arena_match_id set, confirm dialog, calls POST /admin/matches/{id}/rematch, refreshes bracket",
     "Task 2: Registration Mode toggle in admin.html — mode bar at top shows current mode (Full Admin=green, Registration=yellow), Switch Mode button hides/shows Match Controls and Force Advance sections; renderTournamentState respects registrationMode flag",
     "Task 3: One-machine local fallback documented in tournaments/LOCAL_FALLBACK.md — covers nojohns fight local mode, force-advance via admin panel or curl, mid-tournament switching procedure",
-    "Task 4: Operator runbook written at tournaments/RUNBOOK.md — pre-event checklist, normal match flow, incident responses (stuck agents, disconnects, Dolphin crashes, arena outages), emergency fallbacks, curl cheatsheet"
+    "Task 4: Operator runbook written at tournaments/RUNBOOK.md — pre-event checklist, normal match flow, incident responses (stuck agents, disconnects, Dolphin crashes, arena outages), emergency fallbacks, curl cheatsheet",
+    "Task 5: Vertical slice test checklist written at tournaments/VERTICAL_SLICE_TEST.md — 7-step end-to-end checklist covering tournament creation, match start, betting, result reporting, pool resolution, payout claim, and tournament completion",
+    "Task 6: Bet page onboarding explainer added to web/src/pages/BetPage.tsx — 3-line context before sign-in: what the event is, 2 free bets offer, no crypto knowledge needed"
   ],
-  "tasks_remaining": [
-    "Task 5: Write vertical slice test checklist",
-    "Task 6: Bet page onboarding splash screen"
-  ],
+  "tasks_remaining": [],
   "learnings": [
     "libmelee Character enum names: CPTFALCON, DK, YLINK, DOC, GAMEANDWATCH, POPO — admin.html and viewer.html were using wrong/inconsistent names",
     "admin.html and viewer.html character keys MUST match since admin.html sends character names to arena which viewer.html displays",
     "The 23-character random pool in cli.py is the canonical list: FOX, FALCO, MARTH, CPTFALCON, PEACH, JIGGLYPUFF, SAMUS, DK, PIKACHU, LUIGI, LINK, YLINK, DOC, MARIO, GANONDORF, MEWTWO, ROY, GAMEANDWATCH, NESS, YOSHI, BOWSER, KIRBY, PICHU",
     "Match objects in bracket JSON include arena_match_id (set when match is queued via queue_next_match). Rematch endpoint is POST /admin/matches/{arena_match_id}/rematch.",
     "Registration Mode: admin.html now has a mode toggle. renderTournamentState must check registrationMode before showing match-controls-section and force-section. toggleMode() also re-applies visibility directly so switching mode mid-session works correctly.",
-    "Local fallback: runner.run_match(fighter1, fighter2, settings) accepts any two Fighter instances — no netplay code path invoked. Manual bracket advancement uses POST /admin/tournaments/{id}/force-advance with {round, slot, winner_name}."
+    "Local fallback: runner.run_match(fighter1, fighter2, settings) accepts any two Fighter instances — no netplay code path invoked. Manual bracket advancement uses POST /admin/tournaments/{id}/force-advance with {round, slot, winner_name}.",
+    "Pre-existing test failures: tests/test_netplay.py::TestNetplayRunner::test_handle_menu_passes_connect_code and test_handle_menu_passes_character fail on both main and this branch — navigate_menus mock not being called. Not introduced by this brief."
   ]
 }
